@@ -1,0 +1,44 @@
+[package]
+name = "a3s-search"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Embeddable meta search engine library"
+
+[dependencies]
+# Async runtime
+tokio.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Async utilities
+async-trait.workspace = true
+futures.workspace = true
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "gzip", "brotli"] }
+
+# HTML parsing
+scraper = "0.22"
+
+# URL handling
+url = "2"
+urlencoding = "2"
+
+# Regex
+regex = "1"
+
+[dev-dependencies]
+tokio-test.workspace = true
+tracing-subscriber.workspace = true
