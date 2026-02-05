@@ -18,27 +18,8 @@ use a3s_search::{
 #[command(name = "a3s-search")]
 #[command(author, version, about, long_about = None)]
 struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-
-    /// Enable verbose output
-    #[arg(short, long, global = true)]
-    verbose: bool,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    /// Search using meta search engine
-    Search(SearchArgs),
-
-    /// List available search engines
-    Engines,
-}
-
-#[derive(Parser)]
-struct SearchArgs {
-    /// Search query
-    query: String,
+    /// Search query (if no subcommand is provided)
+    query: Option<String>,
 
     /// Search engines to use (comma-separated)
     /// Available: ddg, brave, google, wiki, baidu, sogou, bing_cn, 360
@@ -60,9 +41,22 @@ struct SearchArgs {
     /// Proxy URL (e.g., http://127.0.0.1:8080 or socks5://127.0.0.1:1080)
     #[arg(short, long)]
     proxy: Option<String>,
+
+    /// Enable verbose output
+    #[arg(short, long)]
+    verbose: bool,
+
+    #[command(subcommand)]
+    command: Option<Commands>,
 }
 
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Subcommand)]
+enum Commands {
+    /// List available search engines
+    Engines,
+}
+
+#[derive(Clone, Copy, ValueEnum, Debug)]
 enum OutputFormat {
     /// Human-readable text output
     Text,
@@ -85,9 +79,51 @@ async fn main() -> Result<()> {
     }
 
     match cli.command {
-        Commands::Search(args) => run_search(args).await,
-        Commands::Engines => list_engines(),
+        Some(Commands::Engines) => list_engines(),
+        None => {
+            if let Some(query) = cli.query {
+                run_search(SearchArgs {
+                    query,
+                    engines: cli.engines,
+                    limit: cli.limit,
+                    timeout: cli.timeout,
+                    format: cli.format,
+                    proxy: cli.proxy,
+                })
+                .await
+            } else {
+                // No query provided, show help
+                println!("A3S Search - Meta search engine CLI\n");
+                println!("Usage: a3s-search <QUERY> [OPTIONS]");
+                println!("       a3s-search engines\n");
+                println!("Examples:");
+                println!("  a3s-search \"Rust programming\"");
+                println!("  a3s-search \"Rust\" -e ddg,wiki -l 5");
+                println!("  a3s-search \"Rust\" -f json");
+                println!("  a3s-search \"Rust\" -p http://127.0.0.1:8080\n");
+                println!("Options:");
+                println!("  -e, --engines <ENGINES>  Engines: ddg,brave,google,wiki,baidu,sogou,bing_cn,360");
+                println!("  -l, --limit <N>          Max results (default: 10)");
+                println!("  -t, --timeout <SECS>     Timeout in seconds (default: 10)");
+                println!("  -f, --format <FORMAT>    Output: text, json, compact");
+                println!("  -p, --proxy <URL>        Proxy URL (http/https/socks5)");
+                println!("  -v, --verbose            Enable debug logging");
+                println!("  -h, --help               Show help");
+                println!("  -V, --version            Show version\n");
+                println!("Run 'a3s-search engines' to list all available engines.");
+                Ok(())
+            }
+        }
     }
+}
+
+struct SearchArgs {
+    query: String,
+    engines: Option<Vec<String>>,
+    limit: usize,
+    timeout: u64,
+    format: OutputFormat,
+    proxy: Option<String>,
 }
 
 fn list_engines() -> Result<()> {
@@ -104,7 +140,7 @@ fn list_engines() -> Result<()> {
     println!("    bing_cn  - Bing China (必应中国)");
     println!("    360      - 360 Search (360搜索)");
     println!();
-    println!("Usage: a3s-search search \"query\" -e ddg,wiki,baidu");
+    println!("Usage: a3s-search \"query\" -e ddg,wiki,baidu");
     Ok(())
 }
 
@@ -205,7 +241,8 @@ fn parse_proxy_url(url: &str) -> Result<ProxyConfig> {
         .host_str()
         .ok_or_else(|| anyhow::anyhow!("Missing proxy host"))?;
     let port = url.port().unwrap_or(match protocol {
-        ProxyProtocol::Http | ProxyProtocol::Https => 8080,
+        ProxyProtocol::Http => 8080,
+        ProxyProtocol::Https => 443,
         ProxyProtocol::Socks5 => 1080,
     });
 
@@ -216,4 +253,171 @@ fn parse_proxy_url(url: &str) -> Result<ProxyConfig> {
     }
 
     Ok(config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn test_cli_parse_help() {
+        // Verify CLI structure is valid
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn test_parse_proxy_url_http() {
+        let config = parse_proxy_url("http://127.0.0.1:8080").unwrap();
+        assert_eq!(config.host, "127.0.0.1");
+        assert_eq!(config.port, 8080);
+        assert_eq!(config.protocol, ProxyProtocol::Http);
+        assert!(config.username.is_none());
+        assert!(config.password.is_none());
+    }
+
+    #[test]
+    fn test_parse_proxy_url_https() {
+        let config = parse_proxy_url("https://proxy.example.com:443").unwrap();
+        assert_eq!(config.host, "proxy.example.com");
+        assert_eq!(config.port, 443);
+        assert_eq!(config.protocol, ProxyProtocol::Https);
+    }
+
+    #[test]
+    fn test_parse_proxy_url_socks5() {
+        let config = parse_proxy_url("socks5://localhost:1080").unwrap();
+        assert_eq!(config.host, "localhost");
+        assert_eq!(config.port, 1080);
+        assert_eq!(config.protocol, ProxyProtocol::Socks5);
+    }
+
+    #[test]
+    fn test_parse_proxy_url_with_auth() {
+        let config = parse_proxy_url("http://user:pass@127.0.0.1:8080").unwrap();
+        assert_eq!(config.host, "127.0.0.1");
+        assert_eq!(config.port, 8080);
+        assert_eq!(config.username, Some("user".to_string()));
+        assert_eq!(config.password, Some("pass".to_string()));
+    }
+
+    #[test]
+    fn test_parse_proxy_url_default_http_port() {
+        let config = parse_proxy_url("http://127.0.0.1").unwrap();
+        assert_eq!(config.port, 8080);
+    }
+
+    #[test]
+    fn test_parse_proxy_url_default_socks5_port() {
+        let config = parse_proxy_url("socks5://127.0.0.1").unwrap();
+        assert_eq!(config.port, 1080);
+    }
+
+    #[test]
+    fn test_parse_proxy_url_unsupported_protocol() {
+        let result = parse_proxy_url("ftp://127.0.0.1:21");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Unsupported proxy protocol"));
+    }
+
+    #[test]
+    fn test_parse_proxy_url_invalid_url() {
+        let result = parse_proxy_url("not-a-valid-url");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_output_format_values() {
+        // Test that all output formats can be created
+        let _text = OutputFormat::Text;
+        let _json = OutputFormat::Json;
+        let _compact = OutputFormat::Compact;
+    }
+
+    #[test]
+    fn test_cli_with_query() {
+        let cli = Cli::parse_from(["a3s-search", "test query"]);
+        assert_eq!(cli.query, Some("test query".to_string()));
+        assert!(cli.engines.is_none());
+        assert_eq!(cli.limit, 10);
+        assert_eq!(cli.timeout, 10);
+        assert!(cli.proxy.is_none());
+        assert!(!cli.verbose);
+    }
+
+    #[test]
+    fn test_cli_with_engines() {
+        let cli = Cli::parse_from(["a3s-search", "query", "-e", "ddg,wiki"]);
+        assert_eq!(cli.engines, Some(vec!["ddg".to_string(), "wiki".to_string()]));
+    }
+
+    #[test]
+    fn test_cli_with_limit() {
+        let cli = Cli::parse_from(["a3s-search", "query", "-l", "5"]);
+        assert_eq!(cli.limit, 5);
+    }
+
+    #[test]
+    fn test_cli_with_timeout() {
+        let cli = Cli::parse_from(["a3s-search", "query", "-t", "30"]);
+        assert_eq!(cli.timeout, 30);
+    }
+
+    #[test]
+    fn test_cli_with_format_json() {
+        let cli = Cli::parse_from(["a3s-search", "query", "-f", "json"]);
+        assert!(matches!(cli.format, OutputFormat::Json));
+    }
+
+    #[test]
+    fn test_cli_with_format_compact() {
+        let cli = Cli::parse_from(["a3s-search", "query", "-f", "compact"]);
+        assert!(matches!(cli.format, OutputFormat::Compact));
+    }
+
+    #[test]
+    fn test_cli_with_proxy() {
+        let cli = Cli::parse_from(["a3s-search", "query", "-p", "http://127.0.0.1:8080"]);
+        assert_eq!(cli.proxy, Some("http://127.0.0.1:8080".to_string()));
+    }
+
+    #[test]
+    fn test_cli_with_verbose() {
+        let cli = Cli::parse_from(["a3s-search", "query", "-v"]);
+        assert!(cli.verbose);
+    }
+
+    #[test]
+    fn test_cli_all_options() {
+        let cli = Cli::parse_from([
+            "a3s-search", "rust programming",
+            "-e", "ddg,wiki,baidu",
+            "-l", "20",
+            "-t", "15",
+            "-f", "json",
+            "-p", "socks5://localhost:1080",
+            "-v"
+        ]);
+        assert_eq!(cli.query, Some("rust programming".to_string()));
+        assert_eq!(cli.engines, Some(vec!["ddg".to_string(), "wiki".to_string(), "baidu".to_string()]));
+        assert_eq!(cli.limit, 20);
+        assert_eq!(cli.timeout, 15);
+        assert!(matches!(cli.format, OutputFormat::Json));
+        assert_eq!(cli.proxy, Some("socks5://localhost:1080".to_string()));
+        assert!(cli.verbose);
+    }
+
+    #[test]
+    fn test_cli_engines_subcommand() {
+        let cli = Cli::parse_from(["a3s-search", "engines"]);
+        assert!(matches!(cli.command, Some(Commands::Engines)));
+    }
+
+    #[test]
+    fn test_cli_no_args() {
+        let cli = Cli::parse_from(["a3s-search"]);
+        assert!(cli.query.is_none());
+        assert!(cli.command.is_none());
+    }
 }

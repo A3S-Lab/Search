@@ -73,32 +73,32 @@ cargo install a3s-search
 ### Commands
 
 ```bash
-# List available engines
-a3s-search engines
-
 # Basic search (uses DuckDuckGo and Wikipedia by default)
-a3s-search search "Rust programming"
+a3s-search "Rust programming"
 
 # Search with specific engines
-a3s-search search "Rust programming" -e ddg,wiki,baidu
+a3s-search "Rust programming" -e ddg,wiki,baidu
 
 # Limit results
-a3s-search search "Rust programming" -l 5
+a3s-search "Rust programming" -l 5
 
 # JSON output
-a3s-search search "Rust programming" -f json
+a3s-search "Rust programming" -f json
 
 # Compact output (tab-separated)
-a3s-search search "Rust programming" -f compact
+a3s-search "Rust programming" -f compact
 
 # Use proxy
-a3s-search search "Rust programming" -p http://127.0.0.1:8080
+a3s-search "Rust programming" -p http://127.0.0.1:8080
 
 # SOCKS5 proxy
-a3s-search search "Rust programming" -p socks5://127.0.0.1:1080
+a3s-search "Rust programming" -p socks5://127.0.0.1:1080
 
 # Verbose mode
-a3s-search search "Rust programming" -v
+a3s-search "Rust programming" -v
+
+# List available engines
+a3s-search engines
 ```
 
 ### Available Engines
@@ -113,8 +113,6 @@ a3s-search search "Rust programming" -v
 | `sogou` | Sogou | 搜狗搜索 |
 | `bing_cn` | Bing China | 必应中国 |
 | `360` | 360 Search | 360搜索 |
-- **Extensible**: Easy to add custom search engines via the `Engine` trait
-- **Proxy Pool**: Dynamic proxy IP rotation to avoid anti-crawler blocking
 
 ### Supported Search Engines
 
@@ -140,7 +138,7 @@ a3s-search search "Rust programming" -v
 
 ### Test Coverage
 
-**167 unit tests** + **22 integration tests** with comprehensive coverage:
+**188 unit tests** (167 library + 21 CLI) + **22 integration tests** with comprehensive coverage:
 
 | Module | Lines | Coverage | Functions | Coverage |
 |--------|-------|----------|-----------|----------|
