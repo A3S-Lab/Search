@@ -3,7 +3,7 @@ name = "a3s-search"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-repository.workspace = true
+repository = "https://github.com/A3S-Lab/Search"
 authors.workspace = true
 description = "Embeddable meta search engine library"
 
