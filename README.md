@@ -66,6 +66,13 @@ async fn main() -> anyhow::Result<()> {
 
 ### Installation
 
+**Homebrew (macOS):**
+```bash
+brew tap A3S-Lab/tap
+brew install a3s-search
+```
+
+**Cargo:**
 ```bash
 cargo install a3s-search
 ```
