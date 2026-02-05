@@ -9,6 +9,7 @@
 //! - Result deduplication and merging
 //! - Configurable ranking algorithms
 //! - Extensible engine interface
+//! - Dynamic proxy IP pool for anti-crawler protection
 //!
 //! ## Example
 //!
@@ -29,6 +30,31 @@
 //!     Ok(())
 //! }
 //! ```
+//!
+//! ## Using Proxy Pool
+//!
+//! ```rust,no_run
+//! use a3s_search::{Search, SearchQuery, engines::DuckDuckGo};
+//! use a3s_search::proxy::{ProxyPool, ProxyConfig};
+//!
+//! #[tokio::main]
+//! async fn main() -> anyhow::Result<()> {
+//!     // Create a proxy pool with multiple proxies
+//!     let proxy_pool = ProxyPool::with_proxies(vec![
+//!         ProxyConfig::new("proxy1.example.com", 8080),
+//!         ProxyConfig::new("proxy2.example.com", 8080),
+//!     ]);
+//!
+//!     let mut search = Search::new();
+//!     search.set_proxy_pool(proxy_pool);
+//!     search.add_engine(DuckDuckGo::new());
+//!
+//!     let query = SearchQuery::new("rust programming");
+//!     let results = search.search(query).await?;
+//!
+//!     Ok(())
+//! }
+//! ```
 
 mod engine;
 mod error;
@@ -36,6 +62,7 @@ mod query;
 mod result;
 mod aggregator;
 mod search;
+pub mod proxy;
 
 pub mod engines;
 

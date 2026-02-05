@@ -59,6 +59,7 @@ async fn main() -> anyhow::Result<()> {
 - **Async-First**: Built on Tokio for high-performance concurrent searches
 - **Timeout Handling**: Per-engine timeout with graceful degradation
 - **Extensible**: Easy to add custom search engines via the `Engine` trait
+- **Proxy Pool**: Dynamic proxy IP rotation to avoid anti-crawler blocking
 
 ### Supported Search Engines
 
@@ -236,6 +237,61 @@ let mut search = Search::new();
 search.add_engine(wiki);
 ```
 
+### Using Proxy Pool (Anti-Crawler Protection)
+
+```rust
+use a3s_search::{Search, SearchQuery, engines::DuckDuckGo};
+use a3s_search::proxy::{ProxyPool, ProxyConfig, ProxyProtocol, ProxyStrategy};
+
+// Create a proxy pool with multiple proxies
+let proxy_pool = ProxyPool::with_proxies(vec![
+    ProxyConfig::new("proxy1.example.com", 8080),
+    ProxyConfig::new("proxy2.example.com", 8080)
+        .with_protocol(ProxyProtocol::Socks5),
+    ProxyConfig::new("proxy3.example.com", 8080)
+        .with_auth("username", "password"),
+]).with_strategy(ProxyStrategy::RoundRobin);
+
+let mut search = Search::new();
+search.set_proxy_pool(proxy_pool);
+search.add_engine(DuckDuckGo::new());
+
+let query = SearchQuery::new("rust programming");
+let results = search.search(query).await?;
+```
+
+### Dynamic Proxy Provider
+
+```rust
+use a3s_search::proxy::{ProxyPool, ProxyConfig, ProxyProvider};
+use async_trait::async_trait;
+use std::time::Duration;
+
+// Implement custom proxy provider (e.g., from API)
+struct MyProxyProvider {
+    api_url: String,
+}
+
+#[async_trait]
+impl ProxyProvider for MyProxyProvider {
+    async fn fetch_proxies(&self) -> a3s_search::Result<Vec<ProxyConfig>> {
+        // Fetch proxies from your API
+        Ok(vec![
+            ProxyConfig::new("dynamic-proxy.example.com", 8080),
+        ])
+    }
+
+    fn refresh_interval(&self) -> Duration {
+        Duration::from_secs(60) // Refresh every minute
+    }
+}
+
+// Use with proxy pool
+let provider = MyProxyProvider { api_url: "https://api.example.com/proxies".into() };
+let proxy_pool = ProxyPool::with_provider(provider);
+proxy_pool.refresh().await?; // Initial fetch
+```
+
 ### Implementing Custom Engines
 
 ```rust
@@ -293,6 +349,8 @@ impl Engine for MySearchEngine {
 | `set_timeout(duration)` | Set default search timeout |
 | `engine_count()` | Get number of configured engines |
 | `search(query)` | Perform a search |
+| `set_proxy_pool(pool)` | Set proxy pool for anti-crawler |
+| `proxy_pool()` | Get reference to proxy pool |
 
 ### SearchQuery
 
@@ -368,6 +426,38 @@ pub trait Engine: Send + Sync {
 | `paging` | `bool` | `false` | Supports pagination |
 | `safesearch` | `bool` | `false` | Supports safe search |
 
+### ProxyPool
+
+| Method | Description |
+|--------|-------------|
+| `new()` | Create empty proxy pool (disabled) |
+| `with_proxies(proxies)` | Create with static proxy list |
+| `with_provider(provider)` | Create with dynamic provider |
+| `with_strategy(strategy)` | Set selection strategy |
+| `set_enabled(bool)` | Enable/disable proxy pool |
+| `is_enabled()` | Check if enabled |
+| `refresh()` | Refresh proxies from provider |
+| `get_proxy()` | Get next proxy (based on strategy) |
+| `add_proxy(proxy)` | Add a proxy to pool |
+| `remove_proxy(host, port)` | Remove a proxy |
+| `create_client(user_agent)` | Create HTTP client with proxy |
+
+### ProxyConfig
+
+| Method | Description |
+|--------|-------------|
+| `new(host, port)` | Create HTTP proxy config |
+| `with_protocol(protocol)` | Set protocol (Http/Https/Socks5) |
+| `with_auth(user, pass)` | Set authentication |
+| `url()` | Get proxy URL string |
+
+### ProxyStrategy
+
+| Variant | Description |
+|---------|-------------|
+| `RoundRobin` | Rotate through proxies sequentially |
+| `Random` | Select random proxy each time |
+
 ## Development
 
 ### Dependencies
@@ -415,6 +505,7 @@ search/
     ├── result.rs            # SearchResult, SearchResults
     ├── aggregator.rs        # Result aggregation and ranking
     ├── search.rs            # Search orchestrator
+    ├── proxy.rs             # Proxy pool and configuration
     └── engines/
         ├── mod.rs           # Engine exports
         ├── duckduckgo.rs    # DuckDuckGo
