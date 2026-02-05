@@ -60,6 +60,61 @@ async fn main() -> anyhow::Result<()> {
 - **Timeout Handling**: Per-engine timeout with graceful degradation
 - **Extensible**: Easy to add custom search engines via the `Engine` trait
 - **Proxy Pool**: Dynamic proxy IP rotation to avoid anti-crawler blocking
+- **CLI Tool**: Command-line interface for quick searches
+
+## CLI Usage
+
+### Installation
+
+```bash
+cargo install a3s-search
+```
+
+### Commands
+
+```bash
+# List available engines
+a3s-search engines
+
+# Basic search (uses DuckDuckGo and Wikipedia by default)
+a3s-search search "Rust programming"
+
+# Search with specific engines
+a3s-search search "Rust programming" -e ddg,wiki,baidu
+
+# Limit results
+a3s-search search "Rust programming" -l 5
+
+# JSON output
+a3s-search search "Rust programming" -f json
+
+# Compact output (tab-separated)
+a3s-search search "Rust programming" -f compact
+
+# Use proxy
+a3s-search search "Rust programming" -p http://127.0.0.1:8080
+
+# SOCKS5 proxy
+a3s-search search "Rust programming" -p socks5://127.0.0.1:1080
+
+# Verbose mode
+a3s-search search "Rust programming" -v
+```
+
+### Available Engines
+
+| Shortcut | Engine | Description |
+|----------|--------|-------------|
+| `ddg` | DuckDuckGo | Privacy-focused search |
+| `brave` | Brave | Brave Search |
+| `google` | Google | Google Search |
+| `wiki` | Wikipedia | Wikipedia API |
+| `baidu` | Baidu | 百度搜索 |
+| `sogou` | Sogou | 搜狗搜索 |
+| `bing_cn` | Bing China | 必应中国 |
+| `360` | 360 Search | 360搜索 |
+- **Extensible**: Easy to add custom search engines via the `Engine` trait
+- **Proxy Pool**: Dynamic proxy IP rotation to avoid anti-crawler blocking
 
 ### Supported Search Engines
 
@@ -485,6 +540,9 @@ cargo llvm-cov -p a3s-search --lib --summary-only
 # Run examples
 cargo run -p a3s-search --example basic_search
 cargo run -p a3s-search --example chinese_search
+
+# Run CLI
+cargo run -p a3s-search --bin a3s-search -- search "query"
 ```
 
 ### Project Structure
@@ -499,6 +557,7 @@ search/
 ├── tests/
 │   └── integration.rs       # Integration tests (network-dependent)
 └── src/
+    ├── main.rs              # CLI entry point
     ├── lib.rs               # Library entry point
     ├── engine.rs            # Engine trait and config
     ├── error.rs             # Error types

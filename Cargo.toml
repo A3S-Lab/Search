@@ -7,6 +7,10 @@ repository = "https://github.com/A3S-Lab/Search"
 authors.workspace = true
 description = "Embeddable meta search engine library with proxy pool support"
 
+[[bin]]
+name = "a3s-search"
+path = "src/main.rs"
+
 [dependencies]
 # Async runtime
 tokio.workspace = true
@@ -27,7 +31,7 @@ async-trait.workspace = true
 futures.workspace = true
 
 # HTTP client
-reqwest = { version = "0.12", features = ["json", "gzip", "brotli"] }
+reqwest = { version = "0.12", features = ["json", "gzip", "brotli", "socks"] }
 
 # HTML parsing
 scraper = "0.22"
@@ -39,6 +43,11 @@ urlencoding = "2"
 # Regex
 regex = "1"
 
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Logging for CLI
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
 [dev-dependencies]
 tokio-test.workspace = true
-tracing-subscriber.workspace = true
