@@ -507,4 +507,110 @@ mod tests {
         // Client should be created with proxy configured
         drop(client);
     }
+
+    #[test]
+    fn test_proxy_config_debug() {
+        let proxy = ProxyConfig::new("127.0.0.1", 8080);
+        let debug_str = format!("{:?}", proxy);
+        assert!(debug_str.contains("127.0.0.1"));
+        assert!(debug_str.contains("8080"));
+    }
+
+    #[test]
+    fn test_proxy_config_clone() {
+        let proxy = ProxyConfig::new("127.0.0.1", 8080)
+            .with_protocol(ProxyProtocol::Socks5)
+            .with_auth("user", "pass");
+        let cloned = proxy.clone();
+        assert_eq!(cloned.host, proxy.host);
+        assert_eq!(cloned.port, proxy.port);
+        assert_eq!(cloned.protocol, proxy.protocol);
+        assert_eq!(cloned.username, proxy.username);
+        assert_eq!(cloned.password, proxy.password);
+    }
+
+    #[test]
+    fn test_proxy_protocol_debug() {
+        let protocol = ProxyProtocol::Socks5;
+        let debug_str = format!("{:?}", protocol);
+        assert!(debug_str.contains("Socks5"));
+    }
+
+    #[test]
+    fn test_proxy_protocol_clone() {
+        let protocol = ProxyProtocol::Https;
+        let cloned = protocol.clone();
+        assert_eq!(cloned, protocol);
+    }
+
+    #[test]
+    fn test_proxy_protocol_copy() {
+        let protocol = ProxyProtocol::Http;
+        let copied: ProxyProtocol = protocol;
+        assert_eq!(copied, protocol);
+    }
+
+    #[test]
+    fn test_proxy_strategy_debug() {
+        let strategy = ProxyStrategy::Random;
+        let debug_str = format!("{:?}", strategy);
+        assert!(debug_str.contains("Random"));
+    }
+
+    #[test]
+    fn test_proxy_strategy_clone() {
+        let strategy = ProxyStrategy::RoundRobin;
+        let cloned = strategy.clone();
+        assert!(matches!(cloned, ProxyStrategy::RoundRobin));
+    }
+
+    #[test]
+    fn test_proxy_strategy_copy() {
+        let strategy = ProxyStrategy::Random;
+        let copied: ProxyStrategy = strategy;
+        assert!(matches!(copied, ProxyStrategy::Random));
+    }
+
+    #[tokio::test]
+    async fn test_proxy_pool_len_after_add() {
+        let pool = ProxyPool::new();
+        assert_eq!(pool.len().await, 0);
+        pool.add_proxy(ProxyConfig::new("127.0.0.1", 8080)).await;
+        pool.add_proxy(ProxyConfig::new("127.0.0.1", 8081)).await;
+        assert_eq!(pool.len().await, 2);
+    }
+
+    #[tokio::test]
+    async fn test_proxy_pool_remove_nonexistent() {
+        let proxies = vec![ProxyConfig::new("127.0.0.1", 8080)];
+        let pool = ProxyPool::with_proxies(proxies);
+        pool.remove_proxy("192.168.1.1", 9999).await;
+        assert_eq!(pool.len().await, 1); // Should still have the original
+    }
+
+    #[test]
+    fn test_proxy_config_url_partial_auth() {
+        // Test with only username (no password)
+        let mut proxy = ProxyConfig::new("127.0.0.1", 8080);
+        proxy.username = Some("user".to_string());
+        proxy.password = None;
+        // Should not include auth when password is missing
+        assert_eq!(proxy.url(), "http://127.0.0.1:8080");
+    }
+
+    #[tokio::test]
+    async fn test_proxy_provider_default_refresh_interval() {
+        struct CustomProvider;
+
+        #[async_trait]
+        impl ProxyProvider for CustomProvider {
+            async fn fetch_proxies(&self) -> Result<Vec<ProxyConfig>> {
+                Ok(vec![])
+            }
+            // Don't override refresh_interval to test default
+        }
+
+        let provider = CustomProvider;
+        assert_eq!(provider.refresh_interval(), Duration::from_secs(300));
+    }
 }

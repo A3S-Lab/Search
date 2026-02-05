@@ -85,7 +85,7 @@ async fn main() -> anyhow::Result<()> {
 
 ### Test Coverage
 
-**127 unit tests** + **22 integration tests** with comprehensive coverage:
+**167 unit tests** + **22 integration tests** with comprehensive coverage:
 
 | Module | Lines | Coverage | Functions | Coverage |
 |--------|-------|----------|-----------|----------|
@@ -94,7 +94,8 @@ async fn main() -> anyhow::Result<()> {
 | error.rs | 29 | 100.00% | 7 | 100.00% |
 | query.rs | 113 | 100.00% | 20 | 100.00% |
 | result.rs | 193 | 100.00% | 36 | 100.00% |
-| search.rs | 285 | 99.30% | 52 | 100.00% |
+| search.rs | 313 | 99.36% | 58 | 100.00% |
+| proxy.rs | 417 | 98.32% | 91 | 97.80% |
 | duckduckgo.rs | 138 | 80.43% | 20 | 70.00% |
 | wikipedia.rs | 114 | 87.72% | 20 | 85.00% |
 | baidu.rs | 99 | 71.72% | 15 | 66.67% |
@@ -103,7 +104,7 @@ async fn main() -> anyhow::Result<()> {
 | so360.rs | 95 | 70.53% | 15 | 66.67% |
 | brave.rs | 108 | 62.96% | 18 | 55.56% |
 | google.rs | 109 | 63.30% | 18 | 55.56% |
-| **Total** | **1831** | **87.06%** | **294** | **84.69%** |
+| **Total** | **2276** | **89.19%** | **391** | **87.72%** |
 
 *Note: Engine implementations require HTTP requests for full coverage. Integration tests (in `tests/integration.rs`) verify real HTTP functionality but are `#[ignore]` by default.*
 
