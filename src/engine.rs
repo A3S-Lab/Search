@@ -6,9 +6,10 @@ use serde::{Deserialize, Serialize};
 use crate::{Result, SearchQuery, SearchResult};
 
 /// Categories for search engines.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EngineCategory {
+    #[default]
     General,
     Images,
     Videos,
@@ -18,12 +19,6 @@ pub enum EngineCategory {
     Files,
     Science,
     Social,
-}
-
-impl Default for EngineCategory {
-    fn default() -> Self {
-        Self::General
-    }
 }
 
 /// Configuration for a search engine.

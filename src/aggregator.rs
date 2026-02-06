@@ -5,18 +5,13 @@ use std::collections::HashMap;
 use crate::{SearchResult, SearchResults};
 
 /// Result priority for ranking.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum ResultPriority {
     High,
+    #[default]
     Normal,
     Low,
-}
-
-impl Default for ResultPriority {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 /// Aggregates and ranks search results from multiple engines.
@@ -68,7 +63,11 @@ impl Aggregator {
             result.score = self.calculate_score(result, ResultPriority::Normal);
         }
 
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         let mut search_results = SearchResults::new();
         for result in results {
@@ -78,7 +77,13 @@ impl Aggregator {
     }
 
     /// Merges a new result into an existing one.
-    fn merge_results(&self, existing: &mut SearchResult, new: SearchResult, engine: &str, position: u32) {
+    fn merge_results(
+        &self,
+        existing: &mut SearchResult,
+        new: SearchResult,
+        engine: &str,
+        position: u32,
+    ) {
         existing.engines.insert(engine.to_string());
         existing.positions.push(position);
 
@@ -160,9 +165,7 @@ mod tests {
     #[test]
     fn test_aggregate_single_engine() {
         let aggregator = Aggregator::new();
-        let results = vec![
-            SearchResult::new("https://example.com", "Title", "Content"),
-        ];
+        let results = vec![SearchResult::new("https://example.com", "Title", "Content")];
         let engine_results = vec![("engine1".to_string(), results)];
         let aggregated = aggregator.aggregate(engine_results);
         assert_eq!(aggregated.count, 1);
@@ -177,9 +180,11 @@ mod tests {
             SearchResult::new("https://example.com/page", "Title 1", "Content 1"),
             SearchResult::new("https://other.com", "Other", "Other content"),
         ];
-        let results2 = vec![
-            SearchResult::new("http://example.com/page/", "Title 2 Longer", "Content 2"),
-        ];
+        let results2 = vec![SearchResult::new(
+            "http://example.com/page/",
+            "Title 2 Longer",
+            "Content 2",
+        )];
 
         let engine_results = vec![
             ("engine1".to_string(), results1),
@@ -190,7 +195,9 @@ mod tests {
 
         assert_eq!(aggregated.items().len(), 2);
 
-        let example_result = aggregated.items().iter()
+        let example_result = aggregated
+            .items()
+            .iter()
             .find(|r| r.normalized_url() == "example.com/page")
             .unwrap();
         assert_eq!(example_result.engines.len(), 2);
@@ -203,12 +210,16 @@ mod tests {
     fn test_aggregate_merges_longer_content() {
         let aggregator = Aggregator::new();
 
-        let results1 = vec![
-            SearchResult::new("https://example.com", "Short", "Short content"),
-        ];
-        let results2 = vec![
-            SearchResult::new("https://example.com", "Longer Title Here", "Much longer content description"),
-        ];
+        let results1 = vec![SearchResult::new(
+            "https://example.com",
+            "Short",
+            "Short content",
+        )];
+        let results2 = vec![SearchResult::new(
+            "https://example.com",
+            "Longer Title Here",
+            "Much longer content description",
+        )];
 
         let engine_results = vec![
             ("engine1".to_string(), results1),
@@ -226,13 +237,9 @@ mod tests {
     fn test_aggregate_merges_thumbnail() {
         let aggregator = Aggregator::new();
 
-        let results1 = vec![
-            SearchResult::new("https://example.com", "Title", "Content"),
-        ];
-        let results2 = vec![
-            SearchResult::new("https://example.com", "Title", "Content")
-                .with_thumbnail("https://example.com/thumb.jpg"),
-        ];
+        let results1 = vec![SearchResult::new("https://example.com", "Title", "Content")];
+        let results2 = vec![SearchResult::new("https://example.com", "Title", "Content")
+            .with_thumbnail("https://example.com/thumb.jpg")];
 
         let engine_results = vec![
             ("engine1".to_string(), results1),
@@ -242,20 +249,19 @@ mod tests {
         let aggregated = aggregator.aggregate(engine_results);
         let result = &aggregated.items()[0];
 
-        assert_eq!(result.thumbnail, Some("https://example.com/thumb.jpg".to_string()));
+        assert_eq!(
+            result.thumbnail,
+            Some("https://example.com/thumb.jpg".to_string())
+        );
     }
 
     #[test]
     fn test_aggregate_merges_published_date() {
         let aggregator = Aggregator::new();
 
-        let results1 = vec![
-            SearchResult::new("https://example.com", "Title", "Content"),
-        ];
-        let results2 = vec![
-            SearchResult::new("https://example.com", "Title", "Content")
-                .with_published_date("2024-01-15"),
-        ];
+        let results1 = vec![SearchResult::new("https://example.com", "Title", "Content")];
+        let results2 = vec![SearchResult::new("https://example.com", "Title", "Content")
+            .with_published_date("2024-01-15")];
 
         let engine_results = vec![
             ("engine1".to_string(), results1),
@@ -273,12 +279,8 @@ mod tests {
         let mut aggregator = Aggregator::new();
         aggregator.set_engine_weight("engine1", 2.0);
 
-        let results1 = vec![
-            SearchResult::new("https://example.com", "Title", "Content"),
-        ];
-        let results2 = vec![
-            SearchResult::new("https://example.com", "Title", "Content"),
-        ];
+        let results1 = vec![SearchResult::new("https://example.com", "Title", "Content")];
+        let results2 = vec![SearchResult::new("https://example.com", "Title", "Content")];
 
         let engine_results = vec![
             ("engine1".to_string(), results1),
@@ -303,9 +305,11 @@ mod tests {
             SearchResult::new("https://single.com", "Single", "Found by one"),
             SearchResult::new("https://both.com", "Both", "Found by both"),
         ];
-        let results2 = vec![
-            SearchResult::new("https://both.com", "Both", "Found by both"),
-        ];
+        let results2 = vec![SearchResult::new(
+            "https://both.com",
+            "Both",
+            "Found by both",
+        )];
 
         let engine_results = vec![
             ("engine1".to_string(), results1),
@@ -343,12 +347,16 @@ mod tests {
         aggregator.set_engine_weight("high_weight", 3.0);
         aggregator.set_engine_weight("low_weight", 0.5);
 
-        let results_high = vec![
-            SearchResult::new("https://high.com", "High", "From high weight engine"),
-        ];
-        let results_low = vec![
-            SearchResult::new("https://low.com", "Low", "From low weight engine"),
-        ];
+        let results_high = vec![SearchResult::new(
+            "https://high.com",
+            "High",
+            "From high weight engine",
+        )];
+        let results_low = vec![SearchResult::new(
+            "https://low.com",
+            "Low",
+            "From low weight engine",
+        )];
 
         let engine_results = vec![
             ("high_weight".to_string(), results_high),
@@ -357,10 +365,14 @@ mod tests {
 
         let aggregated = aggregator.aggregate(engine_results);
 
-        let high_result = aggregated.items().iter()
+        let high_result = aggregated
+            .items()
+            .iter()
             .find(|r| r.url == "https://high.com")
             .unwrap();
-        let low_result = aggregated.items().iter()
+        let low_result = aggregated
+            .items()
+            .iter()
             .find(|r| r.url == "https://low.com")
             .unwrap();
 
@@ -371,9 +383,7 @@ mod tests {
     fn test_aggregate_preserves_positions() {
         let aggregator = Aggregator::new();
 
-        let results1 = vec![
-            SearchResult::new("https://example.com", "Title", "Content"),
-        ];
+        let results1 = vec![SearchResult::new("https://example.com", "Title", "Content")];
         let results2 = vec![
             SearchResult::new("https://other.com", "Other", "Other"),
             SearchResult::new("https://example.com", "Title", "Content"),
@@ -385,7 +395,9 @@ mod tests {
         ];
 
         let aggregated = aggregator.aggregate(engine_results);
-        let example_result = aggregated.items().iter()
+        let example_result = aggregated
+            .items()
+            .iter()
             .find(|r| r.normalized_url() == "example.com")
             .unwrap();
 

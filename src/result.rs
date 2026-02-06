@@ -4,10 +4,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 /// Type of search result.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ResultType {
     /// Standard web result.
+    #[default]
     Web,
     /// Image result.
     Image,
@@ -25,12 +26,6 @@ pub enum ResultType {
     Infobox,
     /// Suggestion.
     Suggestion,
-}
-
-impl Default for ResultType {
-    fn default() -> Self {
-        Self::Web
-    }
 }
 
 /// A single search result.
@@ -58,7 +53,11 @@ pub struct SearchResult {
 
 impl SearchResult {
     /// Creates a new search result.
-    pub fn new(url: impl Into<String>, title: impl Into<String>, content: impl Into<String>) -> Self {
+    pub fn new(
+        url: impl Into<String>,
+        title: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
         Self {
             url: url.into(),
             title: title.into(),
@@ -99,7 +98,9 @@ impl SearchResult {
 
     /// Returns a normalized URL for deduplication (without scheme and trailing slash).
     pub fn normalized_url(&self) -> String {
-        let url = self.url.trim_start_matches("https://")
+        let url = self
+            .url
+            .trim_start_matches("https://")
             .trim_start_matches("http://")
             .trim_end_matches('/');
         url.to_lowercase()
@@ -211,8 +212,7 @@ mod tests {
 
     #[test]
     fn test_search_result_with_type() {
-        let result = SearchResult::new("url", "title", "content")
-            .with_type(ResultType::Image);
+        let result = SearchResult::new("url", "title", "content").with_type(ResultType::Image);
         assert_eq!(result.result_type, ResultType::Image);
     }
 
@@ -230,13 +230,15 @@ mod tests {
     fn test_search_result_with_thumbnail() {
         let result = SearchResult::new("url", "title", "content")
             .with_thumbnail("https://example.com/thumb.jpg");
-        assert_eq!(result.thumbnail, Some("https://example.com/thumb.jpg".to_string()));
+        assert_eq!(
+            result.thumbnail,
+            Some("https://example.com/thumb.jpg".to_string())
+        );
     }
 
     #[test]
     fn test_search_result_with_published_date() {
-        let result = SearchResult::new("url", "title", "content")
-            .with_published_date("2024-01-15");
+        let result = SearchResult::new("url", "title", "content").with_published_date("2024-01-15");
         assert_eq!(result.published_date, Some("2024-01-15".to_string()));
     }
 
@@ -334,8 +336,7 @@ mod tests {
 
     #[test]
     fn test_result_type_serialization() {
-        let result = SearchResult::new("url", "title", "content")
-            .with_type(ResultType::Image);
+        let result = SearchResult::new("url", "title", "content").with_type(ResultType::Image);
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("\"result_type\":\"image\""));
     }

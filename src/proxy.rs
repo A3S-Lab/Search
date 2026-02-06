@@ -260,15 +260,14 @@ impl ProxyPool {
             let proxy_url = proxy_config.url();
             debug!("Using proxy: {}:{}", proxy_config.host, proxy_config.port);
 
-            let proxy = ReqwestProxy::all(&proxy_url).map_err(|e| {
-                SearchError::Other(format!("Failed to create proxy: {}", e))
-            })?;
+            let proxy = ReqwestProxy::all(&proxy_url)
+                .map_err(|e| SearchError::Other(format!("Failed to create proxy: {}", e)))?;
             builder = builder.proxy(proxy);
         }
 
-        builder.build().map_err(|e| {
-            SearchError::Other(format!("Failed to create HTTP client: {}", e))
-        })
+        builder
+            .build()
+            .map_err(|e| SearchError::Other(format!("Failed to create HTTP client: {}", e)))
     }
 }
 
@@ -300,15 +299,13 @@ mod tests {
 
     #[test]
     fn test_proxy_config_with_protocol() {
-        let proxy = ProxyConfig::new("127.0.0.1", 8080)
-            .with_protocol(ProxyProtocol::Socks5);
+        let proxy = ProxyConfig::new("127.0.0.1", 8080).with_protocol(ProxyProtocol::Socks5);
         assert_eq!(proxy.protocol, ProxyProtocol::Socks5);
     }
 
     #[test]
     fn test_proxy_config_with_auth() {
-        let proxy = ProxyConfig::new("127.0.0.1", 8080)
-            .with_auth("user", "pass");
+        let proxy = ProxyConfig::new("127.0.0.1", 8080).with_auth("user", "pass");
         assert_eq!(proxy.username, Some("user".to_string()));
         assert_eq!(proxy.password, Some("pass".to_string()));
     }
@@ -321,22 +318,19 @@ mod tests {
 
     #[test]
     fn test_proxy_config_url_https() {
-        let proxy = ProxyConfig::new("127.0.0.1", 8080)
-            .with_protocol(ProxyProtocol::Https);
+        let proxy = ProxyConfig::new("127.0.0.1", 8080).with_protocol(ProxyProtocol::Https);
         assert_eq!(proxy.url(), "https://127.0.0.1:8080");
     }
 
     #[test]
     fn test_proxy_config_url_socks5() {
-        let proxy = ProxyConfig::new("127.0.0.1", 1080)
-            .with_protocol(ProxyProtocol::Socks5);
+        let proxy = ProxyConfig::new("127.0.0.1", 1080).with_protocol(ProxyProtocol::Socks5);
         assert_eq!(proxy.url(), "socks5://127.0.0.1:1080");
     }
 
     #[test]
     fn test_proxy_config_url_with_auth() {
-        let proxy = ProxyConfig::new("127.0.0.1", 8080)
-            .with_auth("user", "pass");
+        let proxy = ProxyConfig::new("127.0.0.1", 8080).with_auth("user", "pass");
         assert_eq!(proxy.url(), "http://user:pass@127.0.0.1:8080");
     }
 
@@ -539,6 +533,7 @@ mod tests {
     #[test]
     fn test_proxy_protocol_clone() {
         let protocol = ProxyProtocol::Https;
+        #[allow(clippy::clone_on_copy)]
         let cloned = protocol.clone();
         assert_eq!(cloned, protocol);
     }
@@ -560,6 +555,7 @@ mod tests {
     #[test]
     fn test_proxy_strategy_clone() {
         let strategy = ProxyStrategy::RoundRobin;
+        #[allow(clippy::clone_on_copy)]
         let cloned = strategy.clone();
         assert!(matches!(cloned, ProxyStrategy::RoundRobin));
     }
