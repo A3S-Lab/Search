@@ -1,6 +1,9 @@
 //! Example: Basic meta search across multiple engines.
 
-use a3s_search::{Search, SearchQuery, engines::{DuckDuckGo, Wikipedia}};
+use a3s_search::{
+    engines::{DuckDuckGo, Wikipedia},
+    Search, SearchQuery,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -25,7 +28,10 @@ async fn main() -> anyhow::Result<()> {
     // Perform the search
     let results = search.search(query).await?;
 
-    println!("Found {} results in {}ms", results.count, results.duration_ms);
+    println!(
+        "Found {} results in {}ms",
+        results.count, results.duration_ms
+    );
     println!();
 
     // Display results

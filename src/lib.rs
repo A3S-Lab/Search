@@ -56,19 +56,19 @@
 //! }
 //! ```
 
+mod aggregator;
 mod engine;
 mod error;
+pub mod proxy;
 mod query;
 mod result;
-mod aggregator;
 mod search;
-pub mod proxy;
 
 pub mod engines;
 
-pub use engine::{Engine, EngineConfig, EngineCategory};
-pub use error::{SearchError, Result};
-pub use query::SearchQuery;
-pub use result::{SearchResult, SearchResults, ResultType};
 pub use aggregator::Aggregator;
+pub use engine::{Engine, EngineCategory, EngineConfig};
+pub use error::{Result, SearchError};
+pub use query::SearchQuery;
+pub use result::{ResultType, SearchResult, SearchResults};
 pub use search::Search;

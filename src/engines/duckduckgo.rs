@@ -68,15 +68,12 @@ impl Engine for DuckDuckGo {
 impl DuckDuckGo {
     fn parse_results(&self, html: &str) -> Result<Vec<SearchResult>> {
         let document = Html::parse_document(html);
-        let result_selector = Selector::parse(".result").map_err(|e| {
-            SearchError::Parse(format!("Failed to parse selector: {:?}", e))
-        })?;
-        let title_selector = Selector::parse(".result__title a").map_err(|e| {
-            SearchError::Parse(format!("Failed to parse selector: {:?}", e))
-        })?;
-        let snippet_selector = Selector::parse(".result__snippet").map_err(|e| {
-            SearchError::Parse(format!("Failed to parse selector: {:?}", e))
-        })?;
+        let result_selector = Selector::parse(".result")
+            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
+        let title_selector = Selector::parse(".result__title a")
+            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
+        let snippet_selector = Selector::parse(".result__snippet")
+            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
 
         let mut results = Vec::new();
 

@@ -115,7 +115,10 @@ mod tests {
     fn test_search_query_with_categories() {
         let query = SearchQuery::new("test")
             .with_categories(vec![EngineCategory::Images, EngineCategory::Videos]);
-        assert_eq!(query.categories, vec![EngineCategory::Images, EngineCategory::Videos]);
+        assert_eq!(
+            query.categories,
+            vec![EngineCategory::Images, EngineCategory::Videos]
+        );
     }
 
     #[test]
@@ -144,8 +147,8 @@ mod tests {
 
     #[test]
     fn test_search_query_with_engines() {
-        let query = SearchQuery::new("test")
-            .with_engines(vec!["ddg".to_string(), "wiki".to_string()]);
+        let query =
+            SearchQuery::new("test").with_engines(vec!["ddg".to_string(), "wiki".to_string()]);
         assert_eq!(query.engines, vec!["ddg", "wiki"]);
     }
 

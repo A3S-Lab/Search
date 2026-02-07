@@ -1,6 +1,9 @@
 //! Example: Meta search with Chinese search engines.
 
-use a3s_search::{Search, SearchQuery, engines::{Baidu, Sogou, BingChina, So360}};
+use a3s_search::{
+    engines::{Baidu, BingChina, So360, Sogou},
+    Search, SearchQuery,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -11,12 +14,15 @@ async fn main() -> anyhow::Result<()> {
     let mut search = Search::new();
 
     // Add Chinese search engines
-    search.add_engine(Baidu::new());      // 百度
-    search.add_engine(Sogou::new());      // 搜狗
-    search.add_engine(BingChina::new());  // 必应中国
-    search.add_engine(So360::new());      // 360搜索
+    search.add_engine(Baidu::new()); // 百度
+    search.add_engine(Sogou::new()); // 搜狗
+    search.add_engine(BingChina::new()); // 必应中国
+    search.add_engine(So360::new()); // 360搜索
 
-    println!("Configured {} Chinese search engines", search.engine_count());
+    println!(
+        "Configured {} Chinese search engines",
+        search.engine_count()
+    );
 
     // Create a search query in Chinese
     let query = SearchQuery::new("Rust 编程语言");
@@ -27,7 +33,10 @@ async fn main() -> anyhow::Result<()> {
     // Perform the search
     let results = search.search(query).await?;
 
-    println!("Found {} results in {}ms", results.count, results.duration_ms);
+    println!(
+        "Found {} results in {}ms",
+        results.count, results.duration_ms
+    );
     println!();
 
     // Display results

@@ -69,15 +69,12 @@ impl So360 {
     fn parse_results(&self, html: &str) -> Result<Vec<SearchResult>> {
         let document = Html::parse_document(html);
 
-        let result_selector = Selector::parse("li.res-list").map_err(|e| {
-            SearchError::Parse(format!("Failed to parse selector: {:?}", e))
-        })?;
-        let title_selector = Selector::parse("h3 a").map_err(|e| {
-            SearchError::Parse(format!("Failed to parse selector: {:?}", e))
-        })?;
-        let snippet_selector = Selector::parse(".res-desc, .res-rich").map_err(|e| {
-            SearchError::Parse(format!("Failed to parse selector: {:?}", e))
-        })?;
+        let result_selector = Selector::parse("li.res-list")
+            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
+        let title_selector = Selector::parse("h3 a")
+            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
+        let snippet_selector = Selector::parse(".res-desc, .res-rich")
+            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
 
         let mut results = Vec::new();
 
@@ -86,7 +83,11 @@ impl So360 {
 
             if let Some(title_elem) = title_elem {
                 let title = title_elem.text().collect::<String>().trim().to_string();
-                let url = title_elem.value().attr("href").unwrap_or_default().to_string();
+                let url = title_elem
+                    .value()
+                    .attr("href")
+                    .unwrap_or_default()
+                    .to_string();
 
                 let content = element
                     .select(&snippet_selector)

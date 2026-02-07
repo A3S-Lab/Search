@@ -32,7 +32,8 @@ impl Search {
     /// Adds a search engine.
     pub fn add_engine<E: Engine + 'static>(&mut self, engine: E) {
         let config = engine.config();
-        self.aggregator.set_engine_weight(&config.name, config.weight);
+        self.aggregator
+            .set_engine_weight(&config.name, config.weight);
         self.engines.push(Arc::new(engine));
     }
 
@@ -121,7 +122,10 @@ impl Search {
                 }
 
                 let config = engine.config();
-                query.categories.iter().any(|cat| config.categories.contains(cat))
+                query
+                    .categories
+                    .iter()
+                    .any(|cat| config.categories.contains(cat))
             })
             .cloned()
             .collect()
@@ -269,20 +273,30 @@ mod tests {
     async fn test_search_aggregates_results() {
         let mut search = Search::new();
 
-        search.add_engine(MockEngine::new("engine1", vec![
-            SearchResult::new("https://example.com", "Example", "Content"),
-        ]));
-        search.add_engine(MockEngine::new("engine2", vec![
-            SearchResult::new("https://example.com", "Example Site", "More content"),
-            SearchResult::new("https://other.com", "Other", "Other content"),
-        ]));
+        search.add_engine(MockEngine::new(
+            "engine1",
+            vec![SearchResult::new(
+                "https://example.com",
+                "Example",
+                "Content",
+            )],
+        ));
+        search.add_engine(MockEngine::new(
+            "engine2",
+            vec![
+                SearchResult::new("https://example.com", "Example Site", "More content"),
+                SearchResult::new("https://other.com", "Other", "Other content"),
+            ],
+        ));
 
         let query = SearchQuery::new("test");
         let results = search.search(query).await.unwrap();
 
         assert_eq!(results.items().len(), 2);
 
-        let example = results.items().iter()
+        let example = results
+            .items()
+            .iter()
             .find(|r| r.url == "https://example.com")
             .unwrap();
         assert_eq!(example.engines.len(), 2);
@@ -303,12 +317,25 @@ mod tests {
     #[tokio::test]
     async fn test_search_filters_disabled_engines() {
         let mut search = Search::new();
-        search.add_engine(MockEngine::new("enabled", vec![
-            SearchResult::new("https://enabled.com", "Enabled", "Content"),
-        ]));
-        search.add_engine(MockEngine::new("disabled", vec![
-            SearchResult::new("https://disabled.com", "Disabled", "Content"),
-        ]).disabled());
+        search.add_engine(MockEngine::new(
+            "enabled",
+            vec![SearchResult::new(
+                "https://enabled.com",
+                "Enabled",
+                "Content",
+            )],
+        ));
+        search.add_engine(
+            MockEngine::new(
+                "disabled",
+                vec![SearchResult::new(
+                    "https://disabled.com",
+                    "Disabled",
+                    "Content",
+                )],
+            )
+            .disabled(),
+        );
 
         let query = SearchQuery::new("test");
         let results = search.search(query).await.unwrap();
@@ -320,15 +347,26 @@ mod tests {
     #[tokio::test]
     async fn test_search_filters_by_category() {
         let mut search = Search::new();
-        search.add_engine(MockEngine::new("general", vec![
-            SearchResult::new("https://general.com", "General", "Content"),
-        ]).with_category(EngineCategory::General));
-        search.add_engine(MockEngine::new("images", vec![
-            SearchResult::new("https://images.com", "Images", "Content"),
-        ]).with_category(EngineCategory::Images));
+        search.add_engine(
+            MockEngine::new(
+                "general",
+                vec![SearchResult::new(
+                    "https://general.com",
+                    "General",
+                    "Content",
+                )],
+            )
+            .with_category(EngineCategory::General),
+        );
+        search.add_engine(
+            MockEngine::new(
+                "images",
+                vec![SearchResult::new("https://images.com", "Images", "Content")],
+            )
+            .with_category(EngineCategory::Images),
+        );
 
-        let query = SearchQuery::new("test")
-            .with_categories(vec![EngineCategory::Images]);
+        let query = SearchQuery::new("test").with_categories(vec![EngineCategory::Images]);
         let results = search.search(query).await.unwrap();
 
         assert_eq!(results.items().len(), 1);
@@ -338,15 +376,22 @@ mod tests {
     #[tokio::test]
     async fn test_search_filters_by_engine_shortcut() {
         let mut search = Search::new();
-        search.add_engine(MockEngine::new("engine1", vec![
-            SearchResult::new("https://one.com", "One", "Content"),
-        ]).with_shortcut("e1"));
-        search.add_engine(MockEngine::new("engine2", vec![
-            SearchResult::new("https://two.com", "Two", "Content"),
-        ]).with_shortcut("e2"));
+        search.add_engine(
+            MockEngine::new(
+                "engine1",
+                vec![SearchResult::new("https://one.com", "One", "Content")],
+            )
+            .with_shortcut("e1"),
+        );
+        search.add_engine(
+            MockEngine::new(
+                "engine2",
+                vec![SearchResult::new("https://two.com", "Two", "Content")],
+            )
+            .with_shortcut("e2"),
+        );
 
-        let query = SearchQuery::new("test")
-            .with_engines(vec!["e1".to_string()]);
+        let query = SearchQuery::new("test").with_engines(vec!["e1".to_string()]);
         let results = search.search(query).await.unwrap();
 
         assert_eq!(results.items().len(), 1);
@@ -356,9 +401,14 @@ mod tests {
     #[tokio::test]
     async fn test_search_handles_engine_failure() {
         let mut search = Search::new();
-        search.add_engine(MockEngine::new("working", vec![
-            SearchResult::new("https://working.com", "Working", "Content"),
-        ]));
+        search.add_engine(MockEngine::new(
+            "working",
+            vec![SearchResult::new(
+                "https://working.com",
+                "Working",
+                "Content",
+            )],
+        ));
         search.add_engine(FailingEngine::new("failing"));
 
         let query = SearchQuery::new("test");
@@ -385,15 +435,31 @@ mod tests {
     #[tokio::test]
     async fn test_search_multiple_categories() {
         let mut search = Search::new();
-        search.add_engine(MockEngine::new("general", vec![
-            SearchResult::new("https://general.com", "General", "Content"),
-        ]).with_category(EngineCategory::General));
-        search.add_engine(MockEngine::new("news", vec![
-            SearchResult::new("https://news.com", "News", "Content"),
-        ]).with_category(EngineCategory::News));
-        search.add_engine(MockEngine::new("images", vec![
-            SearchResult::new("https://images.com", "Images", "Content"),
-        ]).with_category(EngineCategory::Images));
+        search.add_engine(
+            MockEngine::new(
+                "general",
+                vec![SearchResult::new(
+                    "https://general.com",
+                    "General",
+                    "Content",
+                )],
+            )
+            .with_category(EngineCategory::General),
+        );
+        search.add_engine(
+            MockEngine::new(
+                "news",
+                vec![SearchResult::new("https://news.com", "News", "Content")],
+            )
+            .with_category(EngineCategory::News),
+        );
+        search.add_engine(
+            MockEngine::new(
+                "images",
+                vec![SearchResult::new("https://images.com", "Images", "Content")],
+            )
+            .with_category(EngineCategory::Images),
+        );
 
         let query = SearchQuery::new("test")
             .with_categories(vec![EngineCategory::General, EngineCategory::News]);
@@ -404,14 +470,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_set_proxy_pool() {
-        use crate::proxy::{ProxyPool, ProxyConfig};
+        use crate::proxy::{ProxyConfig, ProxyPool};
 
         let mut search = Search::new();
         assert!(search.proxy_pool().is_none());
 
-        let proxy_pool = ProxyPool::with_proxies(vec![
-            ProxyConfig::new("127.0.0.1", 8080),
-        ]);
+        let proxy_pool = ProxyPool::with_proxies(vec![ProxyConfig::new("127.0.0.1", 8080)]);
         search.set_proxy_pool(proxy_pool);
 
         assert!(search.proxy_pool().is_some());
@@ -419,7 +483,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_proxy_pool_reference() {
-        use crate::proxy::{ProxyPool, ProxyConfig};
+        use crate::proxy::{ProxyConfig, ProxyPool};
 
         let mut search = Search::new();
         let proxy_pool = ProxyPool::with_proxies(vec![

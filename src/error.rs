@@ -54,7 +54,10 @@ mod tests {
     #[test]
     fn test_error_display_engine_suspended() {
         let err = SearchError::EngineSuspended("Google".to_string(), "2024-01-01".to_string());
-        assert_eq!(err.to_string(), "Engine 'Google' is suspended until 2024-01-01");
+        assert_eq!(
+            err.to_string(),
+            "Engine 'Google' is suspended until 2024-01-01"
+        );
     }
 
     #[test]

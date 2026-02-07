@@ -349,7 +349,10 @@ mod tests {
     #[test]
     fn test_cli_with_engines() {
         let cli = Cli::parse_from(["a3s-search", "query", "-e", "ddg,wiki"]);
-        assert_eq!(cli.engines, Some(vec!["ddg".to_string(), "wiki".to_string()]));
+        assert_eq!(
+            cli.engines,
+            Some(vec!["ddg".to_string(), "wiki".to_string()])
+        );
     }
 
     #[test]
@@ -391,16 +394,29 @@ mod tests {
     #[test]
     fn test_cli_all_options() {
         let cli = Cli::parse_from([
-            "a3s-search", "rust programming",
-            "-e", "ddg,wiki,baidu",
-            "-l", "20",
-            "-t", "15",
-            "-f", "json",
-            "-p", "socks5://localhost:1080",
-            "-v"
+            "a3s-search",
+            "rust programming",
+            "-e",
+            "ddg,wiki,baidu",
+            "-l",
+            "20",
+            "-t",
+            "15",
+            "-f",
+            "json",
+            "-p",
+            "socks5://localhost:1080",
+            "-v",
         ]);
         assert_eq!(cli.query, Some("rust programming".to_string()));
-        assert_eq!(cli.engines, Some(vec!["ddg".to_string(), "wiki".to_string(), "baidu".to_string()]));
+        assert_eq!(
+            cli.engines,
+            Some(vec![
+                "ddg".to_string(),
+                "wiki".to_string(),
+                "baidu".to_string()
+            ])
+        );
         assert_eq!(cli.limit, 20);
         assert_eq!(cli.timeout, 15);
         assert!(matches!(cli.format, OutputFormat::Json));

@@ -242,7 +242,10 @@ mod so360_tests {
 }
 
 mod meta_search_tests {
-    use a3s_search::{Search, SearchQuery, engines::{DuckDuckGo, Wikipedia}};
+    use a3s_search::{
+        engines::{DuckDuckGo, Wikipedia},
+        Search, SearchQuery,
+    };
 
     #[tokio::test]
     #[ignore]
@@ -254,7 +257,10 @@ mod meta_search_tests {
         let query = SearchQuery::new("rust programming language");
         let results = search.search(query).await.unwrap();
 
-        println!("Meta search returned {} results in {}ms", results.count, results.duration_ms);
+        println!(
+            "Meta search returned {} results in {}ms",
+            results.count, results.duration_ms
+        );
 
         for (i, result) in results.items().iter().take(5).enumerate() {
             println!(
@@ -266,7 +272,10 @@ mod meta_search_tests {
             );
         }
 
-        assert!(!results.items().is_empty(), "Meta search should return results");
+        assert!(
+            !results.items().is_empty(),
+            "Meta search should return results"
+        );
     }
 
     #[tokio::test]
@@ -281,7 +290,10 @@ mod meta_search_tests {
         let query = SearchQuery::new("Rust 编程语言");
         let results = search.search(query).await.unwrap();
 
-        println!("Chinese meta search returned {} results in {}ms", results.count, results.duration_ms);
+        println!(
+            "Chinese meta search returned {} results in {}ms",
+            results.count, results.duration_ms
+        );
 
         for (i, result) in results.items().iter().take(5).enumerate() {
             println!(

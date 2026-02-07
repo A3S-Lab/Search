@@ -69,18 +69,14 @@ impl Brave {
     fn parse_results(&self, html: &str) -> Result<Vec<SearchResult>> {
         let document = Html::parse_document(html);
 
-        let result_selector = Selector::parse("#results .snippet").map_err(|e| {
-            SearchError::Parse(format!("Failed to parse selector: {:?}", e))
-        })?;
-        let title_selector = Selector::parse(".snippet-title").map_err(|e| {
-            SearchError::Parse(format!("Failed to parse selector: {:?}", e))
-        })?;
-        let desc_selector = Selector::parse(".snippet-description").map_err(|e| {
-            SearchError::Parse(format!("Failed to parse selector: {:?}", e))
-        })?;
-        let url_selector = Selector::parse("a").map_err(|e| {
-            SearchError::Parse(format!("Failed to parse selector: {:?}", e))
-        })?;
+        let result_selector = Selector::parse("#results .snippet")
+            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
+        let title_selector = Selector::parse(".snippet-title")
+            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
+        let desc_selector = Selector::parse(".snippet-description")
+            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
+        let url_selector = Selector::parse("a")
+            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
 
         let mut results = Vec::new();
 
