@@ -636,6 +636,16 @@ A3S Search is a **utility component** of the A3S ecosystem.
 - [ ] Search suggestions
 - [ ] Spelling corrections
 - [ ] Plugin system
+- [ ] **ML-based Ranking**: Learning-to-rank model for result quality
+  - [ ] Feature extraction (engine agreement, position, freshness, domain authority)
+  - [ ] Lightweight ranking model (logistic regression / small neural net)
+  - [ ] A/B testing framework for ranking experiments
+  - [ ] Feedback loop: click-through rate → ranking improvement
+- [ ] **OpenTelemetry Integration**:
+  - [ ] Span: `a3s.search.query` with attributes: query, engines, result_count, latency_ms
+  - [ ] Per-engine spans: `a3s.search.engine.{name}` with timeout/error tracking
+  - [ ] Metrics: `a3s_search_engine_latency_seconds{engine}` histogram
+  - [ ] Metrics: `a3s_search_engine_errors_total{engine}` counter
 
 ## License
 
