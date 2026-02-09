@@ -16,7 +16,7 @@ use a3s_search::{
 #[cfg(feature = "headless")]
 use a3s_search::{
     browser::{BrowserFetcher, BrowserPool, BrowserPoolConfig},
-    engines::Google,
+    engines::{Baidu, BingChina, Google},
     PageFetcher, WaitStrategy,
 };
 
@@ -126,7 +126,7 @@ async fn main() -> Result<()> {
                 println!("  a3s-search \"Rust\" -f json");
                 println!("  a3s-search \"Rust\" -p http://127.0.0.1:8080\n");
                 println!("Options:");
-                println!("  -e, --engines <ENGINES>  Engines: ddg,brave,wiki,sogou,360,g");
+                println!("  -e, --engines <ENGINES>  Engines: ddg,brave,wiki,sogou,360,g,baidu,bing_cn");
                 println!("  -l, --limit <N>          Max results (default: 10)");
                 println!("  -t, --timeout <SECS>     Timeout in seconds (default: 10)");
                 println!("  -f, --format <FORMAT>    Output: text, json, compact");
@@ -168,6 +168,8 @@ fn list_engines() -> Result<()> {
         println!();
         println!("  Headless (requires --headless flag):");
         println!("    g        - Google (requires Chrome/Chromium)");
+        println!("    baidu    - Baidu (百度, requires Chrome/Chromium)");
+        println!("    bing_cn  - Bing China (必应中国, requires Chrome/Chromium)");
     }
 
     println!();
@@ -238,11 +240,32 @@ async fn run_search(args: SearchArgs) -> Result<()> {
                     );
                 }
             }
+            #[cfg(feature = "headless")]
+            "baidu" => {
+                if let Some(ref fetcher) = browser_fetcher {
+                    search.add_engine(Baidu::new(std::sync::Arc::clone(fetcher)));
+                } else {
+                    eprintln!(
+                        "Warning: Baidu engine requires --headless flag, skipping"
+                    );
+                }
+            }
+            #[cfg(feature = "headless")]
+            "bing_cn" | "bing" => {
+                if let Some(ref fetcher) = browser_fetcher {
+                    search.add_engine(BingChina::new(std::sync::Arc::clone(fetcher)));
+                } else {
+                    eprintln!(
+                        "Warning: Bing China engine requires --headless flag, skipping"
+                    );
+                }
+            }
             #[cfg(not(feature = "headless"))]
-            "g" | "google" => {
+            "g" | "google" | "baidu" | "bing_cn" | "bing" => {
                 eprintln!(
-                    "Warning: Google engine requires the 'headless' feature. \
-                     Rebuild with: cargo build --features headless"
+                    "Warning: '{}' engine requires the 'headless' feature. \
+                     Rebuild with: cargo build --features headless",
+                    shortcut
                 );
             }
             _ => {

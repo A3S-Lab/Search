@@ -198,6 +198,82 @@ mod google_tests {
     }
 }
 
+#[cfg(feature = "headless")]
+mod baidu_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    use a3s_search::{
+        browser::{BrowserFetcher, BrowserPool, BrowserPoolConfig},
+        engines::Baidu,
+        WaitStrategy,
+    };
+
+    fn make_baidu_engine() -> Baidu {
+        let pool = Arc::new(BrowserPool::new(BrowserPoolConfig::default()));
+        let fetcher = Arc::new(BrowserFetcher::new(pool).with_wait(WaitStrategy::Selector {
+            css: "div.c-container".to_string(),
+            timeout_ms: 5000,
+        }));
+        Baidu::new(fetcher)
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_baidu_search() {
+        let engine = make_baidu_engine();
+        let results = test_engine(engine, "Rust 编程").await;
+        println!("Baidu returned {} results", results.len());
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_baidu_config() {
+        let engine = make_baidu_engine();
+        assert_eq!(engine.name(), "Baidu");
+        assert_eq!(engine.shortcut(), "baidu");
+        assert!(engine.is_enabled());
+    }
+}
+
+#[cfg(feature = "headless")]
+mod bing_china_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    use a3s_search::{
+        browser::{BrowserFetcher, BrowserPool, BrowserPoolConfig},
+        engines::BingChina,
+        WaitStrategy,
+    };
+
+    fn make_bing_china_engine() -> BingChina {
+        let pool = Arc::new(BrowserPool::new(BrowserPoolConfig::default()));
+        let fetcher = Arc::new(BrowserFetcher::new(pool).with_wait(WaitStrategy::Selector {
+            css: "li.b_algo".to_string(),
+            timeout_ms: 5000,
+        }));
+        BingChina::new(fetcher)
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_bing_china_search() {
+        let engine = make_bing_china_engine();
+        let results = test_engine(engine, "Rust 编程").await;
+        println!("Bing China returned {} results", results.len());
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_bing_china_config() {
+        let engine = make_bing_china_engine();
+        assert_eq!(engine.name(), "Bing China");
+        assert_eq!(engine.shortcut(), "bing_cn");
+        assert!(engine.is_enabled());
+    }
+}
+
 mod meta_search_tests {
     use a3s_search::{
         engines::{DuckDuckGo, Wikipedia},

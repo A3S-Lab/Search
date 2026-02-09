@@ -91,6 +91,9 @@ a3s-search "Rust programming" -e ddg,wiki,sogou
 # Search with Google (requires headless feature and Chrome installed)
 a3s-search "Rust programming" -e g,ddg --headless
 
+# Search with Chinese headless engines
+a3s-search "Rust 编程" -e baidu,bing_cn --headless
+
 # Limit results
 a3s-search "Rust programming" -l 5
 
@@ -123,6 +126,8 @@ a3s-search engines
 | `sogou` | Sogou | 搜狗搜索 |
 | `360` | 360 Search | 360搜索 |
 | `g` | Google | Google Search (requires `headless` feature + `--headless` flag) |
+| `baidu` | Baidu | 百度搜索 (requires `headless` feature + `--headless` flag) |
+| `bing_cn` | Bing China | 必应中国 (requires `headless` feature + `--headless` flag) |
 
 ### Supported Search Engines
 
@@ -141,12 +146,14 @@ a3s-search engines
 |--------|----------|-------------|
 | Sogou | `sogou` | 搜狗搜索 |
 | So360 | `360` | 360搜索 |
+| Baidu | `baidu` | 百度搜索 (headless browser, `headless` feature) |
+| Bing China | `bing_cn` | 必应中国 (headless browser, `headless` feature) |
 
 ## Quality Metrics
 
 ### Test Coverage
 
-**207 comprehensive unit tests** (183 library + 24 CLI) with **94.07% line coverage**:
+**222 comprehensive unit tests** (198 library + 24 CLI) with **94.36% line coverage**:
 
 | Module | Lines | Coverage | Functions | Coverage |
 |--------|-------|----------|-----------|----------|
@@ -157,6 +164,8 @@ a3s-search engines
 | search.rs | 337 | 99.41% | 58 | 100.00% |
 | aggregator.rs | 241 | 99.17% | 24 | 100.00% |
 | proxy.rs | 410 | 99.02% | 91 | 96.70% |
+| engines/bing_china.rs | 164 | 96.95% | 18 | 77.78% |
+| engines/baidu.rs | 146 | 96.58% | 17 | 76.47% |
 | engines/google.rs | 180 | 96.11% | 19 | 73.68% |
 | engines/brave.rs | 140 | 95.71% | 20 | 75.00% |
 | engines/so360.rs | 132 | 95.45% | 18 | 77.78% |
@@ -166,7 +175,7 @@ a3s-search engines
 | engines/wikipedia.rs | 114 | 87.72% | 20 | 85.00% |
 | engines/duckduckgo.rs | 132 | 86.36% | 20 | 70.00% |
 | browser.rs | 167 | 52.69% | 31 | 41.94% |
-| **TOTAL** | **2511** | **94.07%** | **411** | **88.08%** |
+| **TOTAL** | **2821** | **94.36%** | **446** | **87.22%** |
 
 *Note: `browser.rs` has lower coverage because `BrowserPool::acquire_browser()` and `BrowserFetcher::fetch()` require a running Chrome process. Integration tests (in `tests/integration.rs`) verify real browser functionality but are `#[ignore]` by default.*
 
@@ -183,7 +192,7 @@ cargo llvm-cov -p a3s-search --features headless --lib --summary-only
 # Default build (5 engines, 192 tests)
 cargo test -p a3s-search
 
-# With headless feature (6 engines, 207 tests)
+# With headless feature (8 engines, 222 tests)
 cargo test -p a3s-search --features headless
 
 # Integration tests (requires network + Chrome for Google)
@@ -548,7 +557,7 @@ pub trait Engine: Send + Sync {
 # Build (default, 5 engines)
 cargo build -p a3s-search
 
-# Build with headless browser support (6 engines, includes Google)
+# Build with headless browser support (8 engines, includes Google/Baidu/Bing China)
 cargo build -p a3s-search --features headless
 
 # Test (default)
@@ -601,6 +610,8 @@ search/
         ├── brave.rs         # Brave Search
         ├── google.rs        # Google (headless feature)
         ├── wikipedia.rs     # Wikipedia
+        ├── baidu.rs         # Baidu (百度, headless feature)
+        ├── bing_china.rs    # Bing China (必应中国, headless feature)
         ├── sogou.rs         # Sogou (搜狗)
         └── so360.rs         # 360 Search (360搜索)
 ```
@@ -640,8 +651,8 @@ A3S Search is a **utility component** of the A3S ecosystem.
 - [x] Consensus-based ranking algorithm
 - [x] Parallel async search execution
 - [x] Per-engine timeout handling
-- [x] 6 built-in engines (4 international + 2 Chinese)
-- [x] Headless browser support for JS-rendered engines (Google via `headless` feature)
+- [x] 8 built-in engines (4 international + 4 Chinese)
+- [x] Headless browser support for JS-rendered engines (Google, Baidu, Bing China via `headless` feature)
 - [x] PageFetcher abstraction (HttpFetcher + BrowserFetcher)
 - [x] BrowserPool with tab concurrency control
 
@@ -652,7 +663,7 @@ A3S Search is a **utility component** of the A3S ecosystem.
 - [ ] Result caching
 - [ ] Engine health monitoring
 - [ ] Automatic engine suspension on failures
-- [ ] More headless engines (Baidu, Bing China, Yandex via `headless` feature)
+- [ ] More headless engines (Yandex, Yahoo, Naver via `headless` feature)
 - [ ] More plain-HTTP engines (Qwant, etc.)
 
 ### Phase 3: Advanced 📋 (Future)
