@@ -61,6 +61,7 @@ async fn main() -> anyhow::Result<()> {
 - **Extensible**: Easy to add custom search engines via the `Engine` trait
 - **Proxy Pool**: Dynamic proxy IP rotation to avoid anti-crawler blocking
 - **Headless Browser**: Optional Chrome/Chromium integration for JS-rendered engines (feature-gated)
+- **Auto-Install Chrome**: Automatically detects or downloads Chrome for Testing when no browser is found
 - **PageFetcher Abstraction**: Pluggable page fetching (plain HTTP or headless browser)
 - **CLI Tool**: Command-line interface for quick searches
 
@@ -149,11 +150,36 @@ a3s-search engines
 | Baidu | `baidu` | 百度搜索 (headless browser, `headless` feature) |
 | Bing China | `bing_cn` | 必应中国 (headless browser, `headless` feature) |
 
+### Automatic Chrome Setup
+
+When using headless engines (`g`, `baidu`, `bing_cn`), Chrome/Chromium is required. A3S Search handles this automatically:
+
+1. **Detect** — Checks `CHROME` env var, PATH commands, and well-known install paths
+2. **Cache** — Looks for a previously downloaded Chrome in `~/.a3s/chromium/`
+3. **Download** — If not found, downloads [Chrome for Testing](https://googlechromelabs.github.io/chrome-for-testing/) from Google's official CDN
+
+Supported platforms: **macOS** (arm64, x64) and **Linux** (x64).
+
+```bash
+# First run: Chrome is auto-downloaded if not installed
+a3s-search "Rust programming" -e g --headless
+# Fetching Chrome for Testing version info...
+# Downloading Chrome for Testing v145.0.7632.46 (mac-arm64)...
+# Downloaded 150.2 MB, extracting...
+# Chrome for Testing v145.0.7632.46 installed successfully!
+
+# Subsequent runs: uses cached Chrome instantly
+a3s-search "Rust programming" -e g --headless
+
+# Or set CHROME env var to use a specific binary
+CHROME=/usr/bin/chromium a3s-search "query" -e g --headless
+```
+
 ## Quality Metrics
 
 ### Test Coverage
 
-**198 comprehensive unit tests** (168 default + 30 headless) with **94.36% line coverage**:
+**207 comprehensive unit tests** (168 default + 39 headless) with **94.36% line coverage**:
 
 | Module | Lines | Coverage | Functions | Coverage |
 |--------|-------|----------|-----------|----------|
@@ -200,7 +226,7 @@ just cov-html
 # Default build (5 engines, 168 tests)
 cargo test -p a3s-search --lib
 
-# With headless feature (8 engines, 198 tests)
+# With headless feature (8 engines, 207 tests)
 cargo test -p a3s-search --features headless --lib
 
 # Integration tests (requires network + Chrome for Google)
@@ -640,6 +666,7 @@ search/
     ├── fetcher.rs           # PageFetcher trait, WaitStrategy
     ├── fetcher_http.rs      # HttpFetcher (reqwest wrapper)
     ├── browser.rs           # BrowserPool, BrowserFetcher (headless feature)
+    ├── browser_setup.rs     # Chrome auto-detection and download (headless feature)
     └── engines/
         ├── mod.rs           # Engine exports
         ├── duckduckgo.rs    # DuckDuckGo
@@ -693,7 +720,8 @@ A3S Search is a **utility component** of the A3S ecosystem.
 - [x] BrowserPool with tab concurrency control
 - [x] Proxy pool with dynamic provider support
 - [x] CLI tool with Homebrew distribution
-- [x] 198 comprehensive unit tests with 94.36% line coverage
+- [x] Automatic Chrome detection and download (Chrome for Testing)
+- [x] 207 comprehensive unit tests with 94.36% line coverage
 
 ## License
 

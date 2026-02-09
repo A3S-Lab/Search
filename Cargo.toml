@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 [features]
 default = []
-headless = ["dep:chromiumoxide"]
+headless = ["dep:chromiumoxide", "dep:which", "dep:zip"]
 
 [dependencies]
 # Async runtime
@@ -49,6 +49,10 @@ regex = "1"
 
 # Headless browser (optional, for JS-rendered engines)
 chromiumoxide = { version = "0.7", features = ["tokio-runtime"], optional = true }
+
+# Browser detection and auto-install (optional, for headless feature)
+which = { version = "7", optional = true }
+zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
 
 # Self-update
 a3s-updater = { version = "0.1", path = "../updater" }

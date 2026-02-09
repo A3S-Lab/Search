@@ -71,6 +71,9 @@ pub mod engines;
 #[cfg(feature = "headless")]
 pub mod browser;
 
+#[cfg(feature = "headless")]
+pub mod browser_setup;
+
 pub use aggregator::Aggregator;
 pub use engine::{Engine, EngineCategory, EngineConfig};
 pub use error::{Result, SearchError};

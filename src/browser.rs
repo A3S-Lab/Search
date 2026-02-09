@@ -86,8 +86,13 @@ impl BrowserPool {
             builder = builder.arg("--headless=new");
         }
 
+        // Resolve Chrome executable: explicit path > auto-detect > auto-download
         if let Some(ref path) = self.config.chrome_path {
             builder = builder.chrome_executable(path);
+        } else {
+            let chrome_path = crate::browser_setup::ensure_chrome().await?;
+            debug!("Using Chrome at: {}", chrome_path.display());
+            builder = builder.chrome_executable(chrome_path);
         }
 
         // Standard arguments for scraping
