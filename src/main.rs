@@ -13,6 +13,13 @@ use a3s_search::{
     Search, SearchQuery,
 };
 
+#[cfg(feature = "headless")]
+use a3s_search::{
+    browser::{BrowserFetcher, BrowserPool, BrowserPoolConfig},
+    engines::Google,
+    PageFetcher, WaitStrategy,
+};
+
 /// A3S Search - Embeddable meta search engine CLI
 #[derive(Parser)]
 #[command(name = "a3s-search")]
@@ -41,6 +48,10 @@ struct Cli {
     /// Proxy URL (e.g., http://127.0.0.1:8080 or socks5://127.0.0.1:1080)
     #[arg(short, long)]
     proxy: Option<String>,
+
+    /// Use headless browser for JS-rendered engines (e.g., Google)
+    #[arg(long)]
+    headless: bool,
 
     /// Enable verbose output
     #[arg(short, long)]
@@ -101,6 +112,7 @@ async fn main() -> Result<()> {
                     timeout: cli.timeout,
                     format: cli.format,
                     proxy: cli.proxy,
+                    headless: cli.headless,
                 })
                 .await
             } else {
@@ -114,11 +126,12 @@ async fn main() -> Result<()> {
                 println!("  a3s-search \"Rust\" -f json");
                 println!("  a3s-search \"Rust\" -p http://127.0.0.1:8080\n");
                 println!("Options:");
-                println!("  -e, --engines <ENGINES>  Engines: ddg,brave,wiki,sogou,360");
+                println!("  -e, --engines <ENGINES>  Engines: ddg,brave,wiki,sogou,360,g");
                 println!("  -l, --limit <N>          Max results (default: 10)");
                 println!("  -t, --timeout <SECS>     Timeout in seconds (default: 10)");
                 println!("  -f, --format <FORMAT>    Output: text, json, compact");
                 println!("  -p, --proxy <URL>        Proxy URL (http/https/socks5)");
+                println!("  --headless               Use headless browser for JS engines");
                 println!("  -v, --verbose            Enable debug logging");
                 println!("  -h, --help               Show help");
                 println!("  -V, --version            Show version\n");
@@ -136,6 +149,7 @@ struct SearchArgs {
     timeout: u64,
     format: OutputFormat,
     proxy: Option<String>,
+    headless: bool,
 }
 
 fn list_engines() -> Result<()> {
@@ -148,6 +162,14 @@ fn list_engines() -> Result<()> {
     println!("  Chinese:");
     println!("    sogou    - Sogou (搜狗)");
     println!("    360      - 360 Search (360搜索)");
+
+    #[cfg(feature = "headless")]
+    {
+        println!();
+        println!("  Headless (requires --headless flag):");
+        println!("    g        - Google (requires Chrome/Chromium)");
+    }
+
     println!();
     println!("Usage: a3s-search \"query\" -e ddg,wiki,sogou");
     Ok(())
@@ -167,6 +189,33 @@ async fn run_search(args: SearchArgs) -> Result<()> {
         }
     }
 
+    // Warn if --headless is passed without the feature
+    #[cfg(not(feature = "headless"))]
+    if args.headless {
+        eprintln!(
+            "Warning: --headless flag requires the 'headless' feature. \
+             Rebuild with: cargo build --features headless"
+        );
+    }
+
+    // Setup headless browser fetcher if requested
+    #[cfg(feature = "headless")]
+    let browser_fetcher: Option<std::sync::Arc<dyn PageFetcher>> = if args.headless {
+        let pool_config = BrowserPoolConfig {
+            proxy_url: args.proxy.clone(),
+            ..Default::default()
+        };
+        let pool = std::sync::Arc::new(BrowserPool::new(pool_config));
+        Some(std::sync::Arc::new(
+            BrowserFetcher::new(pool).with_wait(WaitStrategy::Selector {
+                css: "div.g".to_string(),
+                timeout_ms: 5000,
+            }),
+        ))
+    } else {
+        None
+    };
+
     // Add engines based on selection
     let engine_shortcuts: Vec<String> = args
         .engines
@@ -179,6 +228,23 @@ async fn run_search(args: SearchArgs) -> Result<()> {
             "wiki" | "wikipedia" => search.add_engine(Wikipedia::new()),
             "sogou" => search.add_engine(Sogou::new()),
             "360" | "so360" => search.add_engine(So360::new()),
+            #[cfg(feature = "headless")]
+            "g" | "google" => {
+                if let Some(ref fetcher) = browser_fetcher {
+                    search.add_engine(Google::new(std::sync::Arc::clone(fetcher)));
+                } else {
+                    eprintln!(
+                        "Warning: Google engine requires --headless flag, skipping"
+                    );
+                }
+            }
+            #[cfg(not(feature = "headless"))]
+            "g" | "google" => {
+                eprintln!(
+                    "Warning: Google engine requires the 'headless' feature. \
+                     Rebuild with: cargo build --features headless"
+                );
+            }
             _ => {
                 eprintln!("Warning: Unknown engine '{}', skipping", shortcut);
             }
@@ -441,5 +507,27 @@ mod tests {
         let cli = Cli::parse_from(["a3s-search"]);
         assert!(cli.query.is_none());
         assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn test_cli_with_headless() {
+        let cli = Cli::parse_from(["a3s-search", "query", "--headless"]);
+        assert!(cli.headless);
+    }
+
+    #[test]
+    fn test_cli_headless_default_false() {
+        let cli = Cli::parse_from(["a3s-search", "query"]);
+        assert!(!cli.headless);
+    }
+
+    #[test]
+    fn test_cli_headless_with_google_engine() {
+        let cli = Cli::parse_from(["a3s-search", "query", "-e", "g,ddg", "--headless"]);
+        assert!(cli.headless);
+        assert_eq!(
+            cli.engines,
+            Some(vec!["g".to_string(), "ddg".to_string()])
+        );
     }
 }

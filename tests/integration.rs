@@ -159,6 +159,45 @@ mod so360_tests {
     }
 }
 
+#[cfg(feature = "headless")]
+mod google_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    use a3s_search::{
+        browser::{BrowserFetcher, BrowserPool, BrowserPoolConfig},
+        engines::Google,
+        WaitStrategy,
+    };
+
+    fn make_google_engine() -> Google {
+        let pool = Arc::new(BrowserPool::new(BrowserPoolConfig::default()));
+        let fetcher = Arc::new(BrowserFetcher::new(pool).with_wait(WaitStrategy::Selector {
+            css: "div.g".to_string(),
+            timeout_ms: 5000,
+        }));
+        Google::new(fetcher)
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_google_search() {
+        let engine = make_google_engine();
+        let results = test_engine(engine, "rust programming").await;
+        assert!(!results.is_empty(), "Google should return results");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_google_config() {
+        let engine = make_google_engine();
+        assert_eq!(engine.name(), "Google");
+        assert_eq!(engine.shortcut(), "g");
+        assert!(engine.is_enabled());
+        assert_eq!(engine.weight(), 1.5);
+    }
+}
+
 mod meta_search_tests {
     use a3s_search::{
         engines::{DuckDuckGo, Wikipedia},

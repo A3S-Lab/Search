@@ -41,7 +41,7 @@ async fn main() -> anyhow::Result<()> {
     let results = search.search(query).await?;
 
     // Display results
-    for result in results.items().take(10) {
+    for result in results.items().iter().take(10) {
         println!("{}: {}", result.title, result.url);
         println!("  Engines: {:?}, Score: {:.2}", result.engines, result.score);
     }
@@ -60,6 +60,8 @@ async fn main() -> anyhow::Result<()> {
 - **Timeout Handling**: Per-engine timeout with graceful degradation
 - **Extensible**: Easy to add custom search engines via the `Engine` trait
 - **Proxy Pool**: Dynamic proxy IP rotation to avoid anti-crawler blocking
+- **Headless Browser**: Optional Chrome/Chromium integration for JS-rendered engines (feature-gated)
+- **PageFetcher Abstraction**: Pluggable page fetching (plain HTTP or headless browser)
 - **CLI Tool**: Command-line interface for quick searches
 
 ## CLI Usage
@@ -84,7 +86,10 @@ cargo install a3s-search
 a3s-search "Rust programming"
 
 # Search with specific engines
-a3s-search "Rust programming" -e ddg,wiki,baidu
+a3s-search "Rust programming" -e ddg,wiki,sogou
+
+# Search with Google (requires headless feature and Chrome installed)
+a3s-search "Rust programming" -e g,ddg --headless
 
 # Limit results
 a3s-search "Rust programming" -l 5
@@ -114,12 +119,10 @@ a3s-search engines
 |----------|--------|-------------|
 | `ddg` | DuckDuckGo | Privacy-focused search |
 | `brave` | Brave | Brave Search |
-| `google` | Google | Google Search |
 | `wiki` | Wikipedia | Wikipedia API |
-| `baidu` | Baidu | 百度搜索 |
 | `sogou` | Sogou | 搜狗搜索 |
-| `bing_cn` | Bing China | 必应中国 |
 | `360` | 360 Search | 360搜索 |
+| `g` | Google | Google Search (requires `headless` feature + `--headless` flag) |
 
 ### Supported Search Engines
 
@@ -129,61 +132,62 @@ a3s-search engines
 |--------|----------|-------------|
 | DuckDuckGo | `ddg` | Privacy-focused search |
 | Brave | `brave` | Brave Search |
-| Google | `g` | Google Search |
 | Wikipedia | `wiki` | Wikipedia API |
+| Google | `g` | Google Search (headless browser, `headless` feature) |
 
 #### Chinese Engines (中国搜索引擎)
 
 | Engine | Shortcut | Description |
 |--------|----------|-------------|
-| Baidu | `baidu` | 百度搜索 |
 | Sogou | `sogou` | 搜狗搜索 |
-| BingChina | `bing_cn` | 必应中国 |
 | So360 | `360` | 360搜索 |
 
 ## Quality Metrics
 
 ### Test Coverage
 
-**188 unit tests** (167 library + 21 CLI) + **22 integration tests** with comprehensive coverage:
+**207 comprehensive unit tests** (183 library + 24 CLI) with **94.07% line coverage**:
 
 | Module | Lines | Coverage | Functions | Coverage |
 |--------|-------|----------|-----------|----------|
-| aggregator.rs | 239 | 99.16% | 25 | 100.00% |
-| engine.rs | 119 | 100.00% | 18 | 100.00% |
-| error.rs | 29 | 100.00% | 7 | 100.00% |
-| query.rs | 113 | 100.00% | 20 | 100.00% |
-| result.rs | 193 | 100.00% | 36 | 100.00% |
-| search.rs | 313 | 99.36% | 58 | 100.00% |
-| proxy.rs | 417 | 98.32% | 91 | 97.80% |
-| duckduckgo.rs | 138 | 80.43% | 20 | 70.00% |
-| wikipedia.rs | 114 | 87.72% | 20 | 85.00% |
-| baidu.rs | 99 | 71.72% | 15 | 66.67% |
-| sogou.rs | 95 | 70.53% | 15 | 66.67% |
-| bing_china.rs | 95 | 70.53% | 15 | 66.67% |
-| so360.rs | 95 | 70.53% | 15 | 66.67% |
-| brave.rs | 108 | 62.96% | 18 | 55.56% |
-| google.rs | 109 | 63.30% | 18 | 55.56% |
-| **Total** | **2276** | **89.19%** | **391** | **87.72%** |
+| engine.rs | 116 | 100.00% | 17 | 100.00% |
+| error.rs | 34 | 100.00% | 8 | 100.00% |
+| query.rs | 114 | 100.00% | 20 | 100.00% |
+| result.rs | 194 | 100.00% | 35 | 100.00% |
+| search.rs | 337 | 99.41% | 58 | 100.00% |
+| aggregator.rs | 241 | 99.17% | 24 | 100.00% |
+| proxy.rs | 410 | 99.02% | 91 | 96.70% |
+| engines/google.rs | 180 | 96.11% | 19 | 73.68% |
+| engines/brave.rs | 140 | 95.71% | 20 | 75.00% |
+| engines/so360.rs | 132 | 95.45% | 18 | 77.78% |
+| engines/sogou.rs | 131 | 95.42% | 17 | 76.47% |
+| fetcher_http.rs | 29 | 93.10% | 7 | 85.71% |
+| fetcher.rs | 40 | 92.50% | 6 | 100.00% |
+| engines/wikipedia.rs | 114 | 87.72% | 20 | 85.00% |
+| engines/duckduckgo.rs | 132 | 86.36% | 20 | 70.00% |
+| browser.rs | 167 | 52.69% | 31 | 41.94% |
+| **TOTAL** | **2511** | **94.07%** | **411** | **88.08%** |
 
-*Note: Engine implementations require HTTP requests for full coverage. Integration tests (in `tests/integration.rs`) verify real HTTP functionality but are `#[ignore]` by default.*
+*Note: `browser.rs` has lower coverage because `BrowserPool::acquire_browser()` and `BrowserFetcher::fetch()` require a running Chrome process. Integration tests (in `tests/integration.rs`) verify real browser functionality but are `#[ignore]` by default.*
 
 Run coverage report:
 ```bash
-cargo llvm-cov -p a3s-search --lib --summary-only
+LLVM_COV="$(rustup run stable rustc --print sysroot)/lib/rustlib/$(rustc -vV | grep host | cut -d' ' -f2)/bin/llvm-cov" \
+LLVM_PROFDATA="$(rustup run stable rustc --print sysroot)/lib/rustlib/$(rustc -vV | grep host | cut -d' ' -f2)/bin/llvm-profdata" \
+cargo llvm-cov -p a3s-search --features headless --lib --summary-only
 ```
 
 ### Running Tests
 
 ```bash
-# Run unit tests
+# Default build (5 engines, 192 tests)
 cargo test -p a3s-search
 
-# Run with output
-cargo test -p a3s-search -- --nocapture
+# With headless feature (6 engines, 207 tests)
+cargo test -p a3s-search --features headless
 
-# Run integration tests (requires network)
-cargo test -p a3s-search -- --ignored
+# Integration tests (requires network + Chrome for Google)
+cargo test -p a3s-search --features headless -- --ignored
 ```
 
 ## Architecture
@@ -213,6 +217,10 @@ weight = engine_weight × num_engines_found
 │  │  │DuckDuck │ │ Brave   │ │Wikipedia│  ...    │ │
 │  │  │  Go     │ │         │ │         │         │ │
 │  │  └─────────┘ └─────────┘ └─────────┘         │ │
+│  │  ┌─────────────────────────────────┐          │ │
+│  │  │ Google (headless feature)       │          │ │
+│  │  │   └─ PageFetcher → BrowserPool  │          │ │
+│  │  └─────────────────────────────────┘          │ │
 │  └───────────────────────────────────────────────┘ │
 │                      ↓ parallel search              │
 │  ┌───────────────────────────────────────────────┐ │
@@ -225,6 +233,11 @@ weight = engine_weight × num_engines_found
 │                      ↓                              │
 │              SearchResults                          │
 └─────────────────────────────────────────────────────┘
+
+PageFetcher (trait)
+  ├── HttpFetcher     (reqwest, plain HTTP)
+  └── BrowserFetcher  (chromiumoxide, headless Chrome)
+        └── BrowserPool (shared process, tab semaphore)
 ```
 
 ## Quick Start
@@ -235,8 +248,11 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-a3s-search = "0.1"
+a3s-search = "0.3"
 tokio = { version = "1", features = ["full"] }
+
+# Optional: enable headless browser support for Google engine
+# a3s-search = { version = "0.3", features = ["headless"] }
 ```
 
 ### Basic Search
@@ -256,12 +272,10 @@ println!("Found {} results", results.count);
 ### Chinese Search (中文搜索)
 
 ```rust
-use a3s_search::{Search, SearchQuery, engines::{Baidu, Sogou, BingChina, So360}};
+use a3s_search::{Search, SearchQuery, engines::{Sogou, So360}};
 
 let mut search = Search::new();
-search.add_engine(Baidu::new());      // 百度
 search.add_engine(Sogou::new());      // 搜狗
-search.add_engine(BingChina::new());  // 必应中国
 search.add_engine(So360::new());      // 360搜索
 
 let query = SearchQuery::new("Rust 编程语言");
@@ -525,29 +539,36 @@ pub trait Engine: Send + Sync {
 
 | Dependency | Install | Purpose |
 |------------|---------|---------|
-| `cargo-llvm-cov` | `cargo install cargo-llvm-cov` | Code coverage |
+| `cargo-llvm-cov` | `cargo install cargo-llvm-cov` | Code coverage (optional) |
+| Chrome/Chromium | System package manager | Required for `headless` feature |
 
 ### Build Commands
 
 ```bash
-# Build
+# Build (default, 5 engines)
 cargo build -p a3s-search
 
-# Test
+# Build with headless browser support (6 engines, includes Google)
+cargo build -p a3s-search --features headless
+
+# Test (default)
 cargo test -p a3s-search
+
+# Test with headless feature
+cargo test -p a3s-search --features headless
 
 # Test with output
 cargo test -p a3s-search -- --nocapture
-
-# Coverage
-cargo llvm-cov -p a3s-search --lib --summary-only
 
 # Run examples
 cargo run -p a3s-search --example basic_search
 cargo run -p a3s-search --example chinese_search
 
 # Run CLI
-cargo run -p a3s-search --bin a3s-search -- search "query"
+cargo run -p a3s-search -- "query"
+
+# Run CLI with Google (headless)
+cargo run -p a3s-search --features headless -- "query" -e g --headless
 ```
 
 ### Project Structure
@@ -571,15 +592,16 @@ search/
     ├── aggregator.rs        # Result aggregation and ranking
     ├── search.rs            # Search orchestrator
     ├── proxy.rs             # Proxy pool and configuration
+    ├── fetcher.rs           # PageFetcher trait, WaitStrategy
+    ├── fetcher_http.rs      # HttpFetcher (reqwest wrapper)
+    ├── browser.rs           # BrowserPool, BrowserFetcher (headless feature)
     └── engines/
         ├── mod.rs           # Engine exports
         ├── duckduckgo.rs    # DuckDuckGo
         ├── brave.rs         # Brave Search
-        ├── google.rs        # Google
+        ├── google.rs        # Google (headless feature)
         ├── wikipedia.rs     # Wikipedia
-        ├── baidu.rs         # Baidu (百度)
         ├── sogou.rs         # Sogou (搜狗)
-        ├── bing_china.rs    # Bing China (必应中国)
         └── so360.rs         # 360 Search (360搜索)
 ```
 
@@ -618,7 +640,10 @@ A3S Search is a **utility component** of the A3S ecosystem.
 - [x] Consensus-based ranking algorithm
 - [x] Parallel async search execution
 - [x] Per-engine timeout handling
-- [x] 8 built-in engines (4 international + 4 Chinese)
+- [x] 6 built-in engines (4 international + 2 Chinese)
+- [x] Headless browser support for JS-rendered engines (Google via `headless` feature)
+- [x] PageFetcher abstraction (HttpFetcher + BrowserFetcher)
+- [x] BrowserPool with tab concurrency control
 
 ### Phase 2: Enhanced Features 🚧 (Planned)
 
@@ -627,7 +652,8 @@ A3S Search is a **utility component** of the A3S ecosystem.
 - [ ] Result caching
 - [ ] Engine health monitoring
 - [ ] Automatic engine suspension on failures
-- [ ] More engines (Yandex, Qwant, etc.)
+- [ ] More headless engines (Baidu, Bing China, Yandex via `headless` feature)
+- [ ] More plain-HTTP engines (Qwant, etc.)
 
 ### Phase 3: Advanced 📋 (Future)
 

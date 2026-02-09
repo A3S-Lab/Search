@@ -36,6 +36,10 @@ pub enum SearchError {
     #[error("URL parsing error: {0}")]
     UrlParse(#[from] url::ParseError),
 
+    /// Browser operation failed.
+    #[error("Browser error: {0}")]
+    Browser(String),
+
     /// Generic error.
     #[error("{0}")]
     Other(String),
@@ -76,6 +80,12 @@ mod tests {
     fn test_error_display_invalid_query() {
         let err = SearchError::InvalidQuery("empty query".to_string());
         assert_eq!(err.to_string(), "Invalid query: empty query");
+    }
+
+    #[test]
+    fn test_error_display_browser() {
+        let err = SearchError::Browser("chrome crashed".to_string());
+        assert_eq!(err.to_string(), "Browser error: chrome crashed");
     }
 
     #[test]

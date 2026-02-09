@@ -1,6 +1,6 @@
 [package]
 name = "a3s-search"
-version = "0.3.0"
+version = "0.4.0"
 edition.workspace = true
 license.workspace = true
 repository = "https://github.com/A3S-Lab/Search"
@@ -10,6 +10,10 @@ description = "Embeddable meta search engine library with CLI and proxy pool sup
 [[bin]]
 name = "a3s-search"
 path = "src/main.rs"
+
+[features]
+default = []
+headless = ["dep:chromiumoxide"]
 
 [dependencies]
 # Async runtime
@@ -42,6 +46,9 @@ urlencoding = "2"
 
 # Regex
 regex = "1"
+
+# Headless browser (optional, for JS-rendered engines)
+chromiumoxide = { version = "0.7", features = ["tokio-runtime"], optional = true }
 
 # Self-update
 a3s-updater = { version = "0.1", path = "../updater" }

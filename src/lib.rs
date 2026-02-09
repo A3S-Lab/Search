@@ -59,6 +59,8 @@
 mod aggregator;
 mod engine;
 mod error;
+mod fetcher;
+mod fetcher_http;
 pub mod proxy;
 mod query;
 mod result;
@@ -66,9 +68,17 @@ mod search;
 
 pub mod engines;
 
+#[cfg(feature = "headless")]
+pub mod browser;
+
 pub use aggregator::Aggregator;
 pub use engine::{Engine, EngineCategory, EngineConfig};
 pub use error::{Result, SearchError};
+pub use fetcher::{PageFetcher, WaitStrategy};
+pub use fetcher_http::HttpFetcher;
 pub use query::SearchQuery;
 pub use result::{ResultType, SearchResult, SearchResults};
 pub use search::Search;
+
+#[cfg(feature = "headless")]
+pub use browser::{BrowserFetcher, BrowserPool, BrowserPoolConfig};

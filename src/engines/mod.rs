@@ -9,9 +9,16 @@ mod wikipedia;
 mod so360;
 mod sogou;
 
+// Headless browser engines (require JavaScript rendering)
+#[cfg(feature = "headless")]
+mod google;
+
 pub use brave::Brave;
 pub use duckduckgo::DuckDuckGo;
 pub use wikipedia::Wikipedia;
 
 pub use so360::So360;
 pub use sogou::Sogou;
+
+#[cfg(feature = "headless")]
+pub use google::Google;
