@@ -109,6 +109,15 @@ impl Engine for Google {
         );
 
         let html = self.fetcher.fetch(&url).await?;
+
+        // Detect CAPTCHA / bot-block pages before parsing
+        if html.contains("/sorry/index") || html.contains("recaptcha") {
+            return Err(SearchError::Other(
+                "Google returned a CAPTCHA page (bot detected). Try again later or use a proxy (-p)."
+                    .to_string(),
+            ));
+        }
+
         self.parse_results(&html)
     }
 }
@@ -251,5 +260,76 @@ mod tests {
         "#;
         let results = engine.parse_results(html).unwrap();
         assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_search_detects_captcha_sorry_page() {
+        use crate::fetcher::PageFetcher;
+
+        struct FakeFetcher(String);
+        #[async_trait]
+        impl PageFetcher for FakeFetcher {
+            async fn fetch(&self, _url: &str) -> crate::Result<String> {
+                Ok(self.0.clone())
+            }
+        }
+
+        let html = r#"<html><body>
+            <a href="/sorry/index?continue=https://www.google.com/search">blocked</a>
+        </body></html>"#;
+        let fetcher = Arc::new(FakeFetcher(html.to_string()));
+        let engine = Google::new(fetcher);
+        let result = engine.search(&SearchQuery::new("test")).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("CAPTCHA"), "Expected CAPTCHA error, got: {}", err);
+    }
+
+    #[tokio::test]
+    async fn test_search_detects_captcha_recaptcha() {
+        use crate::fetcher::PageFetcher;
+
+        struct FakeFetcher(String);
+        #[async_trait]
+        impl PageFetcher for FakeFetcher {
+            async fn fetch(&self, _url: &str) -> crate::Result<String> {
+                Ok(self.0.clone())
+            }
+        }
+
+        let html = r#"<html><body>
+            <iframe src="https://www.google.com/recaptcha/enterprise/anchor"></iframe>
+        </body></html>"#;
+        let fetcher = Arc::new(FakeFetcher(html.to_string()));
+        let engine = Google::new(fetcher);
+        let result = engine.search(&SearchQuery::new("test")).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("CAPTCHA"), "Expected CAPTCHA error, got: {}", err);
+    }
+
+    #[tokio::test]
+    async fn test_search_normal_page_no_captcha() {
+        use crate::fetcher::PageFetcher;
+
+        struct FakeFetcher(String);
+        #[async_trait]
+        impl PageFetcher for FakeFetcher {
+            async fn fetch(&self, _url: &str) -> crate::Result<String> {
+                Ok(self.0.clone())
+            }
+        }
+
+        let html = r#"<html><body>
+            <div class="g">
+                <a href="https://www.rust-lang.org/"><h3>Rust</h3></a>
+                <div class="VwiC3b">A systems language.</div>
+            </div>
+        </body></html>"#;
+        let fetcher = Arc::new(FakeFetcher(html.to_string()));
+        let engine = Google::new(fetcher);
+        let result = engine.search(&SearchQuery::new("test")).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 1);
     }
 }

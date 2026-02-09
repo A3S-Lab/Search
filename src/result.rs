@@ -116,6 +116,8 @@ pub struct SearchResults {
     suggestions: Vec<String>,
     /// Direct answers.
     answers: Vec<String>,
+    /// Engine errors (engine name → error message).
+    errors: Vec<(String, String)>,
     /// Number of results.
     pub count: usize,
     /// Search duration in milliseconds.
@@ -162,6 +164,16 @@ impl SearchResults {
     /// Returns the answers.
     pub fn answers(&self) -> &[String] {
         &self.answers
+    }
+
+    /// Records an engine error.
+    pub fn add_error(&mut self, engine: impl Into<String>, error: impl Into<String>) {
+        self.errors.push((engine.into(), error.into()));
+    }
+
+    /// Returns engine errors (engine name, error message).
+    pub fn errors(&self) -> &[(String, String)] {
+        &self.errors
     }
 
     /// Sets the search duration.
@@ -339,5 +351,38 @@ mod tests {
         let result = SearchResult::new("url", "title", "content").with_type(ResultType::Image);
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("\"result_type\":\"image\""));
+    }
+
+    #[test]
+    fn test_search_results_errors_empty() {
+        let results = SearchResults::new();
+        assert!(results.errors().is_empty());
+    }
+
+    #[test]
+    fn test_search_results_add_error() {
+        let mut results = SearchResults::new();
+        results.add_error("Google", "CAPTCHA detected");
+        assert_eq!(results.errors().len(), 1);
+        assert_eq!(results.errors()[0].0, "Google");
+        assert_eq!(results.errors()[0].1, "CAPTCHA detected");
+    }
+
+    #[test]
+    fn test_search_results_multiple_errors() {
+        let mut results = SearchResults::new();
+        results.add_error("Google", "CAPTCHA detected");
+        results.add_error("Baidu", "timed out");
+        assert_eq!(results.errors().len(), 2);
+        assert_eq!(results.errors()[1].0, "Baidu");
+    }
+
+    #[test]
+    fn test_search_results_errors_with_results() {
+        let mut results = SearchResults::new();
+        results.add_result(SearchResult::new("url", "title", "content"));
+        results.add_error("Google", "failed");
+        assert_eq!(results.count, 1);
+        assert_eq!(results.errors().len(), 1);
     }
 }

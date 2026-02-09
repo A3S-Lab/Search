@@ -95,6 +95,18 @@ impl BrowserPool {
             builder = builder.chrome_executable(chrome_path);
         }
 
+        // Realistic user-agent to avoid headless detection.
+        // Chrome's --headless=new mode injects "HeadlessChrome" into the UA,
+        // which Google and other sites trivially detect and block.
+        builder = builder.arg(
+            "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
+             AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        );
+
+        // Anti-detection: hide navigator.webdriver and automation indicators
+        builder = builder
+            .arg("--disable-blink-features=AutomationControlled");
+
         // Standard arguments for scraping
         builder = builder
             .arg("--disable-gpu")

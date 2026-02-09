@@ -278,6 +278,11 @@ async fn run_search(args: SearchArgs) -> Result<()> {
     let query = SearchQuery::new(&args.query);
     let results = search.search(query).await?;
 
+    // Show engine errors to the user
+    for (engine, error) in results.errors() {
+        eprintln!("Warning: {} engine failed: {}", engine, error);
+    }
+
     // Output results
     match args.format {
         OutputFormat::Text => {

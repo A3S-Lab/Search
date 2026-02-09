@@ -85,24 +85,39 @@ impl Search {
                     match timeout(timeout_duration, engine.search(&query)).await {
                         Ok(Ok(results)) => {
                             debug!("Engine {} returned {} results", name, results.len());
-                            Some((name, results))
+                            Ok((name, results))
                         }
                         Ok(Err(e)) => {
                             warn!("Engine {} failed: {}", name, e);
-                            None
+                            Err((name, e.to_string()))
                         }
                         Err(_) => {
                             warn!("Engine {} timed out", name);
-                            None
+                            Err((name, "timed out".to_string()))
                         }
                     }
                 }
             })
             .collect();
 
-        let results: Vec<_> = join_all(futures).await.into_iter().flatten().collect();
+        let all_results: Vec<_> = join_all(futures).await;
+
+        let mut engine_errors = Vec::new();
+        let results: Vec<_> = all_results
+            .into_iter()
+            .filter_map(|r| match r {
+                Ok(pair) => Some(pair),
+                Err(err) => {
+                    engine_errors.push(err);
+                    None
+                }
+            })
+            .collect();
 
         let mut search_results = self.aggregator.aggregate(results);
+        for (engine, error) in engine_errors {
+            search_results.add_error(engine, error);
+        }
         search_results.set_duration(start.elapsed().as_millis() as u64);
 
         Ok(search_results)
@@ -417,6 +432,11 @@ mod tests {
         // Should still return results from working engine
         assert_eq!(results.items().len(), 1);
         assert_eq!(results.items()[0].url, "https://working.com");
+
+        // Should record the engine error
+        assert_eq!(results.errors().len(), 1);
+        assert_eq!(results.errors()[0].0, "failing");
+        assert!(results.errors()[0].1.contains("Engine failed"));
     }
 
     #[tokio::test]
@@ -430,6 +450,9 @@ mod tests {
 
         // Should return empty results, not error
         assert_eq!(results.items().len(), 0);
+
+        // Should record both engine errors
+        assert_eq!(results.errors().len(), 2);
     }
 
     #[tokio::test]
