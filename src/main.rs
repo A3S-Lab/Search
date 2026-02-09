@@ -8,7 +8,7 @@ use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
 use a3s_search::{
-    engines::{Baidu, BingChina, Brave, DuckDuckGo, Google, So360, Sogou, Wikipedia},
+    engines::{Brave, DuckDuckGo, So360, Sogou, Wikipedia},
     proxy::{ProxyConfig, ProxyPool, ProxyProtocol},
     Search, SearchQuery,
 };
@@ -22,7 +22,7 @@ struct Cli {
     query: Option<String>,
 
     /// Search engines to use (comma-separated)
-    /// Available: ddg, brave, google, wiki, baidu, sogou, bing_cn, 360
+    /// Available: ddg, brave, wiki, sogou, 360
     #[arg(short, long, value_delimiter = ',')]
     engines: Option<Vec<String>>,
 
@@ -54,6 +54,8 @@ struct Cli {
 enum Commands {
     /// List available search engines
     Engines,
+    /// Update a3s-search to the latest version
+    Update,
 }
 
 #[derive(Clone, Copy, ValueEnum, Debug)]
@@ -80,6 +82,16 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Some(Commands::Engines) => list_engines(),
+        Some(Commands::Update) => {
+            a3s_updater::run_update(&a3s_updater::UpdateConfig {
+                binary_name: "a3s-search",
+                crate_name: "a3s-search",
+                current_version: env!("CARGO_PKG_VERSION"),
+                github_owner: "A3S-Lab",
+                github_repo: "Search",
+            })
+            .await
+        }
         None => {
             if let Some(query) = cli.query {
                 run_search(SearchArgs {
@@ -102,7 +114,7 @@ async fn main() -> Result<()> {
                 println!("  a3s-search \"Rust\" -f json");
                 println!("  a3s-search \"Rust\" -p http://127.0.0.1:8080\n");
                 println!("Options:");
-                println!("  -e, --engines <ENGINES>  Engines: ddg,brave,google,wiki,baidu,sogou,bing_cn,360");
+                println!("  -e, --engines <ENGINES>  Engines: ddg,brave,wiki,sogou,360");
                 println!("  -l, --limit <N>          Max results (default: 10)");
                 println!("  -t, --timeout <SECS>     Timeout in seconds (default: 10)");
                 println!("  -f, --format <FORMAT>    Output: text, json, compact");
@@ -131,16 +143,13 @@ fn list_engines() -> Result<()> {
     println!("  International:");
     println!("    ddg      - DuckDuckGo (privacy-focused search)");
     println!("    brave    - Brave Search");
-    println!("    google   - Google Search");
     println!("    wiki     - Wikipedia");
     println!();
-    println!("  Chinese (中国搜索引擎):");
-    println!("    baidu    - Baidu (百度)");
+    println!("  Chinese:");
     println!("    sogou    - Sogou (搜狗)");
-    println!("    bing_cn  - Bing China (必应中国)");
     println!("    360      - 360 Search (360搜索)");
     println!();
-    println!("Usage: a3s-search \"query\" -e ddg,wiki,baidu");
+    println!("Usage: a3s-search \"query\" -e ddg,wiki,sogou");
     Ok(())
 }
 
@@ -167,11 +176,8 @@ async fn run_search(args: SearchArgs) -> Result<()> {
         match shortcut.as_str() {
             "ddg" | "duckduckgo" => search.add_engine(DuckDuckGo::new()),
             "brave" => search.add_engine(Brave::new()),
-            "google" | "g" => search.add_engine(Google::new()),
             "wiki" | "wikipedia" => search.add_engine(Wikipedia::new()),
-            "baidu" => search.add_engine(Baidu::new()),
             "sogou" => search.add_engine(Sogou::new()),
-            "bing_cn" | "bing" => search.add_engine(BingChina::new()),
             "360" | "so360" => search.add_engine(So360::new()),
             _ => {
                 eprintln!("Warning: Unknown engine '{}', skipping", shortcut);
@@ -397,7 +403,7 @@ mod tests {
             "a3s-search",
             "rust programming",
             "-e",
-            "ddg,wiki,baidu",
+            "ddg,wiki,sogou",
             "-l",
             "20",
             "-t",
@@ -414,7 +420,7 @@ mod tests {
             Some(vec![
                 "ddg".to_string(),
                 "wiki".to_string(),
-                "baidu".to_string()
+                "sogou".to_string()
             ])
         );
         assert_eq!(cli.limit, 20);

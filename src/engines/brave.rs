@@ -69,13 +69,14 @@ impl Brave {
     fn parse_results(&self, html: &str) -> Result<Vec<SearchResult>> {
         let document = Html::parse_document(html);
 
-        let result_selector = Selector::parse("#results .snippet")
+        let result_selector =
+            Selector::parse(r#"div.snippet[data-type="web"]"#)
+                .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
+        let title_selector = Selector::parse(".search-snippet-title")
             .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
-        let title_selector = Selector::parse(".snippet-title")
+        let desc_selector = Selector::parse(".generic-snippet .content, .snippet-description")
             .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
-        let desc_selector = Selector::parse(".snippet-description")
-            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
-        let url_selector = Selector::parse("a")
+        let url_selector = Selector::parse(r#"a[href^="http"]"#)
             .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
 
         let mut results = Vec::new();
@@ -150,5 +151,48 @@ mod tests {
         let engine = Brave::new();
         let results = engine.parse_results("<html><body></body></html>").unwrap();
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_brave_parse_results_with_data() {
+        let engine = Brave::new();
+        let html = r#"
+        <html><body>
+        <div class="snippet" data-type="web">
+            <a href="https://www.rust-lang.org/" class="search-snippet-title">Rust Programming Language</a>
+            <div class="generic-snippet"><div class="content">A systems programming language focused on safety.</div></div>
+        </div>
+        <div class="snippet" data-type="web">
+            <a href="https://doc.rust-lang.org/book/" class="search-snippet-title">The Rust Book</a>
+            <div class="snippet-description">Official Rust programming guide.</div>
+        </div>
+        </body></html>
+        "#;
+        let results = engine.parse_results(html).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "Rust Programming Language");
+        assert_eq!(results[0].url, "https://www.rust-lang.org/");
+        assert_eq!(results[0].content, "A systems programming language focused on safety.");
+        assert_eq!(results[1].title, "The Rust Book");
+        assert_eq!(results[1].url, "https://doc.rust-lang.org/book/");
+        assert_eq!(results[1].content, "Official Rust programming guide.");
+    }
+
+    #[test]
+    fn test_brave_parse_results_skips_non_web() {
+        let engine = Brave::new();
+        let html = r#"
+        <html><body>
+        <div class="snippet" data-type="video">
+            <a href="https://example.com/video" class="search-snippet-title">A Video</a>
+        </div>
+        <div class="snippet" data-type="web">
+            <a href="https://example.com/page" class="search-snippet-title">A Page</a>
+        </div>
+        </body></html>
+        "#;
+        let results = engine.parse_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "A Page");
     }
 }

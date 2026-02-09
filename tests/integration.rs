@@ -114,58 +114,6 @@ mod brave_tests {
     }
 }
 
-mod google_tests {
-    use super::*;
-    use a3s_search::engines::Google;
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_google_search() {
-        let engine = Google::new();
-        let results = test_engine(engine, "rust programming").await;
-        // Google may block automated requests
-        println!("Google returned {} results", results.len());
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_google_config() {
-        let engine = Google::new();
-        assert_eq!(engine.name(), "Google");
-        assert_eq!(engine.shortcut(), "g");
-        assert!(engine.is_enabled());
-    }
-}
-
-mod baidu_tests {
-    use super::*;
-    use a3s_search::engines::Baidu;
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_baidu_search() {
-        let engine = Baidu::new();
-        let results = test_engine(engine, "Rust 编程").await;
-        println!("Baidu returned {} results", results.len());
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_baidu_english_query() {
-        let engine = Baidu::new();
-        let results = test_engine(engine, "rust programming").await;
-        println!("Baidu (English) returned {} results", results.len());
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_baidu_config() {
-        let engine = Baidu::new();
-        assert_eq!(engine.name(), "Baidu");
-        assert_eq!(engine.shortcut(), "baidu");
-        assert!(engine.is_enabled());
-    }
-}
 
 mod sogou_tests {
     use super::*;
@@ -185,36 +133,6 @@ mod sogou_tests {
         let engine = Sogou::new();
         assert_eq!(engine.name(), "Sogou");
         assert_eq!(engine.shortcut(), "sogou");
-        assert!(engine.is_enabled());
-    }
-}
-
-mod bing_china_tests {
-    use super::*;
-    use a3s_search::engines::BingChina;
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_bing_china_search() {
-        let engine = BingChina::new();
-        let results = test_engine(engine, "Rust 编程").await;
-        println!("Bing China returned {} results", results.len());
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_bing_china_english_query() {
-        let engine = BingChina::new();
-        let results = test_engine(engine, "rust programming").await;
-        println!("Bing China (English) returned {} results", results.len());
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_bing_china_config() {
-        let engine = BingChina::new();
-        assert_eq!(engine.name(), "Bing China");
-        assert_eq!(engine.shortcut(), "bing_cn");
         assert!(engine.is_enabled());
     }
 }
@@ -281,11 +199,11 @@ mod meta_search_tests {
     #[tokio::test]
     #[ignore]
     async fn test_meta_search_chinese() {
-        use a3s_search::engines::{Baidu, BingChina};
+        use a3s_search::engines::{So360, Sogou};
 
         let mut search = Search::new();
-        search.add_engine(Baidu::new());
-        search.add_engine(BingChina::new());
+        search.add_engine(Sogou::new());
+        search.add_engine(So360::new());
 
         let query = SearchQuery::new("Rust 编程语言");
         let results = search.search(query).await.unwrap();

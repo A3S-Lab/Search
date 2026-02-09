@@ -1,7 +1,7 @@
 //! Example: Meta search with Chinese search engines.
 
 use a3s_search::{
-    engines::{Baidu, BingChina, So360, Sogou},
+    engines::{So360, Sogou},
     Search, SearchQuery,
 };
 
@@ -14,9 +14,7 @@ async fn main() -> anyhow::Result<()> {
     let mut search = Search::new();
 
     // Add Chinese search engines
-    search.add_engine(Baidu::new()); // 百度
     search.add_engine(Sogou::new()); // 搜狗
-    search.add_engine(BingChina::new()); // 必应中国
     search.add_engine(So360::new()); // 360搜索
 
     println!(

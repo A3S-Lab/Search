@@ -83,11 +83,17 @@ impl Sogou {
 
             if let Some(title_elem) = title_elem {
                 let title = title_elem.text().collect::<String>().trim().to_string();
-                let url = title_elem
+                let raw_url = title_elem
                     .value()
                     .attr("href")
-                    .unwrap_or_default()
-                    .to_string();
+                    .unwrap_or_default();
+
+                // Sogou returns relative redirect URLs like /link?url=...
+                let url = if raw_url.starts_with('/') {
+                    format!("https://www.sogou.com{}", raw_url)
+                } else {
+                    raw_url.to_string()
+                };
 
                 let content = element
                     .select(&snippet_selector)
@@ -147,5 +153,45 @@ mod tests {
         let engine = Sogou::new();
         let results = engine.parse_results("<html><body></body></html>").unwrap();
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_sogou_parse_results_with_data() {
+        let engine = Sogou::new();
+        let html = r#"
+        <html><body>
+        <div class="vrwrap">
+            <h3 class="vr-title"><a href="/link?url=abc123">Rust Programming</a></h3>
+            <div class="str-text">A systems programming language.</div>
+        </div>
+        <div class="vrwrap">
+            <h3 class="vr-title"><a href="https://example.com/page">Example Page</a></h3>
+            <div class="str_info">Some description here.</div>
+        </div>
+        </body></html>
+        "#;
+        let results = engine.parse_results(html).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "Rust Programming");
+        assert_eq!(results[0].url, "https://www.sogou.com/link?url=abc123");
+        assert_eq!(results[0].content, "A systems programming language.");
+        assert_eq!(results[1].title, "Example Page");
+        assert_eq!(results[1].url, "https://example.com/page");
+    }
+
+    #[test]
+    fn test_sogou_parse_results_relative_url() {
+        let engine = Sogou::new();
+        let html = r#"
+        <html><body>
+        <div class="vrwrap">
+            <h3><a href="/link?url=xyz789">Test Result</a></h3>
+            <div class="space-txt">Test snippet.</div>
+        </div>
+        </body></html>
+        "#;
+        let results = engine.parse_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://www.sogou.com/link?url=xyz789");
     }
 }

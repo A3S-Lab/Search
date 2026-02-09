@@ -43,6 +43,9 @@ urlencoding = "2"
 # Regex
 regex = "1"
 
+# Self-update
+a3s-updater = { version = "0.1", path = "../updater" }
+
 # CLI
 clap = { version = "4", features = ["derive"] }
 
