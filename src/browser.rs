@@ -234,18 +234,19 @@ impl PageFetcher for BrowserFetcher {
                 tokio::time::sleep(Duration::from_millis(*idle_ms)).await;
             }
             WaitStrategy::Selector { css, timeout_ms } => {
-                tokio::time::timeout(Duration::from_millis(*timeout_ms), async {
-                    page.find_element(css.as_str())
-                        .await
-                        .map_err(|e| SearchError::Browser(format!("Selector wait failed: {}", e)))
+                // Wait for the selector, but don't fail if it's not found.
+                // The page may have loaded a CAPTCHA or error page instead;
+                // let the engine's parser detect and report that.
+                let found = tokio::time::timeout(Duration::from_millis(*timeout_ms), async {
+                    page.find_element(css.as_str()).await
                 })
-                .await
-                .map_err(|_| {
-                    SearchError::Browser(format!(
-                        "Timed out waiting for selector '{}' after {}ms",
+                .await;
+                if let Err(_) | Ok(Err(_)) = found {
+                    debug!(
+                        "Selector '{}' not found within {}ms, proceeding with current page content",
                         css, timeout_ms
-                    ))
-                })??;
+                    );
+                }
             }
             WaitStrategy::Delay { ms } => {
                 page.wait_for_navigation()
