@@ -186,15 +186,132 @@ mod tests {
             <html>
             <body>
                 <div class="result">
-                    <a class="result__title" href="https://example.com">Example Title</a>
+                    <h2 class="result__title"><a href="https://example.com">Example Title</a></h2>
                     <div class="result__snippet">Example snippet text</div>
                 </div>
             </body>
             </html>
         "#;
         let results = engine.parse_results(html).unwrap();
-        // Note: The selector is ".result__title a", so this test HTML structure
-        // may not match exactly. This tests the parsing logic doesn't crash.
-        assert!(results.is_empty() || !results.is_empty());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Example Title");
+        assert_eq!(results[0].url, "https://example.com");
+        assert_eq!(results[0].content, "Example snippet text");
+    }
+
+    #[test]
+    fn test_parse_results_with_redirect_url() {
+        let engine = DuckDuckGo::new();
+        let html = r#"
+            <html>
+            <body>
+                <div class="result">
+                    <h2 class="result__title"><a href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fpage&rut=abc">Redirected Result</a></h2>
+                    <div class="result__snippet">Snippet for redirected result</div>
+                </div>
+            </body>
+            </html>
+        "#;
+        let results = engine.parse_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://example.com/page");
+        assert_eq!(results[0].title, "Redirected Result");
+        assert_eq!(results[0].content, "Snippet for redirected result");
+    }
+
+    #[test]
+    fn test_parse_results_multiple() {
+        let engine = DuckDuckGo::new();
+        let html = r#"
+            <html>
+            <body>
+                <div class="result">
+                    <h2 class="result__title"><a href="https://first.com">First</a></h2>
+                    <div class="result__snippet">First snippet</div>
+                </div>
+                <div class="result">
+                    <h2 class="result__title"><a href="https://second.com">Second</a></h2>
+                    <div class="result__snippet">Second snippet</div>
+                </div>
+            </body>
+            </html>
+        "#;
+        let results = engine.parse_results(html).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].url, "https://first.com");
+        assert_eq!(results[1].url, "https://second.com");
+    }
+
+    #[test]
+    fn test_parse_results_no_snippet() {
+        let engine = DuckDuckGo::new();
+        let html = r#"
+            <html>
+            <body>
+                <div class="result">
+                    <h2 class="result__title"><a href="https://example.com">No Snippet</a></h2>
+                </div>
+            </body>
+            </html>
+        "#;
+        let results = engine.parse_results(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].content, "");
+    }
+
+    #[test]
+    fn test_parse_results_skips_empty_title() {
+        let engine = DuckDuckGo::new();
+        let html = r#"
+            <html>
+            <body>
+                <div class="result">
+                    <h2 class="result__title"><a href="https://example.com"></a></h2>
+                </div>
+            </body>
+            </html>
+        "#;
+        let results = engine.parse_results(html).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_parse_results_skips_empty_url() {
+        let engine = DuckDuckGo::new();
+        let html = r#"
+            <html>
+            <body>
+                <div class="result">
+                    <h2 class="result__title"><a href="">Has Title</a></h2>
+                </div>
+            </body>
+            </html>
+        "#;
+        let results = engine.parse_results(html).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_parse_results_no_title_element() {
+        let engine = DuckDuckGo::new();
+        let html = r#"
+            <html>
+            <body>
+                <div class="result">
+                    <div class="result__snippet">Orphan snippet</div>
+                </div>
+            </body>
+            </html>
+        "#;
+        let results = engine.parse_results(html).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_extract_redirect_url_invalid_encoding() {
+        // URL with invalid percent encoding should still return something
+        let url = "//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com";
+        let result = extract_redirect_url(url);
+        assert!(result.is_some());
     }
 }

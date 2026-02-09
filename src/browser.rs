@@ -328,4 +328,93 @@ mod tests {
         let fetcher = BrowserFetcher::new(pool).with_user_agent("CustomBot/1.0");
         assert_eq!(fetcher.user_agent.as_deref(), Some("CustomBot/1.0"));
     }
+
+    #[tokio::test]
+    async fn test_browser_pool_shutdown_no_browser() {
+        let pool = BrowserPool::new(BrowserPoolConfig::default());
+        // Shutdown without ever launching should not panic
+        pool.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn test_browser_pool_shutdown_twice() {
+        let pool = BrowserPool::new(BrowserPoolConfig::default());
+        pool.shutdown().await;
+        pool.shutdown().await;
+    }
+
+    #[test]
+    fn test_browser_pool_config_with_proxy() {
+        let config = BrowserPoolConfig {
+            proxy_url: Some("http://localhost:8080".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(config.proxy_url.as_deref(), Some("http://localhost:8080"));
+        assert!(config.headless);
+    }
+
+    #[test]
+    fn test_browser_pool_config_with_launch_args() {
+        let config = BrowserPoolConfig {
+            launch_args: vec![
+                "--disable-web-security".to_string(),
+                "--ignore-certificate-errors".to_string(),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(config.launch_args.len(), 2);
+    }
+
+    #[test]
+    fn test_browser_pool_config_clone() {
+        let config = BrowserPoolConfig {
+            max_tabs: 8,
+            headless: false,
+            chrome_path: Some("/usr/bin/chromium".to_string()),
+            proxy_url: Some("socks5://localhost:1080".to_string()),
+            launch_args: vec!["--no-sandbox".to_string()],
+        };
+        let cloned = config.clone();
+        assert_eq!(cloned.max_tabs, 8);
+        assert!(!cloned.headless);
+        assert_eq!(cloned.chrome_path.as_deref(), Some("/usr/bin/chromium"));
+        assert_eq!(cloned.proxy_url.as_deref(), Some("socks5://localhost:1080"));
+        assert_eq!(cloned.launch_args.len(), 1);
+    }
+
+    #[test]
+    fn test_browser_pool_config_debug() {
+        let config = BrowserPoolConfig::default();
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("BrowserPoolConfig"));
+        assert!(debug_str.contains("max_tabs"));
+    }
+
+    #[test]
+    fn test_browser_fetcher_builder_chain() {
+        let pool = Arc::new(BrowserPool::new(BrowserPoolConfig::default()));
+        let fetcher = BrowserFetcher::new(pool)
+            .with_wait(WaitStrategy::Delay { ms: 500 })
+            .with_user_agent("TestBot/2.0");
+        assert!(matches!(fetcher.wait, WaitStrategy::Delay { ms: 500 }));
+        assert_eq!(fetcher.user_agent.as_deref(), Some("TestBot/2.0"));
+    }
+
+    #[test]
+    fn test_browser_fetcher_with_network_idle_wait() {
+        let pool = Arc::new(BrowserPool::new(BrowserPoolConfig::default()));
+        let fetcher = BrowserFetcher::new(pool)
+            .with_wait(WaitStrategy::NetworkIdle { idle_ms: 1000 });
+        assert!(matches!(fetcher.wait, WaitStrategy::NetworkIdle { idle_ms: 1000 }));
+    }
+
+    #[test]
+    fn test_browser_pool_semaphore_permits() {
+        let config = BrowserPoolConfig {
+            max_tabs: 16,
+            ..Default::default()
+        };
+        let pool = BrowserPool::new(config);
+        assert_eq!(pool.tab_semaphore().available_permits(), 16);
+    }
 }

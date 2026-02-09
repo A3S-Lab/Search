@@ -99,4 +99,51 @@ mod tests {
         let debug = format!("{:?}", strategy);
         assert!(debug.contains("Load"));
     }
+
+    #[test]
+    fn test_wait_strategy_network_idle_debug() {
+        let strategy = WaitStrategy::NetworkIdle { idle_ms: 500 };
+        let debug = format!("{:?}", strategy);
+        assert!(debug.contains("NetworkIdle"));
+        assert!(debug.contains("500"));
+    }
+
+    #[test]
+    fn test_wait_strategy_selector_debug() {
+        let strategy = WaitStrategy::Selector {
+            css: "div.g".to_string(),
+            timeout_ms: 5000,
+        };
+        let debug = format!("{:?}", strategy);
+        assert!(debug.contains("Selector"));
+        assert!(debug.contains("div.g"));
+    }
+
+    #[test]
+    fn test_wait_strategy_delay_debug() {
+        let strategy = WaitStrategy::Delay { ms: 2000 };
+        let debug = format!("{:?}", strategy);
+        assert!(debug.contains("Delay"));
+        assert!(debug.contains("2000"));
+    }
+
+    #[test]
+    fn test_wait_strategy_clone_all_variants() {
+        let load = WaitStrategy::Load;
+        assert!(matches!(load.clone(), WaitStrategy::Load));
+
+        let idle = WaitStrategy::NetworkIdle { idle_ms: 300 };
+        if let WaitStrategy::NetworkIdle { idle_ms } = idle.clone() {
+            assert_eq!(idle_ms, 300);
+        } else {
+            panic!("Expected NetworkIdle");
+        }
+
+        let delay = WaitStrategy::Delay { ms: 1500 };
+        if let WaitStrategy::Delay { ms } = delay.clone() {
+            assert_eq!(ms, 1500);
+        } else {
+            panic!("Expected Delay");
+        }
+    }
 }

@@ -179,17 +179,18 @@ CHROME=/usr/bin/chromium a3s-search "query" -e g
 
 ### Test Coverage
 
-**207 comprehensive unit tests** with **94.36% line coverage**:
+**251 comprehensive unit tests** with **91.15% line coverage**:
 
 | Module | Lines | Coverage | Functions | Coverage |
 |--------|-------|----------|-----------|----------|
 | engine.rs | 116 | 100.00% | 17 | 100.00% |
-| error.rs | 34 | 100.00% | 8 | 100.00% |
+| error.rs | 52 | 100.00% | 10 | 100.00% |
 | query.rs | 114 | 100.00% | 20 | 100.00% |
 | result.rs | 194 | 100.00% | 35 | 100.00% |
+| aggregator.rs | 292 | 100.00% | 30 | 100.00% |
 | search.rs | 337 | 99.41% | 58 | 100.00% |
-| aggregator.rs | 241 | 99.17% | 24 | 100.00% |
 | proxy.rs | 410 | 99.02% | 91 | 96.70% |
+| engines/duckduckgo.rs | 236 | 97.46% | 27 | 81.48% |
 | engines/bing_china.rs | 164 | 96.95% | 18 | 77.78% |
 | engines/baidu.rs | 146 | 96.58% | 17 | 76.47% |
 | engines/google.rs | 180 | 96.11% | 19 | 73.68% |
@@ -197,20 +198,20 @@ CHROME=/usr/bin/chromium a3s-search "query" -e g
 | engines/so360.rs | 132 | 95.45% | 18 | 77.78% |
 | engines/sogou.rs | 131 | 95.42% | 17 | 76.47% |
 | fetcher_http.rs | 29 | 93.10% | 7 | 85.71% |
-| fetcher.rs | 40 | 92.50% | 6 | 100.00% |
-| engines/wikipedia.rs | 114 | 87.72% | 20 | 85.00% |
-| engines/duckduckgo.rs | 132 | 86.36% | 20 | 70.00% |
-| browser.rs | 167 | 52.69% | 31 | 41.94% |
-| **TOTAL** | **2821** | **94.36%** | **446** | **87.22%** |
+| fetcher.rs | 73 | 93.15% | 10 | 100.00% |
+| engines/wikipedia.rs | 153 | 90.85% | 26 | 88.46% |
+| browser.rs | 244 | 68.85% | 42 | 61.90% |
+| browser_setup.rs | 406 | 58.13% | 65 | 49.23% |
+| **TOTAL** | **3549** | **91.15%** | **547** | **84.10%** |
 
-*Note: `browser.rs` has lower coverage because `BrowserPool::acquire_browser()` and `BrowserFetcher::fetch()` require a running Chrome process. Integration tests (in `tests/integration.rs`) verify real browser functionality but are `#[ignore]` by default.*
+*Note: `browser.rs` and `browser_setup.rs` have lower coverage because `BrowserPool::acquire_browser()`, `BrowserFetcher::fetch()`, and `download_chrome()` require a running Chrome process or network access. Integration tests verify real browser functionality but are `#[ignore]` by default.*
 
 Run coverage report:
 ```bash
-# Default (18 modules, 207 tests, 94.36% coverage)
+# Default (19 modules, 251 tests, 91.15% coverage)
 just test-cov
 
-# Without headless (14 modules, 168 tests, 97.09% coverage)
+# Without headless (14 modules)
 just test-cov --no-default-features
 
 # Detailed file-by-file table
@@ -223,10 +224,10 @@ just cov-html
 ### Running Tests
 
 ```bash
-# Default build (8 engines, 207 tests)
+# Default build (8 engines, 251 tests)
 cargo test -p a3s-search --lib
 
-# Without headless (5 engines, 168 tests)
+# Without headless (5 engines)
 cargo test -p a3s-search --no-default-features --lib
 
 # Integration tests (requires network + Chrome for Google)
@@ -718,7 +719,7 @@ A3S Search is a **utility component** of the A3S ecosystem.
 - [x] Proxy pool with dynamic provider support
 - [x] CLI tool with Homebrew distribution
 - [x] Automatic Chrome detection and download (Chrome for Testing)
-- [x] 207 comprehensive unit tests with 94.36% line coverage
+- [x] 251 comprehensive unit tests with 91.15% line coverage
 
 ## License
 

@@ -207,4 +207,55 @@ mod tests {
         let html = r#"<a href="url">link</a>"#;
         assert_eq!(strip_html_tags(html), "link");
     }
+
+    #[test]
+    fn test_wiki_response_deserialization_with_results() {
+        let json = r#"{
+            "query": {
+                "search": [
+                    {"title": "Rust (programming language)", "snippet": "<span class=\"searchmatch\">Rust</span> is a language", "pageid": 12345},
+                    {"title": "Rust", "snippet": "Rust is an iron oxide", "pageid": 67890}
+                ]
+            }
+        }"#;
+        let response: WikiResponse = serde_json::from_str(json).unwrap();
+        let query = response.query.unwrap();
+        assert_eq!(query.search.len(), 2);
+        assert_eq!(query.search[0].title, "Rust (programming language)");
+        assert_eq!(query.search[1].title, "Rust");
+    }
+
+    #[test]
+    fn test_wiki_response_deserialization_empty_results() {
+        let json = r#"{"query": {"search": []}}"#;
+        let response: WikiResponse = serde_json::from_str(json).unwrap();
+        let query = response.query.unwrap();
+        assert!(query.search.is_empty());
+    }
+
+    #[test]
+    fn test_wiki_response_deserialization_no_query() {
+        let json = r#"{}"#;
+        let response: WikiResponse = serde_json::from_str(json).unwrap();
+        assert!(response.query.is_none());
+    }
+
+    #[test]
+    fn test_strip_html_tags_mixed_content() {
+        let html = "Hello <b>world</b>, this is <i>a</i> test";
+        assert_eq!(strip_html_tags(html), "Hello world, this is a test");
+    }
+
+    #[test]
+    fn test_strip_html_tags_unclosed_tag() {
+        let html = "Hello <b>world";
+        assert_eq!(strip_html_tags(html), "Hello world");
+    }
+
+    #[test]
+    fn test_wikipedia_with_language_zh() {
+        let engine = Wikipedia::new().with_language("zh");
+        assert_eq!(engine.language, "zh");
+        assert_eq!(engine.name(), "Wikipedia");
+    }
 }

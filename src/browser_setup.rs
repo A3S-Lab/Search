@@ -468,4 +468,152 @@ mod tests {
         let err = result.unwrap_err().to_string();
         assert!(err.contains("zip"), "Error should mention zip: {}", err);
     }
+
+    #[test]
+    fn test_dirs_path_returns_home() {
+        let original_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", "/tmp/test_home_dir");
+        let result = dirs_path();
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), PathBuf::from("/tmp/test_home_dir"));
+        // Restore
+        if let Some(home) = original_home {
+            std::env::set_var("HOME", home);
+        }
+    }
+
+    #[test]
+    fn test_cache_dir_structure() {
+        let original_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", "/tmp/test_cache_home");
+        let dir = cache_dir().unwrap();
+        assert_eq!(dir, PathBuf::from("/tmp/test_cache_home/.a3s/chromium"));
+        if let Some(home) = original_home {
+            std::env::set_var("HOME", home);
+        }
+    }
+
+    #[test]
+    fn test_chrome_executable_in_zip_linux_format() {
+        let path = chrome_executable_in_zip("linux64");
+        assert!(path.contains("chrome-linux64"));
+    }
+
+    #[test]
+    fn test_chrome_executable_in_zip_mac_x64_format() {
+        let path = chrome_executable_in_zip("mac-x64");
+        assert!(path.contains("chrome-mac-x64"));
+    }
+
+    #[test]
+    fn test_find_cached_chrome_empty_cache_dir() {
+        // Create a temporary cache directory with no version subdirs
+        let tmp = std::env::temp_dir().join("a3s_test_empty_cache");
+        let cache = tmp.join(".a3s").join("chromium");
+        std::fs::create_dir_all(&cache).ok();
+
+        let original_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", tmp.to_str().unwrap());
+        let result = find_cached_chrome();
+        assert!(result.is_err());
+
+        // Cleanup
+        if let Some(home) = original_home {
+            std::env::set_var("HOME", home);
+        }
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn test_find_cached_chrome_version_dir_without_executable() {
+        // Create a cache directory with a version subdir but no executable
+        let tmp = std::env::temp_dir().join("a3s_test_no_exe_cache");
+        let version_dir = tmp.join(".a3s").join("chromium").join("130.0.6723.58");
+        std::fs::create_dir_all(&version_dir).ok();
+
+        let original_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", tmp.to_str().unwrap());
+        let result = find_cached_chrome();
+        assert!(result.is_err());
+
+        // Cleanup
+        if let Some(home) = original_home {
+            std::env::set_var("HOME", home);
+        }
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[tokio::test]
+    async fn test_ensure_chrome_finds_system_chrome() {
+        // If Chrome is installed on this system, ensure_chrome should find it
+        if detect_chrome().is_some() {
+            let result = ensure_chrome().await;
+            assert!(result.is_ok());
+            assert!(result.unwrap().exists());
+        }
+    }
+
+    #[test]
+    fn test_chrome_versions_url_is_valid() {
+        assert!(CHROME_VERSIONS_URL.starts_with("https://"));
+        assert!(CHROME_VERSIONS_URL.contains("chrome-for-testing"));
+    }
+
+    #[test]
+    fn test_extract_zip_valid_zip() {
+        // Create a minimal valid zip in memory
+        use std::io::Write;
+        let buf = Vec::new();
+        let cursor = std::io::Cursor::new(buf);
+        let mut zip_writer = zip::ZipWriter::new(cursor);
+        let options = zip::write::SimpleFileOptions::default();
+        zip_writer.start_file("test.txt", options).unwrap();
+        zip_writer.write_all(b"hello world").unwrap();
+        let cursor = zip_writer.finish().unwrap();
+        let zip_bytes = cursor.into_inner();
+
+        let tmp_dir = std::env::temp_dir().join("a3s_test_extract_valid");
+        std::fs::create_dir_all(&tmp_dir).ok();
+
+        let result = extract_zip(&zip_bytes, &tmp_dir);
+        assert!(result.is_ok());
+
+        // Verify the file was extracted
+        let extracted = tmp_dir.join("test.txt");
+        assert!(extracted.exists());
+        let content = std::fs::read_to_string(&extracted).unwrap();
+        assert_eq!(content, "hello world");
+
+        // Cleanup
+        std::fs::remove_dir_all(&tmp_dir).ok();
+    }
+
+    #[test]
+    fn test_extract_zip_with_directory() {
+        // Create a zip with a directory entry
+        use std::io::Write;
+        let buf = Vec::new();
+        let cursor = std::io::Cursor::new(buf);
+        let mut zip_writer = zip::ZipWriter::new(cursor);
+        let options = zip::write::SimpleFileOptions::default();
+        zip_writer.add_directory("subdir", options).unwrap();
+        zip_writer.start_file("subdir/file.txt", options).unwrap();
+        zip_writer.write_all(b"nested content").unwrap();
+        let cursor = zip_writer.finish().unwrap();
+        let zip_bytes = cursor.into_inner();
+
+        let tmp_dir = std::env::temp_dir().join("a3s_test_extract_dir");
+        std::fs::create_dir_all(&tmp_dir).ok();
+
+        let result = extract_zip(&zip_bytes, &tmp_dir);
+        assert!(result.is_ok());
+
+        let nested = tmp_dir.join("subdir").join("file.txt");
+        assert!(nested.exists());
+        let content = std::fs::read_to_string(&nested).unwrap();
+        assert_eq!(content, "nested content");
+
+        // Cleanup
+        std::fs::remove_dir_all(&tmp_dir).ok();
+    }
 }

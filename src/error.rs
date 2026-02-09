@@ -100,4 +100,29 @@ mod tests {
         let debug_str = format!("{:?}", err);
         assert!(debug_str.contains("Timeout"));
     }
+
+    #[test]
+    fn test_error_url_parse() {
+        let url_err = url::Url::parse("not a url").unwrap_err();
+        let err: SearchError = url_err.into();
+        let msg = err.to_string();
+        assert!(msg.contains("URL parsing error"));
+    }
+
+    #[test]
+    fn test_error_display_all_variants() {
+        // Verify all error variants produce non-empty display strings
+        let errors: Vec<SearchError> = vec![
+            SearchError::Parse("parse error".to_string()),
+            SearchError::EngineSuspended("engine".to_string(), "date".to_string()),
+            SearchError::Timeout,
+            SearchError::NoEngines,
+            SearchError::InvalidQuery("bad query".to_string()),
+            SearchError::Browser("browser error".to_string()),
+            SearchError::Other("other error".to_string()),
+        ];
+        for err in errors {
+            assert!(!err.to_string().is_empty());
+        }
+    }
 }

@@ -406,4 +406,86 @@ mod tests {
         assert!(example_result.positions.contains(&1));
         assert!(example_result.positions.contains(&2));
     }
+
+    #[test]
+    fn test_result_priority_variants() {
+        assert_eq!(ResultPriority::Normal, ResultPriority::default());
+        assert_ne!(ResultPriority::High, ResultPriority::Normal);
+        assert_ne!(ResultPriority::Low, ResultPriority::Normal);
+        assert_ne!(ResultPriority::High, ResultPriority::Low);
+    }
+
+    #[test]
+    fn test_calculate_score_high_priority() {
+        let aggregator = Aggregator::new();
+        let mut result = SearchResult::new("https://example.com", "Title", "Content");
+        result.engines.insert("engine1".to_string());
+        result.positions.push(5);
+
+        let score = aggregator.calculate_score(&result, ResultPriority::High);
+        // High priority: score = weight (not divided by position)
+        assert!(score > 0.0);
+        // For High priority, position doesn't reduce score
+        let score_pos1 = {
+            let mut r = SearchResult::new("https://example.com", "Title", "Content");
+            r.engines.insert("engine1".to_string());
+            r.positions.push(1);
+            aggregator.calculate_score(&r, ResultPriority::High)
+        };
+        assert_eq!(score, score_pos1, "High priority should ignore position");
+    }
+
+    #[test]
+    fn test_calculate_score_low_priority() {
+        let aggregator = Aggregator::new();
+        let mut result = SearchResult::new("https://example.com", "Title", "Content");
+        result.engines.insert("engine1".to_string());
+        result.positions.push(1);
+
+        let score = aggregator.calculate_score(&result, ResultPriority::Low);
+        assert_eq!(score, 0.0, "Low priority should always score 0");
+    }
+
+    #[test]
+    fn test_calculate_score_no_engine_weight() {
+        let aggregator = Aggregator::new();
+        let mut result = SearchResult::new("https://example.com", "Title", "Content");
+        result.engines.insert("unknown_engine".to_string());
+        result.positions.push(1);
+
+        let score = aggregator.calculate_score(&result, ResultPriority::Normal);
+        // Default weight is 1.0, 1 engine, position 1: score = 1.0 * 1 / 1 = 1.0
+        assert_eq!(score, 1.0);
+    }
+
+    #[test]
+    fn test_aggregator_debug() {
+        let aggregator = Aggregator::new();
+        let debug_str = format!("{:?}", aggregator);
+        assert!(debug_str.contains("Aggregator"));
+    }
+
+    #[test]
+    fn test_aggregate_merges_longer_title() {
+        let aggregator = Aggregator::new();
+
+        let results1 = vec![SearchResult::new(
+            "https://example.com",
+            "Short",
+            "Content",
+        )];
+        let results2 = vec![SearchResult::new(
+            "https://example.com",
+            "Much Longer Title",
+            "Content",
+        )];
+
+        let engine_results = vec![
+            ("engine1".to_string(), results1),
+            ("engine2".to_string(), results2),
+        ];
+
+        let aggregated = aggregator.aggregate(engine_results);
+        assert_eq!(aggregated.items()[0].title, "Much Longer Title");
+    }
 }
