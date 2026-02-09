@@ -10,14 +10,14 @@ use tracing_subscriber::FmtSubscriber;
 use a3s_search::{
     engines::{Brave, DuckDuckGo, So360, Sogou, Wikipedia},
     proxy::{ProxyConfig, ProxyPool, ProxyProtocol},
-    Search, SearchQuery,
+    HttpFetcher, PageFetcher, Search, SearchQuery,
 };
 
 #[cfg(feature = "headless")]
 use a3s_search::{
     browser::{BrowserFetcher, BrowserPool, BrowserPoolConfig},
     engines::{Baidu, BingChina, Google},
-    PageFetcher, WaitStrategy,
+    WaitStrategy,
 };
 
 /// A3S Search - Embeddable meta search engine CLI
@@ -214,6 +214,16 @@ async fn run_search(args: SearchArgs) -> Result<()> {
         std::sync::Arc::new(BrowserPool::new(pool_config))
     };
 
+    // Create shared HTTP fetcher (with proxy if provided)
+    let http_fetcher: std::sync::Arc<dyn PageFetcher> = if let Some(proxy_url) = &args.proxy {
+        std::sync::Arc::new(
+            HttpFetcher::with_proxy(proxy_url)
+                .map_err(|e| anyhow::anyhow!("Failed to create HTTP fetcher with proxy: {}", e))?,
+        )
+    } else {
+        std::sync::Arc::new(HttpFetcher::new())
+    };
+
     // Add engines based on selection
     let engine_shortcuts: Vec<String> = args
         .engines
@@ -221,11 +231,29 @@ async fn run_search(args: SearchArgs) -> Result<()> {
 
     for shortcut in &engine_shortcuts {
         match shortcut.as_str() {
-            "ddg" | "duckduckgo" => search.add_engine(DuckDuckGo::new()),
-            "brave" => search.add_engine(Brave::new()),
-            "wiki" | "wikipedia" => search.add_engine(Wikipedia::new()),
-            "sogou" => search.add_engine(Sogou::new()),
-            "360" | "so360" => search.add_engine(So360::new()),
+            "ddg" | "duckduckgo" => {
+                search.add_engine(DuckDuckGo::with_fetcher(std::sync::Arc::clone(&http_fetcher)))
+            }
+            "brave" => {
+                search.add_engine(Brave::with_fetcher(std::sync::Arc::clone(&http_fetcher)))
+            }
+            "wiki" | "wikipedia" => {
+                // Wikipedia needs its own fetcher since it uses JSON API, not HTML
+                let fetcher = if let Some(proxy_url) = &args.proxy {
+                    HttpFetcher::with_proxy(proxy_url).map_err(|e| {
+                        anyhow::anyhow!("Failed to create HTTP fetcher with proxy: {}", e)
+                    })?
+                } else {
+                    HttpFetcher::new()
+                };
+                search.add_engine(Wikipedia::with_http_fetcher(fetcher))
+            }
+            "sogou" => {
+                search.add_engine(Sogou::with_fetcher(std::sync::Arc::clone(&http_fetcher)))
+            }
+            "360" | "so360" => {
+                search.add_engine(So360::with_fetcher(std::sync::Arc::clone(&http_fetcher)))
+            }
             #[cfg(feature = "headless")]
             "g" | "google" => {
                 let fetcher: std::sync::Arc<dyn PageFetcher> =

@@ -1,21 +1,30 @@
 //! Wikipedia search engine implementation.
 
 use async_trait::async_trait;
-use reqwest::Client;
 use serde::Deserialize;
 
-use crate::{Engine, EngineCategory, EngineConfig, Result, SearchQuery, SearchResult};
+use crate::{Engine, EngineCategory, EngineConfig, HttpFetcher, Result, SearchQuery, SearchResult};
 
 /// Wikipedia search engine using the MediaWiki API.
+///
+/// Unlike other engines, Wikipedia uses a JSON API rather than HTML scraping,
+/// so it holds an `HttpFetcher` directly to access the underlying reqwest client.
 pub struct Wikipedia {
     config: EngineConfig,
-    client: Client,
+    fetcher: HttpFetcher,
     language: String,
 }
 
 impl Wikipedia {
-    /// Creates a new Wikipedia engine.
+    /// Creates a new Wikipedia engine with a default HTTP fetcher.
     pub fn new() -> Self {
+        Self::with_http_fetcher(HttpFetcher::new())
+    }
+
+    /// Creates a new Wikipedia engine with a custom HTTP fetcher.
+    ///
+    /// Use this to provide a fetcher configured with proxy support.
+    pub fn with_http_fetcher(fetcher: HttpFetcher) -> Self {
         Self {
             config: EngineConfig {
                 name: "Wikipedia".to_string(),
@@ -27,10 +36,7 @@ impl Wikipedia {
                 paging: false,
                 safesearch: false,
             },
-            client: Client::builder()
-                .user_agent("Mozilla/5.0 (compatible; a3s-search/0.1)")
-                .build()
-                .expect("Failed to create HTTP client"),
+            fetcher,
             language: "en".to_string(),
         }
     }
@@ -85,7 +91,7 @@ impl Engine for Wikipedia {
             urlencoding::encode(&query.query)
         );
 
-        let response = self.client.get(&url).send().await?;
+        let response = self.fetcher.client().get(&url).send().await?;
         let wiki_response: WikiResponse = response.json().await?;
 
         let results = wiki_response
@@ -129,6 +135,7 @@ fn strip_html_tags(html: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::HttpFetcher;
 
     #[test]
     fn test_wikipedia_new() {
@@ -137,6 +144,13 @@ mod tests {
         assert_eq!(engine.config.shortcut, "wiki");
         assert_eq!(engine.config.weight, 1.2);
         assert_eq!(engine.language, "en");
+    }
+
+    #[test]
+    fn test_wikipedia_with_http_fetcher() {
+        let fetcher = HttpFetcher::new();
+        let engine = Wikipedia::with_http_fetcher(fetcher);
+        assert_eq!(engine.name(), "Wikipedia");
     }
 
     #[test]

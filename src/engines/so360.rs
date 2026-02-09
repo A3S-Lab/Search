@@ -1,20 +1,27 @@
 //! 360 Search engine implementation.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
-use reqwest::Client;
 use scraper::{Html, Selector};
 
-use crate::{Engine, EngineCategory, EngineConfig, Result, SearchError, SearchQuery, SearchResult};
+use crate::fetcher::PageFetcher;
+use crate::{Engine, EngineCategory, EngineConfig, HttpFetcher, Result, SearchError, SearchQuery, SearchResult};
 
 /// 360 Search engine (360搜索).
 pub struct So360 {
     config: EngineConfig,
-    client: Client,
+    fetcher: Arc<dyn PageFetcher>,
 }
 
 impl So360 {
-    /// Creates a new 360 Search engine.
+    /// Creates a new 360 Search engine with a default HTTP fetcher.
     pub fn new() -> Self {
+        Self::with_fetcher(Arc::new(HttpFetcher::new()))
+    }
+
+    /// Creates a new 360 Search engine with a custom page fetcher.
+    pub fn with_fetcher(fetcher: Arc<dyn PageFetcher>) -> Self {
         Self {
             config: EngineConfig {
                 name: "360 Search".to_string(),
@@ -26,10 +33,7 @@ impl So360 {
                 paging: true,
                 safesearch: false,
             },
-            client: Client::builder()
-                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                .build()
-                .expect("Failed to create HTTP client"),
+            fetcher,
         }
     }
 
@@ -58,8 +62,7 @@ impl Engine for So360 {
             urlencoding::encode(&query.query)
         );
 
-        let response = self.client.get(&url).send().await?;
-        let html = response.text().await?;
+        let html = self.fetcher.fetch(&url).await?;
 
         self.parse_results(&html)
     }
@@ -111,6 +114,7 @@ impl So360 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::HttpFetcher;
 
     #[test]
     fn test_so360_new() {
@@ -118,6 +122,13 @@ mod tests {
         assert_eq!(engine.config.name, "360 Search");
         assert_eq!(engine.config.shortcut, "360");
         assert_eq!(engine.config.weight, 1.0);
+    }
+
+    #[test]
+    fn test_so360_with_fetcher() {
+        let fetcher: Arc<dyn PageFetcher> = Arc::new(HttpFetcher::new());
+        let engine = So360::with_fetcher(fetcher);
+        assert_eq!(engine.name(), "360 Search");
     }
 
     #[test]

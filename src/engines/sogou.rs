@@ -1,20 +1,27 @@
 //! Sogou search engine implementation.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
-use reqwest::Client;
 use scraper::{Html, Selector};
 
-use crate::{Engine, EngineCategory, EngineConfig, Result, SearchError, SearchQuery, SearchResult};
+use crate::fetcher::PageFetcher;
+use crate::{Engine, EngineCategory, EngineConfig, HttpFetcher, Result, SearchError, SearchQuery, SearchResult};
 
 /// Sogou search engine (搜狗).
 pub struct Sogou {
     config: EngineConfig,
-    client: Client,
+    fetcher: Arc<dyn PageFetcher>,
 }
 
 impl Sogou {
-    /// Creates a new Sogou engine.
+    /// Creates a new Sogou engine with a default HTTP fetcher.
     pub fn new() -> Self {
+        Self::with_fetcher(Arc::new(HttpFetcher::new()))
+    }
+
+    /// Creates a new Sogou engine with a custom page fetcher.
+    pub fn with_fetcher(fetcher: Arc<dyn PageFetcher>) -> Self {
         Self {
             config: EngineConfig {
                 name: "Sogou".to_string(),
@@ -26,10 +33,7 @@ impl Sogou {
                 paging: true,
                 safesearch: false,
             },
-            client: Client::builder()
-                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                .build()
-                .expect("Failed to create HTTP client"),
+            fetcher,
         }
     }
 
@@ -58,8 +62,7 @@ impl Engine for Sogou {
             urlencoding::encode(&query.query)
         );
 
-        let response = self.client.get(&url).send().await?;
-        let html = response.text().await?;
+        let html = self.fetcher.fetch(&url).await?;
 
         self.parse_results(&html)
     }
@@ -114,6 +117,7 @@ impl Sogou {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::HttpFetcher;
 
     #[test]
     fn test_sogou_new() {
@@ -121,6 +125,13 @@ mod tests {
         assert_eq!(engine.config.name, "Sogou");
         assert_eq!(engine.config.shortcut, "sogou");
         assert_eq!(engine.config.weight, 1.0);
+    }
+
+    #[test]
+    fn test_sogou_with_fetcher() {
+        let fetcher: Arc<dyn PageFetcher> = Arc::new(HttpFetcher::new());
+        let engine = Sogou::with_fetcher(fetcher);
+        assert_eq!(engine.name(), "Sogou");
     }
 
     #[test]

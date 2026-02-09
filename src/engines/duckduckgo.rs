@@ -1,20 +1,27 @@
 //! DuckDuckGo search engine implementation.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
-use reqwest::Client;
 use scraper::{Html, Selector};
 
-use crate::{Engine, EngineCategory, EngineConfig, Result, SearchError, SearchQuery, SearchResult};
+use crate::fetcher::PageFetcher;
+use crate::{Engine, EngineCategory, EngineConfig, HttpFetcher, Result, SearchError, SearchQuery, SearchResult};
 
 /// DuckDuckGo search engine.
 pub struct DuckDuckGo {
     config: EngineConfig,
-    client: Client,
+    fetcher: Arc<dyn PageFetcher>,
 }
 
 impl DuckDuckGo {
-    /// Creates a new DuckDuckGo engine.
+    /// Creates a new DuckDuckGo engine with a default HTTP fetcher.
     pub fn new() -> Self {
+        Self::with_fetcher(Arc::new(HttpFetcher::new()))
+    }
+
+    /// Creates a new DuckDuckGo engine with a custom page fetcher.
+    pub fn with_fetcher(fetcher: Arc<dyn PageFetcher>) -> Self {
         Self {
             config: EngineConfig {
                 name: "DuckDuckGo".to_string(),
@@ -26,10 +33,7 @@ impl DuckDuckGo {
                 paging: true,
                 safesearch: true,
             },
-            client: Client::builder()
-                .user_agent("Mozilla/5.0 (compatible; a3s-search/0.1)")
-                .build()
-                .expect("Failed to create HTTP client"),
+            fetcher,
         }
     }
 
@@ -58,8 +62,7 @@ impl Engine for DuckDuckGo {
             urlencoding::encode(&query.query)
         );
 
-        let response = self.client.get(&url).send().await?;
-        let html = response.text().await?;
+        let html = self.fetcher.fetch(&url).await?;
 
         self.parse_results(&html)
     }
@@ -115,6 +118,7 @@ fn extract_redirect_url(url: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::HttpFetcher;
 
     #[test]
     fn test_duckduckgo_new() {
@@ -127,6 +131,13 @@ mod tests {
         assert!(engine.config.enabled);
         assert!(engine.config.paging);
         assert!(engine.config.safesearch);
+    }
+
+    #[test]
+    fn test_duckduckgo_with_fetcher() {
+        let fetcher: Arc<dyn PageFetcher> = Arc::new(HttpFetcher::new());
+        let engine = DuckDuckGo::with_fetcher(fetcher);
+        assert_eq!(engine.name(), "DuckDuckGo");
     }
 
     #[test]

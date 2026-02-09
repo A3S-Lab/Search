@@ -6,6 +6,11 @@ use reqwest::Client;
 use crate::fetcher::PageFetcher;
 use crate::Result;
 
+/// Default user agent for HTTP requests.
+const DEFAULT_USER_AGENT: &str =
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 \
+     (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
 /// A page fetcher that uses plain HTTP requests via reqwest.
 ///
 /// Suitable for engines that return server-rendered HTML. For engines
@@ -19,15 +24,38 @@ impl HttpFetcher {
     pub fn new() -> Self {
         Self {
             client: Client::builder()
-                .user_agent("Mozilla/5.0 (compatible; a3s-search/0.3)")
+                .user_agent(DEFAULT_USER_AGENT)
                 .build()
                 .expect("Failed to create HTTP client"),
         }
     }
 
+    /// Creates an `HttpFetcher` with proxy support.
+    pub fn with_proxy(proxy_url: &str) -> crate::Result<Self> {
+        let proxy = reqwest::Proxy::all(proxy_url).map_err(|e| {
+            crate::SearchError::Other(format!("Failed to create proxy: {}", e))
+        })?;
+        let client = Client::builder()
+            .user_agent(DEFAULT_USER_AGENT)
+            .proxy(proxy)
+            .build()
+            .map_err(|e| {
+                crate::SearchError::Other(format!("Failed to create HTTP client: {}", e))
+            })?;
+        Ok(Self { client })
+    }
+
     /// Creates an `HttpFetcher` with a custom reqwest client.
     pub fn with_client(client: Client) -> Self {
         Self { client }
+    }
+
+    /// Returns a reference to the underlying reqwest client.
+    ///
+    /// Useful for engines like Wikipedia that need JSON parsing
+    /// instead of plain HTML fetching.
+    pub fn client(&self) -> &Client {
+        &self.client
     }
 }
 
@@ -67,5 +95,30 @@ mod tests {
             .build()
             .unwrap();
         let _fetcher = HttpFetcher::with_client(client);
+    }
+
+    #[test]
+    fn test_http_fetcher_with_proxy_invalid() {
+        // Empty string is rejected by reqwest::Proxy::all
+        let result = HttpFetcher::with_proxy("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_http_fetcher_with_proxy_valid() {
+        let fetcher = HttpFetcher::with_proxy("http://127.0.0.1:8080");
+        assert!(fetcher.is_ok());
+    }
+
+    #[test]
+    fn test_http_fetcher_with_proxy_socks5() {
+        let fetcher = HttpFetcher::with_proxy("socks5://127.0.0.1:1080");
+        assert!(fetcher.is_ok());
+    }
+
+    #[test]
+    fn test_http_fetcher_client_accessor() {
+        let fetcher = HttpFetcher::new();
+        let _client = fetcher.client();
     }
 }

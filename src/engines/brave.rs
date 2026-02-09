@@ -1,20 +1,27 @@
 //! Brave search engine implementation.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
-use reqwest::Client;
 use scraper::{Html, Selector};
 
-use crate::{Engine, EngineCategory, EngineConfig, Result, SearchError, SearchQuery, SearchResult};
+use crate::fetcher::PageFetcher;
+use crate::{Engine, EngineCategory, EngineConfig, HttpFetcher, Result, SearchError, SearchQuery, SearchResult};
 
 /// Brave search engine.
 pub struct Brave {
     config: EngineConfig,
-    client: Client,
+    fetcher: Arc<dyn PageFetcher>,
 }
 
 impl Brave {
-    /// Creates a new Brave engine.
+    /// Creates a new Brave engine with a default HTTP fetcher.
     pub fn new() -> Self {
+        Self::with_fetcher(Arc::new(HttpFetcher::new()))
+    }
+
+    /// Creates a new Brave engine with a custom page fetcher.
+    pub fn with_fetcher(fetcher: Arc<dyn PageFetcher>) -> Self {
         Self {
             config: EngineConfig {
                 name: "Brave".to_string(),
@@ -26,10 +33,7 @@ impl Brave {
                 paging: true,
                 safesearch: true,
             },
-            client: Client::builder()
-                .user_agent("Mozilla/5.0 (compatible; a3s-search/0.1)")
-                .build()
-                .expect("Failed to create HTTP client"),
+            fetcher,
         }
     }
 
@@ -58,8 +62,7 @@ impl Engine for Brave {
             urlencoding::encode(&query.query)
         );
 
-        let response = self.client.get(&url).send().await?;
-        let html = response.text().await?;
+        let html = self.fetcher.fetch(&url).await?;
 
         self.parse_results(&html)
     }
@@ -112,6 +115,7 @@ impl Brave {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::HttpFetcher;
 
     #[test]
     fn test_brave_new() {
@@ -119,6 +123,13 @@ mod tests {
         assert_eq!(engine.config.name, "Brave");
         assert_eq!(engine.config.shortcut, "brave");
         assert_eq!(engine.config.weight, 1.0);
+    }
+
+    #[test]
+    fn test_brave_with_fetcher() {
+        let fetcher: Arc<dyn PageFetcher> = Arc::new(HttpFetcher::new());
+        let engine = Brave::with_fetcher(fetcher);
+        assert_eq!(engine.name(), "Brave");
     }
 
     #[test]
