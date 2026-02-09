@@ -153,7 +153,7 @@ a3s-search engines
 
 ### Test Coverage
 
-**222 comprehensive unit tests** (198 library + 24 CLI) with **94.36% line coverage**:
+**198 comprehensive unit tests** (168 default + 30 headless) with **94.36% line coverage**:
 
 | Module | Lines | Coverage | Functions | Coverage |
 |--------|-------|----------|-----------|----------|
@@ -181,22 +181,34 @@ a3s-search engines
 
 Run coverage report:
 ```bash
-LLVM_COV="$(rustup run stable rustc --print sysroot)/lib/rustlib/$(rustc -vV | grep host | cut -d' ' -f2)/bin/llvm-cov" \
-LLVM_PROFDATA="$(rustup run stable rustc --print sysroot)/lib/rustlib/$(rustc -vV | grep host | cut -d' ' -f2)/bin/llvm-profdata" \
-cargo llvm-cov -p a3s-search --features headless --lib --summary-only
+# Default (14 modules, 168 tests, 97.09% coverage)
+just test-cov
+
+# With headless feature (18 modules, 198 tests, 94.36% coverage)
+just test-cov-headless
+
+# Detailed file-by-file table
+just cov-table
+
+# HTML report (opens in browser)
+just cov-html
 ```
 
 ### Running Tests
 
 ```bash
-# Default build (5 engines, 192 tests)
-cargo test -p a3s-search
+# Default build (5 engines, 168 tests)
+cargo test -p a3s-search --lib
 
-# With headless feature (8 engines, 222 tests)
-cargo test -p a3s-search --features headless
+# With headless feature (8 engines, 198 tests)
+cargo test -p a3s-search --features headless --lib
 
 # Integration tests (requires network + Chrome for Google)
 cargo test -p a3s-search --features headless -- --ignored
+
+# With progress display (via justfile)
+just test
+just test-headless
 ```
 
 ## Architecture
@@ -549,35 +561,58 @@ pub trait Engine: Send + Sync {
 | Dependency | Install | Purpose |
 |------------|---------|---------|
 | `cargo-llvm-cov` | `cargo install cargo-llvm-cov` | Code coverage (optional) |
+| `lcov` | `brew install lcov` / `apt install lcov` | Coverage report formatting (optional) |
 | Chrome/Chromium | System package manager | Required for `headless` feature |
 
 ### Build Commands
 
 ```bash
 # Build (default, 5 engines)
-cargo build -p a3s-search
+just build
 
-# Build with headless browser support (8 engines, includes Google/Baidu/Bing China)
-cargo build -p a3s-search --features headless
+# Build with headless browser support (8 engines)
+just build-headless
 
-# Test (default)
-cargo test -p a3s-search
+# Build release
+just release
 
-# Test with headless feature
-cargo test -p a3s-search --features headless
+# Test (with colored progress display)
+just test                    # All tests with pretty output
+just test-headless           # Tests with headless feature
+just test-raw                # Raw cargo output
+just test-v                  # Verbose output (--nocapture)
+just test-one TEST           # Run specific test
 
-# Test with output
-cargo test -p a3s-search -- --nocapture
+# Test subsets
+just test-engine             # Engine module tests
+just test-query              # Query module tests
+just test-result             # Result module tests
+just test-search             # Search module tests
+just test-aggregator         # Aggregator module tests
+just test-proxy              # Proxy module tests
+just test-error              # Error module tests
 
-# Run examples
-cargo run -p a3s-search --example basic_search
-cargo run -p a3s-search --example chinese_search
+# Coverage (requires cargo-llvm-cov)
+just test-cov                # Pretty coverage with progress
+just test-cov-headless       # Coverage with headless feature
+just cov                     # Terminal coverage report
+just cov-html                # HTML report (opens in browser)
+just cov-table               # File-by-file table
+just cov-ci                  # Generate lcov.info for CI
+just cov-module proxy        # Coverage for specific module
 
-# Run CLI
-cargo run -p a3s-search -- "query"
+# Format & Lint
+just fmt                     # Format code
+just fmt-check               # Check formatting
+just lint                    # Clippy lint
+just ci                      # Full CI checks (fmt + lint + test)
 
-# Run CLI with Google (headless)
-cargo run -p a3s-search --features headless -- "query" -e g --headless
+# Utilities
+just check                   # Fast compile check
+just watch                   # Watch and rebuild
+just doc                     # Generate and open docs
+just clean                   # Clean build artifacts
+just update                  # Update dependencies
 ```
 
 ### Project Structure
@@ -585,6 +620,7 @@ cargo run -p a3s-search --features headless -- "query" -e g --headless
 ```
 search/
 ├── Cargo.toml
+├── justfile
 ├── README.md
 ├── examples/
 │   ├── basic_search.rs      # Basic usage example
@@ -655,34 +691,9 @@ A3S Search is a **utility component** of the A3S ecosystem.
 - [x] Headless browser support for JS-rendered engines (Google, Baidu, Bing China via `headless` feature)
 - [x] PageFetcher abstraction (HttpFetcher + BrowserFetcher)
 - [x] BrowserPool with tab concurrency control
-
-### Phase 2: Enhanced Features 🚧 (Planned)
-
-- [ ] Image search support
-- [ ] News search support
-- [ ] Result caching
-- [ ] Engine health monitoring
-- [ ] Automatic engine suspension on failures
-- [ ] More headless engines (Yandex, Yahoo, Naver via `headless` feature)
-- [ ] More plain-HTTP engines (Qwant, etc.)
-
-### Phase 3: Advanced 📋 (Future)
-
-- [ ] Instant answers (calculator, weather, etc.)
-- [ ] Infobox extraction
-- [ ] Search suggestions
-- [ ] Spelling corrections
-- [ ] Plugin system
-- [ ] **ML-based Ranking**: Learning-to-rank model for result quality
-  - [ ] Feature extraction (engine agreement, position, freshness, domain authority)
-  - [ ] Lightweight ranking model (logistic regression / small neural net)
-  - [ ] A/B testing framework for ranking experiments
-  - [ ] Feedback loop: click-through rate → ranking improvement
-- [ ] **OpenTelemetry Integration**:
-  - [ ] Span: `a3s.search.query` with attributes: query, engines, result_count, latency_ms
-  - [ ] Per-engine spans: `a3s.search.engine.{name}` with timeout/error tracking
-  - [ ] Metrics: `a3s_search_engine_latency_seconds{engine}` histogram
-  - [ ] Metrics: `a3s_search_engine_errors_total{engine}` counter
+- [x] Proxy pool with dynamic provider support
+- [x] CLI tool with Homebrew distribution
+- [x] 198 comprehensive unit tests with 94.36% line coverage
 
 ## License
 
