@@ -29,7 +29,7 @@ struct Cli {
     query: Option<String>,
 
     /// Search engines to use (comma-separated)
-    /// Available: ddg, brave, wiki, sogou, 360
+    /// Available: ddg, brave, wiki, sogou, 360, g, baidu, bing_cn
     #[arg(short, long, value_delimiter = ',')]
     engines: Option<Vec<String>>,
 
@@ -49,8 +49,8 @@ struct Cli {
     #[arg(short, long)]
     proxy: Option<String>,
 
-    /// Use headless browser for JS-rendered engines (e.g., Google)
-    #[arg(long)]
+    /// Use headless browser for JS-rendered engines (default: auto-detected)
+    #[arg(long, hide = true)]
     headless: bool,
 
     /// Enable verbose output
@@ -112,7 +112,6 @@ async fn main() -> Result<()> {
                     timeout: cli.timeout,
                     format: cli.format,
                     proxy: cli.proxy,
-                    headless: cli.headless,
                 })
                 .await
             } else {
@@ -131,7 +130,6 @@ async fn main() -> Result<()> {
                 println!("  -t, --timeout <SECS>     Timeout in seconds (default: 10)");
                 println!("  -f, --format <FORMAT>    Output: text, json, compact");
                 println!("  -p, --proxy <URL>        Proxy URL (http/https/socks5)");
-                println!("  --headless               Use headless browser for JS engines");
                 println!("  -v, --verbose            Enable debug logging");
                 println!("  -h, --help               Show help");
                 println!("  -V, --version            Show version\n");
@@ -149,7 +147,6 @@ struct SearchArgs {
     timeout: u64,
     format: OutputFormat,
     proxy: Option<String>,
-    headless: bool,
 }
 
 fn list_engines() -> Result<()> {
@@ -166,10 +163,10 @@ fn list_engines() -> Result<()> {
     #[cfg(feature = "headless")]
     {
         println!();
-        println!("  Headless (requires --headless flag):");
-        println!("    g        - Google (requires Chrome/Chromium)");
-        println!("    baidu    - Baidu (百度, requires Chrome/Chromium)");
-        println!("    bing_cn  - Bing China (必应中国, requires Chrome/Chromium)");
+        println!("  Headless (Chrome auto-installed if needed):");
+        println!("    g        - Google");
+        println!("    baidu    - Baidu (百度)");
+        println!("    bing_cn  - Bing China (必应中国)");
     }
 
     println!();
@@ -191,31 +188,30 @@ async fn run_search(args: SearchArgs) -> Result<()> {
         }
     }
 
-    // Warn if --headless is passed without the feature
+    // Warn if headless engines are requested without the feature
     #[cfg(not(feature = "headless"))]
-    if args.headless {
-        eprintln!(
-            "Warning: --headless flag requires the 'headless' feature. \
-             Rebuild with: cargo build --features headless"
-        );
+    {
+        let engine_list = args.engines.as_deref().unwrap_or(&[]);
+        let headless_engines = ["g", "google", "baidu", "bing_cn", "bing"];
+        for e in engine_list {
+            if headless_engines.contains(&e.as_str()) {
+                eprintln!(
+                    "Warning: '{}' engine requires the 'headless' feature. \
+                     Rebuild with: cargo build --features headless",
+                    e
+                );
+            }
+        }
     }
 
-    // Setup headless browser fetcher if requested
+    // Lazily create browser pool when headless engines are needed
     #[cfg(feature = "headless")]
-    let browser_fetcher: Option<std::sync::Arc<dyn PageFetcher>> = if args.headless {
+    let browser_pool: std::sync::Arc<BrowserPool> = {
         let pool_config = BrowserPoolConfig {
             proxy_url: args.proxy.clone(),
             ..Default::default()
         };
-        let pool = std::sync::Arc::new(BrowserPool::new(pool_config));
-        Some(std::sync::Arc::new(
-            BrowserFetcher::new(pool).with_wait(WaitStrategy::Selector {
-                css: "div.g".to_string(),
-                timeout_ms: 5000,
-            }),
-        ))
-    } else {
-        None
+        std::sync::Arc::new(BrowserPool::new(pool_config))
     };
 
     // Add engines based on selection
@@ -232,33 +228,33 @@ async fn run_search(args: SearchArgs) -> Result<()> {
             "360" | "so360" => search.add_engine(So360::new()),
             #[cfg(feature = "headless")]
             "g" | "google" => {
-                if let Some(ref fetcher) = browser_fetcher {
-                    search.add_engine(Google::new(std::sync::Arc::clone(fetcher)));
-                } else {
-                    eprintln!(
-                        "Warning: Google engine requires --headless flag, skipping"
-                    );
-                }
+                let fetcher: std::sync::Arc<dyn PageFetcher> =
+                    std::sync::Arc::new(BrowserFetcher::new(std::sync::Arc::clone(&browser_pool)).with_wait(
+                        WaitStrategy::Selector {
+                            css: "div.g".to_string(),
+                            timeout_ms: 5000,
+                        },
+                    ));
+                search.add_engine(Google::new(fetcher));
             }
             #[cfg(feature = "headless")]
             "baidu" => {
-                if let Some(ref fetcher) = browser_fetcher {
-                    search.add_engine(Baidu::new(std::sync::Arc::clone(fetcher)));
-                } else {
-                    eprintln!(
-                        "Warning: Baidu engine requires --headless flag, skipping"
-                    );
-                }
+                let fetcher: std::sync::Arc<dyn PageFetcher> =
+                    std::sync::Arc::new(BrowserFetcher::new(std::sync::Arc::clone(&browser_pool)).with_wait(
+                        WaitStrategy::Selector {
+                            css: "div.c-container".to_string(),
+                            timeout_ms: 5000,
+                        },
+                    ));
+                search.add_engine(Baidu::new(fetcher));
             }
             #[cfg(feature = "headless")]
             "bing_cn" | "bing" => {
-                if let Some(ref fetcher) = browser_fetcher {
-                    search.add_engine(BingChina::new(std::sync::Arc::clone(fetcher)));
-                } else {
-                    eprintln!(
-                        "Warning: Bing China engine requires --headless flag, skipping"
-                    );
-                }
+                let fetcher: std::sync::Arc<dyn PageFetcher> =
+                    std::sync::Arc::new(BrowserFetcher::new(std::sync::Arc::clone(&browser_pool)).with_wait(
+                        WaitStrategy::Delay { ms: 2000 },
+                    ));
+                search.add_engine(BingChina::new(fetcher));
             }
             #[cfg(not(feature = "headless"))]
             "g" | "google" | "baidu" | "bing_cn" | "bing" => {

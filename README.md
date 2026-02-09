@@ -89,11 +89,11 @@ a3s-search "Rust programming"
 # Search with specific engines
 a3s-search "Rust programming" -e ddg,wiki,sogou
 
-# Search with Google (requires headless feature and Chrome installed)
-a3s-search "Rust programming" -e g,ddg --headless
+# Search with Google (Chrome auto-installed if needed)
+a3s-search "Rust programming" -e g,ddg
 
 # Search with Chinese headless engines
-a3s-search "Rust 编程" -e baidu,bing_cn --headless
+a3s-search "Rust 编程" -e baidu,bing_cn
 
 # Limit results
 a3s-search "Rust programming" -l 5
@@ -126,9 +126,9 @@ a3s-search engines
 | `wiki` | Wikipedia | Wikipedia API |
 | `sogou` | Sogou | 搜狗搜索 |
 | `360` | 360 Search | 360搜索 |
-| `g` | Google | Google Search (requires `headless` feature + `--headless` flag) |
-| `baidu` | Baidu | 百度搜索 (requires `headless` feature + `--headless` flag) |
-| `bing_cn` | Bing China | 必应中国 (requires `headless` feature + `--headless` flag) |
+| `g` | Google | Google Search (Chrome auto-installed) |
+| `baidu` | Baidu | 百度搜索 (Chrome auto-installed) |
+| `bing_cn` | Bing China | 必应中国 (Chrome auto-installed) |
 
 ### Supported Search Engines
 
@@ -139,7 +139,7 @@ a3s-search engines
 | DuckDuckGo | `ddg` | Privacy-focused search |
 | Brave | `brave` | Brave Search |
 | Wikipedia | `wiki` | Wikipedia API |
-| Google | `g` | Google Search (headless browser, `headless` feature) |
+| Google | `g` | Google Search (headless browser) |
 
 #### Chinese Engines (中国搜索引擎)
 
@@ -147,8 +147,8 @@ a3s-search engines
 |--------|----------|-------------|
 | Sogou | `sogou` | 搜狗搜索 |
 | So360 | `360` | 360搜索 |
-| Baidu | `baidu` | 百度搜索 (headless browser, `headless` feature) |
-| Bing China | `bing_cn` | 必应中国 (headless browser, `headless` feature) |
+| Baidu | `baidu` | 百度搜索 (headless browser) |
+| Bing China | `bing_cn` | 必应中国 (headless browser) |
 
 ### Automatic Chrome Setup
 
@@ -162,24 +162,24 @@ Supported platforms: **macOS** (arm64, x64) and **Linux** (x64).
 
 ```bash
 # First run: Chrome is auto-downloaded if not installed
-a3s-search "Rust programming" -e g --headless
+a3s-search "Rust programming" -e g
 # Fetching Chrome for Testing version info...
 # Downloading Chrome for Testing v145.0.7632.46 (mac-arm64)...
 # Downloaded 150.2 MB, extracting...
 # Chrome for Testing v145.0.7632.46 installed successfully!
 
 # Subsequent runs: uses cached Chrome instantly
-a3s-search "Rust programming" -e g --headless
+a3s-search "Rust programming" -e g
 
 # Or set CHROME env var to use a specific binary
-CHROME=/usr/bin/chromium a3s-search "query" -e g --headless
+CHROME=/usr/bin/chromium a3s-search "query" -e g
 ```
 
 ## Quality Metrics
 
 ### Test Coverage
 
-**207 comprehensive unit tests** (168 default + 39 headless) with **94.36% line coverage**:
+**207 comprehensive unit tests** with **94.36% line coverage**:
 
 | Module | Lines | Coverage | Functions | Coverage |
 |--------|-------|----------|-----------|----------|
@@ -207,11 +207,11 @@ CHROME=/usr/bin/chromium a3s-search "query" -e g --headless
 
 Run coverage report:
 ```bash
-# Default (14 modules, 168 tests, 97.09% coverage)
+# Default (18 modules, 207 tests, 94.36% coverage)
 just test-cov
 
-# With headless feature (18 modules, 198 tests, 94.36% coverage)
-just test-cov-headless
+# Without headless (14 modules, 168 tests, 97.09% coverage)
+just test-cov --no-default-features
 
 # Detailed file-by-file table
 just cov-table
@@ -223,18 +223,17 @@ just cov-html
 ### Running Tests
 
 ```bash
-# Default build (5 engines, 168 tests)
+# Default build (8 engines, 207 tests)
 cargo test -p a3s-search --lib
 
-# With headless feature (8 engines, 207 tests)
-cargo test -p a3s-search --features headless --lib
+# Without headless (5 engines, 168 tests)
+cargo test -p a3s-search --no-default-features --lib
 
 # Integration tests (requires network + Chrome for Google)
-cargo test -p a3s-search --features headless -- --ignored
+cargo test -p a3s-search -- --ignored
 
 # With progress display (via justfile)
 just test
-just test-headless
 ```
 
 ## Architecture
@@ -265,7 +264,7 @@ weight = engine_weight × num_engines_found
 │  │  │  Go     │ │         │ │         │         │ │
 │  │  └─────────┘ └─────────┘ └─────────┘         │ │
 │  │  ┌─────────────────────────────────┐          │ │
-│  │  │ Google (headless feature)       │          │ │
+│  │  │ Google (headless browser)       │          │ │
 │  │  │   └─ PageFetcher → BrowserPool  │          │ │
 │  │  └─────────────────────────────────┘          │ │
 │  └───────────────────────────────────────────────┘ │
@@ -295,11 +294,11 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-a3s-search = "0.3"
+a3s-search = "0.5"
 tokio = { version = "1", features = ["full"] }
 
-# Optional: enable headless browser support for Google engine
-# a3s-search = { version = "0.3", features = ["headless"] }
+# To disable headless browser support:
+# a3s-search = { version = "0.5", default-features = false }
 ```
 
 ### Basic Search
@@ -588,23 +587,22 @@ pub trait Engine: Send + Sync {
 |------------|---------|---------|
 | `cargo-llvm-cov` | `cargo install cargo-llvm-cov` | Code coverage (optional) |
 | `lcov` | `brew install lcov` / `apt install lcov` | Coverage report formatting (optional) |
-| Chrome/Chromium | System package manager | Required for `headless` feature |
+| Chrome/Chromium | Auto-installed | For headless browser engines (auto-downloaded if not found) |
 
 ### Build Commands
 
 ```bash
-# Build (default, 5 engines)
+# Build (default, 8 engines including headless)
 just build
 
-# Build with headless browser support (8 engines)
-just build-headless
+# Build without headless browser support (5 engines)
+just build --no-default-features
 
 # Build release
 just release
 
 # Test (with colored progress display)
 just test                    # All tests with pretty output
-just test-headless           # Tests with headless feature
 just test-raw                # Raw cargo output
 just test-v                  # Verbose output (--nocapture)
 just test-one TEST           # Run specific test
@@ -620,7 +618,6 @@ just test-error              # Error module tests
 
 # Coverage (requires cargo-llvm-cov)
 just test-cov                # Pretty coverage with progress
-just test-cov-headless       # Coverage with headless feature
 just cov                     # Terminal coverage report
 just cov-html                # HTML report (opens in browser)
 just cov-table               # File-by-file table
@@ -665,16 +662,16 @@ search/
     ├── proxy.rs             # Proxy pool and configuration
     ├── fetcher.rs           # PageFetcher trait, WaitStrategy
     ├── fetcher_http.rs      # HttpFetcher (reqwest wrapper)
-    ├── browser.rs           # BrowserPool, BrowserFetcher (headless feature)
-    ├── browser_setup.rs     # Chrome auto-detection and download (headless feature)
+    ├── browser.rs           # BrowserPool, BrowserFetcher (headless browser)
+    ├── browser_setup.rs     # Chrome auto-detection and download
     └── engines/
         ├── mod.rs           # Engine exports
         ├── duckduckgo.rs    # DuckDuckGo
         ├── brave.rs         # Brave Search
-        ├── google.rs        # Google (headless feature)
+        ├── google.rs        # Google (headless browser)
         ├── wikipedia.rs     # Wikipedia
-        ├── baidu.rs         # Baidu (百度, headless feature)
-        ├── bing_china.rs    # Bing China (必应中国, headless feature)
+        ├── baidu.rs         # Baidu (百度, headless browser)
+        ├── bing_china.rs    # Bing China (必应中国, headless browser)
         ├── sogou.rs         # Sogou (搜狗)
         └── so360.rs         # 360 Search (360搜索)
 ```
@@ -715,7 +712,7 @@ A3S Search is a **utility component** of the A3S ecosystem.
 - [x] Parallel async search execution
 - [x] Per-engine timeout handling
 - [x] 8 built-in engines (4 international + 4 Chinese)
-- [x] Headless browser support for JS-rendered engines (Google, Baidu, Bing China via `headless` feature)
+- [x] Headless browser support for JS-rendered engines (Google, Baidu, Bing China — enabled by default)
 - [x] PageFetcher abstraction (HttpFetcher + BrowserFetcher)
 - [x] BrowserPool with tab concurrency control
 - [x] Proxy pool with dynamic provider support

@@ -12,7 +12,7 @@ name = "a3s-search"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["headless"]
 headless = ["dep:chromiumoxide", "dep:which", "dep:zip"]
 
 [dependencies]
