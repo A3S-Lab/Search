@@ -2,8 +2,8 @@
   "name": "@a3s-lab/search",
   "version": "0.1.0",
   "description": "Native Node.js bindings for a3s-search meta search engine",
-  "main": "dist/lib/index.js",
-  "types": "dist/lib/index.d.ts",
+  "main": "index.js",
+  "types": "index.d.ts",
   "napi": {
     "name": "a3s-search",
     "triples": {
@@ -14,16 +14,20 @@
     "build:native": "napi build --platform --release",
     "build:ts": "tsc",
     "build": "npm run build:native && npm run build:ts",
+    "prepublishOnly": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "files": [
-    "dist",
     "index.js",
-    "index.d.ts"
+    "index.d.ts",
+    "*.node",
+    "dist/lib/**/*.js",
+    "dist/lib/**/*.d.ts"
   ],
   "devDependencies": {
     "@napi-rs/cli": "^2.18.0",
+    "@types/node": "^25.2.2",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"
   },
