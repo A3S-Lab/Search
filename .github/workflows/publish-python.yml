@@ -8,9 +8,6 @@ on:
         required: true
         type: string
 
-env:
-  WORKING_DIR: sdk/python
-
 jobs:
   build:
     strategy:
@@ -42,6 +39,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup workspace context
+        shell: bash
+        run: |
+          WORKSPACE_DIR="$(bash .github/setup-workspace.sh)"
+          echo "WORKSPACE_DIR=$WORKSPACE_DIR" >> "$GITHUB_ENV"
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -56,42 +59,23 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.settings.target }}
-          args: --release --out dist
-          working-directory: ${{ env.WORKING_DIR }}
+          args: >-
+            --release --out dist
+            --manifest-path ${{ env.WORKSPACE_DIR }}/crates/search/sdk/python/Cargo.toml
+          working-directory: sdk/python
           manylinux: ${{ matrix.settings.manylinux || 'auto' }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.settings.target }}
-          path: ${{ env.WORKING_DIR }}/dist/*.whl
+          path: sdk/python/dist/*.whl
           if-no-files-found: error
-
-  # Build source distribution
-  sdist:
-    name: Build sdist
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build sdist
-        uses: PyO3/maturin-action@v1
-        with:
-          command: sdist
-          args: --out dist
-          working-directory: ${{ env.WORKING_DIR }}
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheels-sdist
-          path: ${{ env.WORKING_DIR }}/dist/*.tar.gz
-          if-no-files-found: warn
 
   publish:
     name: Publish to PyPI
     runs-on: ubuntu-latest
-    needs: [build]
+    needs: build
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
