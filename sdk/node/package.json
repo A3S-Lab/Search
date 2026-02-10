@@ -1,0 +1,45 @@
+{
+  "name": "@a3s-lab/search",
+  "version": "0.1.0",
+  "description": "Native Node.js bindings for a3s-search meta search engine",
+  "main": "dist/lib/index.js",
+  "types": "dist/lib/index.d.ts",
+  "napi": {
+    "name": "a3s-search",
+    "triples": {
+      "defaults": true
+    }
+  },
+  "scripts": {
+    "build:native": "napi build --platform --release",
+    "build:ts": "tsc",
+    "build": "npm run build:native && npm run build:ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "files": [
+    "dist",
+    "index.js",
+    "index.d.ts"
+  ],
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/a3s-lab/a3s",
+    "directory": "crates/search/sdk/node"
+  },
+  "keywords": [
+    "search",
+    "meta-search",
+    "duckduckgo",
+    "brave",
+    "wikipedia",
+    "native",
+    "napi"
+  ]
+}
