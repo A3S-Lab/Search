@@ -1,0 +1,16 @@
+{
+  "name": "@a3s-lab/search-linux-x64-gnu",
+  "version": "0.1.1",
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "libc": ["glibc"],
+  "main": "a3s-search.linux-x64-gnu.node",
+  "files": ["a3s-search.linux-x64-gnu.node"],
+  "description": "Native binding for @a3s-lab/search (linux-x64-gnu)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/A3S-Lab/Search",
+    "directory": "sdk/node"
+  }
+}

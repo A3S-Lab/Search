@@ -1,6 +1,6 @@
 {
   "name": "@a3s-lab/search",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Native Node.js bindings for a3s-search meta search engine",
   "main": "index.js",
   "types": "index.d.ts",
@@ -14,17 +14,27 @@
     "build:native": "napi build --platform --release",
     "build:ts": "tsc",
     "build": "npm run build:native && npm run build:ts",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "napi prepublish -t npm",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "artifacts": "napi artifacts",
+    "version": "napi version"
   },
   "files": [
     "index.js",
     "index.d.ts",
-    "*.node",
     "dist/lib/**/*.js",
     "dist/lib/**/*.d.ts"
   ],
+  "optionalDependencies": {
+    "@a3s-lab/search-win32-x64-msvc": "0.1.1",
+    "@a3s-lab/search-darwin-x64": "0.1.1",
+    "@a3s-lab/search-darwin-arm64": "0.1.1",
+    "@a3s-lab/search-linux-x64-gnu": "0.1.1",
+    "@a3s-lab/search-linux-x64-musl": "0.1.1",
+    "@a3s-lab/search-linux-arm64-gnu": "0.1.1",
+    "@a3s-lab/search-linux-arm64-musl": "0.1.1"
+  },
   "devDependencies": {
     "@napi-rs/cli": "^2.18.0",
     "@types/node": "^25.2.2",
@@ -34,8 +44,8 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/a3s-lab/a3s",
-    "directory": "crates/search/sdk/node"
+    "url": "https://github.com/A3S-Lab/Search",
+    "directory": "sdk/node"
   },
   "keywords": [
     "search",
