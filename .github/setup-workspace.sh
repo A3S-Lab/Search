@@ -2,17 +2,28 @@
 # Setup a minimal workspace context for building the Search crate standalone.
 # The Search repo is normally a submodule of the a3s workspace, so we need to
 # recreate the workspace structure for `edition.workspace = true` to resolve.
+#
+# This script restructures the CURRENT directory in-place:
+#   Before: ./ = Search repo root (Cargo.toml, src/, sdk/, ...)
+#   After:  ./ = workspace root with crates/search/ and crates/updater/
 
 set -euo pipefail
 
-REPO_DIR="$(pwd)"
-WORKSPACE_DIR="$(mktemp -d)"
+# Save current directory contents to a temp location
+TMPDIR="$(mktemp -d)"
+cp -a . "$TMPDIR/search"
+
+# Clean current directory (except .git)
+find . -maxdepth 1 ! -name '.' ! -name '.git' -exec rm -rf {} +
 
 # Create workspace structure
-mkdir -p "$WORKSPACE_DIR/crates/updater/src"
+mkdir -p crates/updater/src
+
+# Move Search repo into crates/search
+cp -a "$TMPDIR/search/." crates/search/
 
 # Create workspace root Cargo.toml
-cat > "$WORKSPACE_DIR/Cargo.toml" << 'EOF'
+cat > Cargo.toml << 'EOF'
 [workspace]
 resolver = "2"
 members = ["crates/search", "crates/updater"]
@@ -38,7 +49,7 @@ tokio-test = "0.4"
 EOF
 
 # Create stub a3s-updater crate
-cat > "$WORKSPACE_DIR/crates/updater/Cargo.toml" << 'EOF'
+cat > crates/updater/Cargo.toml << 'EOF'
 [package]
 name = "a3s-updater"
 version = "0.1.0"
@@ -46,9 +57,9 @@ edition = "2021"
 authors = ["A3S Lab"]
 license = "MIT"
 EOF
-echo "pub fn stub() {}" > "$WORKSPACE_DIR/crates/updater/src/lib.rs"
+echo "pub fn stub() {}" > crates/updater/src/lib.rs
 
-# Symlink the Search repo into the workspace
-ln -s "$REPO_DIR" "$WORKSPACE_DIR/crates/search"
+# Clean up
+rm -rf "$TMPDIR"
 
-echo "$WORKSPACE_DIR"
+echo "Workspace restructured. Search crate at: crates/search/"

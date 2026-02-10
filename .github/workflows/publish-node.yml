@@ -37,9 +37,7 @@ jobs:
 
       - name: Setup workspace context
         shell: bash
-        run: |
-          WORKSPACE_DIR="$(bash .github/setup-workspace.sh)"
-          echo "WORKSPACE_DIR=$WORKSPACE_DIR" >> "$GITHUB_ENV"
+        run: bash .github/setup-workspace.sh
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -56,27 +54,27 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Install musl-tools
-        if: contains(matrix.settings.target, 'musl')
+        if: contains(matrix.settings.target, 'musl') && contains(matrix.settings.host, 'ubuntu')
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Install dependencies
-        working-directory: sdk/node
+        working-directory: crates/search/sdk/node
         run: npm install
 
       - name: Build native module
-        working-directory: sdk/node
+        working-directory: crates/search/sdk/node
         shell: bash
         run: |
           if [[ "${{ matrix.settings.target }}" == "aarch64-unknown-linux-gnu" ]]; then
             export CC=aarch64-linux-gnu-gcc
           fi
-          npx napi build --platform --release --manifest-path "$WORKSPACE_DIR/crates/search/sdk/node/Cargo.toml" --target ${{ matrix.settings.target }}
+          npx napi build --platform --release --target ${{ matrix.settings.target }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: bindings-${{ matrix.settings.target }}
-          path: sdk/node/*.node
+          path: crates/search/sdk/node/*.node
           if-no-files-found: error
 
   publish:
