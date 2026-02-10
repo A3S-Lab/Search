@@ -107,7 +107,22 @@ jobs:
 
       - name: Move artifacts to npm directories
         working-directory: sdk/node
-        run: npx napi artifacts --dir artifacts --dist npm
+        run: |
+          for artifact_dir in artifacts/bindings-*/; do
+            for node_file in "$artifact_dir"*.node; do
+              filename="$(basename "$node_file")"
+              # Extract platform from filename: a3s-search.{platform}.node
+              platform="${filename#a3s-search.}"
+              platform="${platform%.node}"
+              target_dir="npm/$platform"
+              if [ -d "$target_dir" ]; then
+                cp "$node_file" "$target_dir/"
+                echo "Copied $filename -> $target_dir/"
+              else
+                echo "Warning: no npm dir for $platform, skipping $filename"
+              fi
+            done
+          done
 
       - name: List packages
         working-directory: sdk/node
