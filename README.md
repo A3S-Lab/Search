@@ -179,7 +179,7 @@ CHROME=/usr/bin/chromium a3s-search "query" -e g
 
 ### Test Coverage
 
-**251 comprehensive unit tests** with **91.15% line coverage**:
+**267 library + 31 CLI = 298 comprehensive unit tests** with **91.15% line coverage**:
 
 | Module | Lines | Coverage | Functions | Coverage |
 |--------|-------|----------|-----------|----------|
@@ -208,7 +208,7 @@ CHROME=/usr/bin/chromium a3s-search "query" -e g
 
 Run coverage report:
 ```bash
-# Default (19 modules, 251 tests, 91.15% coverage)
+# Default (19 modules, 267 tests, 91.15% coverage)
 just test-cov
 
 # Without headless (14 modules)
@@ -224,7 +224,7 @@ just cov-html
 ### Running Tests
 
 ```bash
-# Default build (8 engines, 251 tests)
+# Default build (8 engines, 298 tests)
 cargo test -p a3s-search --lib
 
 # Without headless (5 engines)
@@ -719,7 +719,9 @@ A3S Search is a **utility component** of the A3S ecosystem.
 - [x] Proxy pool with dynamic provider support
 - [x] CLI tool with Homebrew distribution
 - [x] Automatic Chrome detection and download (Chrome for Testing)
-- [x] 251 comprehensive unit tests with 91.15% line coverage
+- [x] 298 comprehensive unit tests with 91.15% line coverage
+- [x] Proxy support for all engines via `-p` flag (HTTP/HTTPS/SOCKS5)
+- [x] UTF-8 safe content truncation for CJK/emoji
 
 ## License
 
