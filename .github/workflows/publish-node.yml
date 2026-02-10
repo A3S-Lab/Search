@@ -22,10 +22,13 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - host: ubuntu-latest
             target: x86_64-unknown-linux-musl
+            zig: true
           - host: ubuntu-latest
             target: aarch64-unknown-linux-gnu
+            zig: true
           - host: ubuntu-latest
             target: aarch64-unknown-linux-musl
+            zig: true
           - host: windows-latest
             target: x86_64-pc-windows-msvc
 
@@ -49,13 +52,11 @@ jobs:
         with:
           targets: ${{ matrix.settings.target }}
 
-      - name: Install cross-compile tools
-        if: contains(matrix.settings.target, 'aarch64') && contains(matrix.settings.host, 'ubuntu')
-        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
-
-      - name: Install musl-tools
-        if: contains(matrix.settings.target, 'musl') && contains(matrix.settings.host, 'ubuntu')
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Install Zig
+        if: matrix.settings.zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.13.0
 
       - name: Install dependencies
         working-directory: crates/search/sdk/node
@@ -65,10 +66,11 @@ jobs:
         working-directory: crates/search/sdk/node
         shell: bash
         run: |
-          if [[ "${{ matrix.settings.target }}" == "aarch64-unknown-linux-gnu" ]]; then
-            export CC=aarch64-linux-gnu-gcc
+          if [ "${{ matrix.settings.zig }}" = "true" ]; then
+            npx napi build --platform --release --target ${{ matrix.settings.target }} --zig
+          else
+            npx napi build --platform --release --target ${{ matrix.settings.target }}
           fi
-          npx napi build --platform --release --target ${{ matrix.settings.target }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
