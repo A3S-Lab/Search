@@ -107,7 +107,7 @@ jobs:
 
       - name: Move artifacts to npm directories
         working-directory: sdk/node
-        run: npx napi artifacts --npm-dir npm
+        run: npx napi artifacts --dir artifacts --dist npm
 
       - name: List packages
         working-directory: sdk/node
