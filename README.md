@@ -11,6 +11,7 @@
 <p align="center">
   <a href="#features">Features</a> •
   <a href="#quick-start">Quick Start</a> •
+  <a href="#sdks">SDKs</a> •
   <a href="#architecture">Architecture</a> •
   <a href="#api-reference">API Reference</a> •
   <a href="#development">Development</a>
@@ -64,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
 - **Auto-Install Chrome**: Automatically detects or downloads Chrome for Testing when no browser is found
 - **PageFetcher Abstraction**: Pluggable page fetching (plain HTTP or headless browser)
 - **CLI Tool**: Command-line interface for quick searches
+- **Native SDKs**: TypeScript (NAPI) and Python (PyO3) bindings with async support
 
 ## CLI Usage
 
@@ -175,11 +177,94 @@ a3s-search "Rust programming" -e g
 CHROME=/usr/bin/chromium a3s-search "query" -e g
 ```
 
+## SDKs
+
+Native bindings for TypeScript and Python, powered by NAPI-RS and PyO3. No subprocess spawning — direct FFI calls to the Rust library.
+
+### TypeScript (Node.js)
+
+```bash
+cd sdk/node
+npm install && npm run build
+```
+
+```typescript
+import { A3SSearch } from '@a3s-lab/search';
+
+const search = new A3SSearch();
+
+// Simple search (uses DuckDuckGo + Wikipedia by default)
+const response = await search.search('rust programming');
+
+// With options
+const response = await search.search('rust programming', {
+  engines: ['ddg', 'wiki', 'brave'],
+  limit: 5,
+  timeout: 15,
+  proxy: 'http://127.0.0.1:8080',
+});
+
+for (const r of response.results) {
+  console.log(`${r.title}: ${r.url} (score: ${r.score})`);
+}
+console.log(`${response.count} results in ${response.durationMs}ms`);
+```
+
+### Python
+
+```bash
+cd sdk/python
+maturin develop
+```
+
+```python
+from a3s_search import A3SSearch
+
+search = A3SSearch()
+
+# Simple search (uses DuckDuckGo + Wikipedia by default)
+response = await search.search("rust programming")
+
+# With options
+response = await search.search("rust programming",
+    engines=["ddg", "wiki", "brave"],
+    limit=5,
+    timeout=15,
+    proxy="http://127.0.0.1:8080",
+)
+
+for r in response.results:
+    print(f"{r.title}: {r.url} (score: {r.score})")
+print(f"{response.count} results in {response.duration_ms}ms")
+```
+
+### SDK Available Engines
+
+Both SDKs support HTTP-based engines (no headless browser required):
+
+| Shortcut | Aliases | Engine |
+|----------|---------|--------|
+| `ddg` | `duckduckgo` | DuckDuckGo |
+| `brave` | — | Brave Search |
+| `wiki` | `wikipedia` | Wikipedia API |
+| `sogou` | — | Sogou (搜狗) |
+| `360` | `so360` | 360 Search (360搜索) |
+
+### SDK Tests
+
+```bash
+# Node.js (49 tests)
+cd sdk/node && npm test
+
+# Python (54 tests)
+cd sdk/python && pytest
+```
+
 ## Quality Metrics
 
 ### Test Coverage
 
-**267 library + 31 CLI = 298 comprehensive unit tests** with **91.15% line coverage**:
+**298 library + 31 CLI + 103 SDK = 401 total tests** with **91.15% Rust line coverage**:
 
 | Module | Lines | Coverage | Functions | Coverage |
 |--------|-------|----------|-----------|----------|
@@ -205,6 +290,8 @@ CHROME=/usr/bin/chromium a3s-search "query" -e g
 | **TOTAL** | **3549** | **91.15%** | **547** | **84.10%** |
 
 *Note: `browser.rs` and `browser_setup.rs` have lower coverage because `BrowserPool::acquire_browser()`, `BrowserFetcher::fetch()`, and `download_chrome()` require a running Chrome process or network access. Integration tests verify real browser functionality but are `#[ignore]` by default.*
+
+*SDK tests (49 Node.js + 54 Python = 103 tests) cover error classes, type contracts, input validation, engine validation, and integration with all 5 HTTP engines.*
 
 Run coverage report:
 ```bash
@@ -235,6 +322,10 @@ cargo test -p a3s-search -- --ignored
 
 # With progress display (via justfile)
 just test
+
+# SDK tests (requires native build first)
+cd sdk/node && npm test       # 49 tests (vitest)
+cd sdk/python && pytest       # 54 tests (pytest)
 ```
 
 ## Architecture
@@ -651,6 +742,19 @@ search/
 │   └── chinese_search.rs    # Chinese engines example
 ├── tests/
 │   └── integration.rs       # Integration tests (network-dependent)
+├── sdk/
+│   ├── node/                # TypeScript SDK (NAPI-RS)
+│   │   ├── Cargo.toml       # Rust cdylib crate
+│   │   ├── src/             # Rust NAPI bindings
+│   │   ├── lib/             # TypeScript wrappers
+│   │   ├── tests/           # vitest tests (49 tests)
+│   │   └── package.json
+│   └── python/              # Python SDK (PyO3)
+│       ├── Cargo.toml       # Rust cdylib crate
+│       ├── src/             # Rust PyO3 bindings
+│       ├── a3s_search/      # Python wrappers
+│       ├── tests/           # pytest tests (54 tests)
+│       └── pyproject.toml
 └── src/
     ├── main.rs              # CLI entry point
     ├── lib.rs               # Library entry point
@@ -722,6 +826,7 @@ A3S Search is a **utility component** of the A3S ecosystem.
 - [x] 298 comprehensive unit tests with 91.15% line coverage
 - [x] Proxy support for all engines via `-p` flag (HTTP/HTTPS/SOCKS5)
 - [x] UTF-8 safe content truncation for CJK/emoji
+- [x] Native SDKs: TypeScript (NAPI-RS) and Python (PyO3) with 103 tests
 
 ## License
 
