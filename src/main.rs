@@ -323,11 +323,7 @@ async fn run_search(args: SearchArgs) -> Result<()> {
                 println!("{}. {}", i + 1, result.title);
                 println!("   URL: {}", result.url);
                 if !result.content.is_empty() {
-                    let content = if result.content.len() > 150 {
-                        format!("{}...", &result.content[..150])
-                    } else {
-                        result.content.clone()
-                    };
+                    let content = truncate_str(&result.content, 150);
                     println!("   {}", content);
                 }
                 println!(
@@ -349,6 +345,19 @@ async fn run_search(args: SearchArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Truncates a string to at most `max_bytes` bytes at a valid UTF-8 char boundary.
+fn truncate_str(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
+    // Find the last char boundary at or before max_bytes
+    let truncated = match s.char_indices().take_while(|(i, _)| *i < max_bytes).last() {
+        Some((i, c)) => &s[..i + c.len_utf8()],
+        None => "",
+    };
+    format!("{}...", truncated)
 }
 
 fn parse_proxy_url(url: &str) -> Result<ProxyConfig> {
@@ -581,5 +590,56 @@ mod tests {
             cli.engines,
             Some(vec!["g".to_string(), "ddg".to_string()])
         );
+    }
+
+    #[test]
+    fn test_truncate_str_short() {
+        assert_eq!(truncate_str("hello", 150), "hello");
+    }
+
+    #[test]
+    fn test_truncate_str_exact() {
+        let s = "a".repeat(150);
+        assert_eq!(truncate_str(&s, 150), s);
+    }
+
+    #[test]
+    fn test_truncate_str_long_ascii() {
+        let s = "a".repeat(200);
+        let result = truncate_str(&s, 150);
+        assert!(result.ends_with("..."));
+        assert!(result.len() <= 153); // 150 + "..."
+    }
+
+    #[test]
+    fn test_truncate_str_chinese() {
+        // Chinese chars are 3 bytes each; truncating at byte 150 must not panic
+        let s = "中".repeat(100); // 300 bytes
+        let result = truncate_str(&s, 150);
+        assert!(result.ends_with("..."));
+        // Should truncate at a char boundary (150 / 3 = 50 chars)
+        assert!(result.starts_with("中"));
+    }
+
+    #[test]
+    fn test_truncate_str_mixed_cjk() {
+        let s = "Hello世界！This is a test with 中文 and English mixed content that is long enough to be truncated at some point in the middle of the string somewhere around here.";
+        let result = truncate_str(&s, 150);
+        assert!(result.ends_with("..."));
+        // Must not panic on mixed content
+    }
+
+    #[test]
+    fn test_truncate_str_empty() {
+        assert_eq!(truncate_str("", 150), "");
+    }
+
+    #[test]
+    fn test_truncate_str_emoji() {
+        // Emoji are 4 bytes each
+        let s = "🦀".repeat(50); // 200 bytes
+        let result = truncate_str(&s, 150);
+        assert!(result.ends_with("..."));
+        assert!(result.starts_with("🦀"));
     }
 }
