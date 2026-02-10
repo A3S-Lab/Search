@@ -46,18 +46,23 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: |
+            3.9
+            3.10
+            3.11
+            3.12
+            3.13
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.settings.target }}
 
-      - name: Build wheel
+      - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.settings.target }}
-          args: --release --out dist --manifest-path crates/search/sdk/python/Cargo.toml -i python3.12
+          args: --release --out dist --manifest-path crates/search/sdk/python/Cargo.toml -i python3.9 -i python3.10 -i python3.11 -i python3.12 -i python3.13
           manylinux: ${{ matrix.settings.manylinux || 'auto' }}
 
       - name: Upload artifact
