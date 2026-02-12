@@ -114,7 +114,6 @@ mod brave_tests {
     }
 }
 
-
 mod sogou_tests {
     use super::*;
     use a3s_search::engines::Sogou;

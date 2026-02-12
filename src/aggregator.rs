@@ -469,11 +469,7 @@ mod tests {
     fn test_aggregate_merges_longer_title() {
         let aggregator = Aggregator::new();
 
-        let results1 = vec![SearchResult::new(
-            "https://example.com",
-            "Short",
-            "Content",
-        )];
+        let results1 = vec![SearchResult::new("https://example.com", "Short", "Content")];
         let results2 = vec![SearchResult::new(
             "https://example.com",
             "Much Longer Title",

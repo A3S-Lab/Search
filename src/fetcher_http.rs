@@ -32,9 +32,8 @@ impl HttpFetcher {
 
     /// Creates an `HttpFetcher` with proxy support.
     pub fn with_proxy(proxy_url: &str) -> crate::Result<Self> {
-        let proxy = reqwest::Proxy::all(proxy_url).map_err(|e| {
-            crate::SearchError::Other(format!("Failed to create proxy: {}", e))
-        })?;
+        let proxy = reqwest::Proxy::all(proxy_url)
+            .map_err(|e| crate::SearchError::Other(format!("Failed to create proxy: {}", e)))?;
         let client = Client::builder()
             .user_agent(DEFAULT_USER_AGENT)
             .proxy(proxy)
@@ -90,10 +89,7 @@ mod tests {
 
     #[test]
     fn test_http_fetcher_with_client() {
-        let client = Client::builder()
-            .user_agent("test-agent")
-            .build()
-            .unwrap();
+        let client = Client::builder().user_agent("test-agent").build().unwrap();
         let _fetcher = HttpFetcher::with_client(client);
     }
 

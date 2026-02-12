@@ -6,7 +6,10 @@ use async_trait::async_trait;
 use scraper::{Html, Selector};
 
 use crate::fetcher::PageFetcher;
-use crate::{Engine, EngineCategory, EngineConfig, HttpFetcher, Result, SearchError, SearchQuery, SearchResult};
+use crate::{
+    Engine, EngineCategory, EngineConfig, HttpFetcher, Result, SearchError, SearchQuery,
+    SearchResult,
+};
 
 /// 360 Search engine (360搜索).
 pub struct So360 {
@@ -182,7 +185,10 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].title, "Rust Programming Language");
         assert_eq!(results[0].url, "https://www.rust-lang.org/");
-        assert_eq!(results[0].content, "A systems programming language focused on safety.");
+        assert_eq!(
+            results[0].content,
+            "A systems programming language focused on safety."
+        );
         assert_eq!(results[1].title, "The Rust Book");
         assert_eq!(results[1].url, "https://doc.rust-lang.org/book/");
         assert_eq!(results[1].content, "Official Rust programming guide.");

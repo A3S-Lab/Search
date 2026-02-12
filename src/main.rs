@@ -125,7 +125,9 @@ async fn main() -> Result<()> {
                 println!("  a3s-search \"Rust\" -f json");
                 println!("  a3s-search \"Rust\" -p http://127.0.0.1:8080\n");
                 println!("Options:");
-                println!("  -e, --engines <ENGINES>  Engines: ddg,brave,wiki,sogou,360,g,baidu,bing_cn");
+                println!(
+                    "  -e, --engines <ENGINES>  Engines: ddg,brave,wiki,sogou,360,g,baidu,bing_cn"
+                );
                 println!("  -l, --limit <N>          Max results (default: 10)");
                 println!("  -t, --timeout <SECS>     Timeout in seconds (default: 10)");
                 println!("  -f, --format <FORMAT>    Output: text, json, compact");
@@ -231,12 +233,10 @@ async fn run_search(args: SearchArgs) -> Result<()> {
 
     for shortcut in &engine_shortcuts {
         match shortcut.as_str() {
-            "ddg" | "duckduckgo" => {
-                search.add_engine(DuckDuckGo::with_fetcher(std::sync::Arc::clone(&http_fetcher)))
-            }
-            "brave" => {
-                search.add_engine(Brave::with_fetcher(std::sync::Arc::clone(&http_fetcher)))
-            }
+            "ddg" | "duckduckgo" => search.add_engine(DuckDuckGo::with_fetcher(
+                std::sync::Arc::clone(&http_fetcher),
+            )),
+            "brave" => search.add_engine(Brave::with_fetcher(std::sync::Arc::clone(&http_fetcher))),
             "wiki" | "wikipedia" => {
                 // Wikipedia needs its own fetcher since it uses JSON API, not HTML
                 let fetcher = if let Some(proxy_url) = &args.proxy {
@@ -248,40 +248,40 @@ async fn run_search(args: SearchArgs) -> Result<()> {
                 };
                 search.add_engine(Wikipedia::with_http_fetcher(fetcher))
             }
-            "sogou" => {
-                search.add_engine(Sogou::with_fetcher(std::sync::Arc::clone(&http_fetcher)))
-            }
+            "sogou" => search.add_engine(Sogou::with_fetcher(std::sync::Arc::clone(&http_fetcher))),
             "360" | "so360" => {
                 search.add_engine(So360::with_fetcher(std::sync::Arc::clone(&http_fetcher)))
             }
             #[cfg(feature = "headless")]
             "g" | "google" => {
-                let fetcher: std::sync::Arc<dyn PageFetcher> =
-                    std::sync::Arc::new(BrowserFetcher::new(std::sync::Arc::clone(&browser_pool)).with_wait(
+                let fetcher: std::sync::Arc<dyn PageFetcher> = std::sync::Arc::new(
+                    BrowserFetcher::new(std::sync::Arc::clone(&browser_pool)).with_wait(
                         WaitStrategy::Selector {
                             css: "div.g".to_string(),
                             timeout_ms: 5000,
                         },
-                    ));
+                    ),
+                );
                 search.add_engine(Google::new(fetcher));
             }
             #[cfg(feature = "headless")]
             "baidu" => {
-                let fetcher: std::sync::Arc<dyn PageFetcher> =
-                    std::sync::Arc::new(BrowserFetcher::new(std::sync::Arc::clone(&browser_pool)).with_wait(
+                let fetcher: std::sync::Arc<dyn PageFetcher> = std::sync::Arc::new(
+                    BrowserFetcher::new(std::sync::Arc::clone(&browser_pool)).with_wait(
                         WaitStrategy::Selector {
                             css: "div.c-container".to_string(),
                             timeout_ms: 5000,
                         },
-                    ));
+                    ),
+                );
                 search.add_engine(Baidu::new(fetcher));
             }
             #[cfg(feature = "headless")]
             "bing_cn" | "bing" => {
-                let fetcher: std::sync::Arc<dyn PageFetcher> =
-                    std::sync::Arc::new(BrowserFetcher::new(std::sync::Arc::clone(&browser_pool)).with_wait(
-                        WaitStrategy::Delay { ms: 2000 },
-                    ));
+                let fetcher: std::sync::Arc<dyn PageFetcher> = std::sync::Arc::new(
+                    BrowserFetcher::new(std::sync::Arc::clone(&browser_pool))
+                        .with_wait(WaitStrategy::Delay { ms: 2000 }),
+                );
                 search.add_engine(BingChina::new(fetcher));
             }
             #[cfg(not(feature = "headless"))]
@@ -586,10 +586,7 @@ mod tests {
     fn test_cli_headless_with_google_engine() {
         let cli = Cli::parse_from(["a3s-search", "query", "-e", "g,ddg", "--headless"]);
         assert!(cli.headless);
-        assert_eq!(
-            cli.engines,
-            Some(vec!["g".to_string(), "ddg".to_string()])
-        );
+        assert_eq!(cli.engines, Some(vec!["g".to_string(), "ddg".to_string()]));
     }
 
     #[test]

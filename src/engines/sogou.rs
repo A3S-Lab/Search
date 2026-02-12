@@ -6,7 +6,10 @@ use async_trait::async_trait;
 use scraper::{Html, Selector};
 
 use crate::fetcher::PageFetcher;
-use crate::{Engine, EngineCategory, EngineConfig, HttpFetcher, Result, SearchError, SearchQuery, SearchResult};
+use crate::{
+    Engine, EngineCategory, EngineConfig, HttpFetcher, Result, SearchError, SearchQuery,
+    SearchResult,
+};
 
 /// Sogou search engine (搜狗).
 pub struct Sogou {
@@ -86,10 +89,7 @@ impl Sogou {
 
             if let Some(title_elem) = title_elem {
                 let title = title_elem.text().collect::<String>().trim().to_string();
-                let raw_url = title_elem
-                    .value()
-                    .attr("href")
-                    .unwrap_or_default();
+                let raw_url = title_elem.value().attr("href").unwrap_or_default();
 
                 // Sogou returns relative redirect URLs like /link?url=...
                 let url = if raw_url.starts_with('/') {

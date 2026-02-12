@@ -205,10 +205,9 @@ async fn download_chrome() -> Result<PathBuf> {
         .await
         .map_err(|e| SearchError::Browser(format!("Failed to fetch Chrome versions: {}", e)))?;
 
-    let body: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| SearchError::Browser(format!("Failed to parse Chrome versions JSON: {}", e)))?;
+    let body: serde_json::Value = resp.json().await.map_err(|e| {
+        SearchError::Browser(format!("Failed to parse Chrome versions JSON: {}", e))
+    })?;
 
     // Extract stable channel info
     let stable = body
@@ -358,9 +357,8 @@ fn extract_zip(zip_bytes: &[u8], target_dir: &Path) -> Result<()> {
             })?;
 
             let mut buf = Vec::new();
-            file.read_to_end(&mut buf).map_err(|e| {
-                SearchError::Browser(format!("Failed to read zip entry: {}", e))
-            })?;
+            file.read_to_end(&mut buf)
+                .map_err(|e| SearchError::Browser(format!("Failed to read zip entry: {}", e)))?;
 
             std::io::Write::write_all(&mut outfile, &buf).map_err(|e| {
                 SearchError::Browser(format!(
@@ -375,8 +373,7 @@ fn extract_zip(zip_bytes: &[u8], target_dir: &Path) -> Result<()> {
             {
                 use std::os::unix::fs::PermissionsExt;
                 if let Some(mode) = file.unix_mode() {
-                    std::fs::set_permissions(&out_path, std::fs::Permissions::from_mode(mode))
-                        .ok();
+                    std::fs::set_permissions(&out_path, std::fs::Permissions::from_mode(mode)).ok();
                 }
             }
         }

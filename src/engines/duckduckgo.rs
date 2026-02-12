@@ -6,7 +6,10 @@ use async_trait::async_trait;
 use scraper::{Html, Selector};
 
 use crate::fetcher::PageFetcher;
-use crate::{Engine, EngineCategory, EngineConfig, HttpFetcher, Result, SearchError, SearchQuery, SearchResult};
+use crate::{
+    Engine, EngineCategory, EngineConfig, HttpFetcher, Result, SearchError, SearchQuery,
+    SearchResult,
+};
 
 /// DuckDuckGo search engine.
 pub struct DuckDuckGo {

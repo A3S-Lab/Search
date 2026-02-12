@@ -51,8 +51,9 @@ impl Baidu {
             .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
         let title_selector = Selector::parse("h3 a, .t a")
             .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
-        let snippet_selector = Selector::parse(".c-abstract, .c-span-last, .content-right_8Zs40")
-            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
+        let snippet_selector =
+            Selector::parse(".c-abstract, .c-span-last, .content-right_8Zs40")
+                .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
 
         let mut results = Vec::new();
 

@@ -104,8 +104,7 @@ impl BrowserPool {
         );
 
         // Anti-detection: hide navigator.webdriver and automation indicators
-        builder = builder
-            .arg("--disable-blink-features=AutomationControlled");
+        builder = builder.arg("--disable-blink-features=AutomationControlled");
 
         // Standard arguments for scraping
         builder = builder
@@ -416,9 +415,12 @@ mod tests {
     #[test]
     fn test_browser_fetcher_with_network_idle_wait() {
         let pool = Arc::new(BrowserPool::new(BrowserPoolConfig::default()));
-        let fetcher = BrowserFetcher::new(pool)
-            .with_wait(WaitStrategy::NetworkIdle { idle_ms: 1000 });
-        assert!(matches!(fetcher.wait, WaitStrategy::NetworkIdle { idle_ms: 1000 }));
+        let fetcher =
+            BrowserFetcher::new(pool).with_wait(WaitStrategy::NetworkIdle { idle_ms: 1000 });
+        assert!(matches!(
+            fetcher.wait,
+            WaitStrategy::NetworkIdle { idle_ms: 1000 }
+        ));
     }
 
     #[test]

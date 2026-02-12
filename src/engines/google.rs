@@ -282,7 +282,11 @@ mod tests {
         let result = engine.search(&SearchQuery::new("test")).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("CAPTCHA"), "Expected CAPTCHA error, got: {}", err);
+        assert!(
+            err.contains("CAPTCHA"),
+            "Expected CAPTCHA error, got: {}",
+            err
+        );
     }
 
     #[tokio::test]
@@ -305,7 +309,11 @@ mod tests {
         let result = engine.search(&SearchQuery::new("test")).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("CAPTCHA"), "Expected CAPTCHA error, got: {}", err);
+        assert!(
+            err.contains("CAPTCHA"),
+            "Expected CAPTCHA error, got: {}",
+            err
+        );
     }
 
     #[tokio::test]
