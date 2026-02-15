@@ -1,6 +1,6 @@
 {
   "name": "@a3s-lab/search-linux-arm64-gnu",
-  "version": "0.5.5",
+  "version": "0.6.0",
   "os": ["linux"],
   "cpu": ["arm64"],
   "libc": ["glibc"],

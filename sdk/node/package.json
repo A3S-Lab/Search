@@ -1,6 +1,6 @@
 {
   "name": "@a3s-lab/search",
-  "version": "0.5.5",
+  "version": "0.6.0",
   "description": "Native Node.js bindings for a3s-search meta search engine",
   "main": "index.js",
   "types": "index.d.ts",

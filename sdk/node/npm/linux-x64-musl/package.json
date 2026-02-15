@@ -1,6 +1,6 @@
 {
   "name": "@a3s-lab/search-linux-x64-musl",
-  "version": "0.5.5",
+  "version": "0.6.0",
   "os": ["linux"],
   "cpu": ["x64"],
   "libc": ["musl"],
