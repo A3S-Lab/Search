@@ -1,6 +1,6 @@
 {
   "name": "@a3s-lab/search-win32-x64-msvc",
-  "version": "0.1.2",
+  "version": "0.5.4",
   "os": ["win32"],
   "cpu": ["x64"],
   "main": "a3s-search.win32-x64-msvc.node",

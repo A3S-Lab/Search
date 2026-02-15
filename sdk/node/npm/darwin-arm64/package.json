@@ -1,6 +1,6 @@
 {
   "name": "@a3s-lab/search-darwin-arm64",
-  "version": "0.1.2",
+  "version": "0.5.4",
   "os": ["darwin"],
   "cpu": ["arm64"],
   "main": "a3s-search.darwin-arm64.node",
