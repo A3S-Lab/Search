@@ -52,12 +52,24 @@ EOF
 cat > crates/updater/Cargo.toml << 'EOF'
 [package]
 name = "a3s-updater"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["A3S Lab"]
 license = "MIT"
+
+[dependencies]
+anyhow = "1"
 EOF
-echo "pub fn stub() {}" > crates/updater/src/lib.rs
+cat > crates/updater/src/lib.rs << 'EOF'
+pub struct UpdateConfig {
+    pub binary_name: &'static str,
+    pub crate_name: &'static str,
+    pub current_version: &'static str,
+    pub github_owner: &'static str,
+    pub github_repo: &'static str,
+}
+pub async fn run_update(_: &UpdateConfig) -> anyhow::Result<()> { Ok(()) }
+EOF
 
 # Clean up
 rm -rf "$TMPDIR"
