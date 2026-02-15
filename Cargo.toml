@@ -1,6 +1,25 @@
+[workspace]
+members = []
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+authors = ["A3S Lab Team"]
+
+[workspace.dependencies]
+tokio = { version = "1.35", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+async-trait = "0.1"
+futures = "0.3"
+tokio-test = "0.4"
+
 [package]
 name = "a3s-search"
-version = "0.5.3"
+version = "0.5.4"
 edition.workspace = true
 license.workspace = true
 repository = "https://github.com/A3S-Lab/Search"
@@ -65,3 +84,16 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 tokio-test.workspace = true
+
+# =============================================================================
+# Release Profile — optimized for binary size
+# =============================================================================
+# a3s-search is a CLI/library with optional headless browser (chromiumoxide).
+# I/O-bound workload — optimize for size over speed.
+#
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"
