@@ -27,8 +27,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Format check
-        working-directory: crates/search
-        run: cargo fmt -- --check
+        run: cargo fmt -p a3s-search -- --check
 
       - name: Clippy
         run: cargo clippy -p a3s-search --no-default-features -- -D warnings

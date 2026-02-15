@@ -74,4 +74,19 @@ EOF
 # Clean up
 rm -rf "$TMPDIR"
 
+# Remove nested [workspace] sections from search crate Cargo.toml
+# (the workspace root already defines these)
+python3 - crates/search/Cargo.toml << 'PYEOF'
+import sys, re
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+# Remove [workspace], [workspace.package], [workspace.dependencies] sections
+content = re.sub(r'\[workspace\]\nmembers = \[\]\n\n', '', content)
+content = re.sub(r'\[workspace\.package\]\n(?:.*\n)*?\n(?=\[)', '', content)
+content = re.sub(r'\[workspace\.dependencies\]\n(?:.*\n)*?\n(?=\[)', '', content)
+with open(path, 'w') as f:
+    f.write(content)
+PYEOF
+
 echo "Workspace restructured. Search crate at: crates/search/"
