@@ -1,6 +1,6 @@
 {
   "name": "@a3s-lab/search",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "description": "Native Node.js bindings for a3s-search meta search engine",
   "main": "index.js",
   "types": "index.d.ts",
@@ -27,13 +27,13 @@
     "dist/lib/**/*.d.ts"
   ],
   "optionalDependencies": {
-    "@a3s-lab/search-win32-x64-msvc": "0.5.4",
-    "@a3s-lab/search-darwin-x64": "0.5.4",
-    "@a3s-lab/search-darwin-arm64": "0.5.4",
-    "@a3s-lab/search-linux-x64-gnu": "0.5.4",
-    "@a3s-lab/search-linux-x64-musl": "0.5.4",
-    "@a3s-lab/search-linux-arm64-gnu": "0.5.4",
-    "@a3s-lab/search-linux-arm64-musl": "0.5.4"
+    "@a3s-lab/search-win32-x64-msvc": "0.5.5",
+    "@a3s-lab/search-darwin-x64": "0.5.5",
+    "@a3s-lab/search-darwin-arm64": "0.5.5",
+    "@a3s-lab/search-linux-x64-gnu": "0.5.5",
+    "@a3s-lab/search-linux-x64-musl": "0.5.5",
+    "@a3s-lab/search-linux-arm64-gnu": "0.5.5",
+    "@a3s-lab/search-linux-arm64-musl": "0.5.5"
   },
   "devDependencies": {
     "@napi-rs/cli": "^2.18.0",
