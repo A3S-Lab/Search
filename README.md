@@ -73,7 +73,7 @@ async fn main() -> anyhow::Result<()> {
 
 **Homebrew (macOS):**
 ```bash
-brew tap A3S-Lab/tap
+brew tap a3s-lab/tap https://github.com/A3S-Lab/homebrew-tap
 brew install a3s-search
 ```
 
