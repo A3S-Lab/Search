@@ -12,4 +12,4 @@ try {
   );
 }
 
-export const { JsSearch } = nativeModule;
+export const { JsSearch, ensureChrome } = nativeModule;

@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "a3s-search"
-version = "0.7.0"
+version = "0.8.0"
 description = "Native Python bindings for a3s-search meta search engine"
 license = { text = "MIT" }
 requires-python = ">=3.9"
@@ -25,8 +25,11 @@ classifiers = [
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-asyncio>=0.23"]
 
+[project.scripts]
+a3s-search-setup = "a3s_search.ensure_chrome:main"
+
 [tool.maturin]
-features = []
+features = ["pyo3/extension-module"]
 module-name = "a3s_search._a3s_search"
 python-source = "."
 

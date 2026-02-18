@@ -1,6 +1,6 @@
 [package]
 name = "a3s-search-node"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 license = "MIT"
 publish = false
@@ -11,7 +11,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-a3s-search = { path = "../..", default-features = false, features = [] }
+a3s-search = { path = "../..", default-features = false, features = ["headless"] }
 napi = { version = "2", features = ["async", "tokio_rt"] }
 napi-derive = "2"
 tokio = { version = "1", features = ["full"] }

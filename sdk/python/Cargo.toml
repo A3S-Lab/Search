@@ -1,6 +1,6 @@
 [package]
 name = "a3s-search-python"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 license = "MIT"
 publish = false
@@ -12,7 +12,7 @@ name = "_a3s_search"
 crate-type = ["cdylib"]
 
 [dependencies]
-a3s-search = { path = "../..", default-features = false, features = [] }
+a3s-search = { path = "../..", default-features = false, features = ["headless"] }
 pyo3 = { version = "0.22", features = ["extension-module"] }
 pyo3-async-runtimes = { version = "0.22", features = ["tokio-runtime"] }
 tokio = { version = "1", features = ["full"] }
