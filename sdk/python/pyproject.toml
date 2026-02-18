@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "a3s-search"
-version = "0.6.0"
+version = "0.7.0"
 description = "Native Python bindings for a3s-search meta search engine"
 license = { text = "MIT" }
 requires-python = ">=3.9"
