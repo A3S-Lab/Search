@@ -268,16 +268,50 @@ print(f"{response.count} results in {response.duration_ms}ms")
 
 ### SDK Available Engines
 
-Both SDKs support HTTP-based engines (no headless browser required):
+Both SDKs support all engines (HTTP and headless):
 
-| Shortcut | Aliases | Engine |
-|----------|---------|--------|
-| `ddg` | `duckduckgo` | DuckDuckGo |
-| `brave` | — | Brave Search |
-| `bing` | — | Bing International |
-| `wiki` | `wikipedia` | Wikipedia API |
-| `sogou` | — | Sogou (搜狗) |
-| `360` | `so360` | 360 Search (360搜索) |
+| Shortcut | Aliases | Engine | Type |
+|----------|---------|--------|------|
+| `ddg` | `duckduckgo` | DuckDuckGo | HTTP |
+| `brave` | — | Brave Search | HTTP |
+| `bing` | — | Bing International | HTTP |
+| `wiki` | `wikipedia` | Wikipedia API | HTTP |
+| `sogou` | — | Sogou (搜狗) | HTTP |
+| `360` | `so360` | 360 Search (360搜索) | HTTP |
+| `g` | `google` | Google Search | Headless |
+| `baidu` | — | Baidu (百度) | Headless |
+| `bing_cn` | — | Bing China (必应中国) | Headless |
+
+### Chrome Setup for SDK
+
+Headless engines require Chrome. Pre-download it after install:
+
+**Python:**
+```bash
+# Option 1: CLI command (added to PATH on install)
+a3s-search-setup
+
+# Option 2: Python module
+python -m a3s_search.ensure_chrome
+
+# Option 3: In code (async)
+from a3s_search import ensure_chrome
+path = await ensure_chrome()
+```
+
+**Node.js:**
+```bash
+# Runs automatically on npm install via postinstall script
+# Or manually:
+node -e "require('@a3s-lab/search').ensureChrome().then(console.log)"
+```
+
+```typescript
+// In code
+import { ensureChrome } from '@a3s-lab/search';
+const path = await ensureChrome();
+console.log(`Chrome at: ${path}`);
+```
 
 ### SDK Tests
 
@@ -416,11 +450,11 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-a3s-search = "0.6"
+a3s-search = "0.8"
 tokio = { version = "1", features = ["full"] }
 
 # To disable headless browser support:
-# a3s-search = { version = "0.6", default-features = false }
+# a3s-search = { version = "0.8", default-features = false }
 ```
 
 ### Basic Search
@@ -930,6 +964,13 @@ A3S Search is a **utility component** of the A3S ecosystem.
 - [x] UTF-8 safe content truncation for CJK/emoji
 - [x] Native SDKs: TypeScript (NAPI-RS) and Python (PyO3) with dynamic proxy pool management
 - [x] SDK proxy pool: `setProxyPool()`, `setProxyPoolEnabled()`, per-request `proxyPool` option
+
+### Phase 2: SDK Headless Support ✅ (v0.8.0)
+
+- [x] Enable headless feature in Python and Node SDKs (all 9 engines available)
+- [x] `ensure_chrome()` / `ensure_chrome_sync()` bindings for Python and Node SDKs
+- [x] Python post-install: `a3s-search-setup` CLI + `python -m a3s_search.ensure_chrome`
+- [x] Node post-install: automatic Chrome download on `npm install`
 
 ## License
 
