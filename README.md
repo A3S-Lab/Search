@@ -164,7 +164,7 @@ When using headless engines (`g`, `baidu`, `bing_cn`), Chrome/Chromium is requir
 2. **Cache** — Looks for a previously downloaded Chrome in `~/.a3s/chromium/`
 3. **Download** — If not found, downloads [Chrome for Testing](https://googlechromelabs.github.io/chrome-for-testing/) from Google's official CDN
 
-Supported platforms: **macOS** (arm64, x64) and **Linux** (x64).
+Supported platforms: **macOS** (arm64, x64), **Linux** (x64), and **Windows** (x64, x86).
 
 ```bash
 # First run: Chrome is auto-downloaded if not installed
