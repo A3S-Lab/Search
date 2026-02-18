@@ -15,12 +15,51 @@ import type { SearchOptions, SearchResponse, SearchResult } from "./types";
  *   console.log(`${r.title}: ${r.url}`);
  * }
  * ```
+ *
+ * @example Proxy pool
+ * ```typescript
+ * const search = new A3SSearch();
+ * await search.setProxyPool([
+ *   "http://10.0.0.1:8080",
+ *   "http://10.0.0.2:8080",
+ * ]);
+ * const response = await search.search("rust programming");
+ * ```
  */
 export class A3SSearch {
   private native: InstanceType<typeof JsSearch>;
 
   constructor() {
     this.native = new JsSearch();
+  }
+
+  /**
+   * Set the proxy pool URLs for IP rotation.
+   *
+   * Replaces any existing proxies. Automatically enables the proxy pool.
+   * Each URL should be "http://host:port", "https://host:port", or "socks5://host:port".
+   */
+  async setProxyPool(urls: string[]): Promise<void> {
+    await this.native.setProxyPool(urls);
+  }
+
+  /**
+   * Enable or disable the proxy pool.
+   *
+   * When disabled, requests are made directly without a proxy.
+   */
+  setProxyPoolEnabled(enabled: boolean): void {
+    this.native.setProxyPoolEnabled(enabled);
+  }
+
+  /** Returns whether the proxy pool is currently enabled. */
+  isProxyPoolEnabled(): boolean {
+    return this.native.isProxyPoolEnabled();
+  }
+
+  /** Returns the number of proxies in the pool. */
+  async proxyPoolSize(): Promise<number> {
+    return this.native.proxyPoolSize();
   }
 
   /**
@@ -42,6 +81,7 @@ export class A3SSearch {
             limit: options.limit,
             timeout: options.timeout,
             proxy: options.proxy,
+            proxyPool: options.proxyPool,
           }
         : undefined;
 

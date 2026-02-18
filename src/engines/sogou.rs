@@ -1,112 +1,85 @@
 //! Sogou search engine implementation.
 
-use std::sync::Arc;
+use crate::html_engine::{selector, HtmlEngine, HtmlParser};
+use crate::{EngineCategory, EngineConfig, Result, SearchQuery, SearchResult};
+use scraper::Html;
 
-use async_trait::async_trait;
-use scraper::{Html, Selector};
-
-use crate::fetcher::PageFetcher;
-use crate::{
-    Engine, EngineCategory, EngineConfig, HttpFetcher, Result, SearchError, SearchQuery,
-    SearchResult,
-};
+/// Sogou HTML parser.
+pub struct SogouParser;
 
 /// Sogou search engine (搜狗).
-pub struct Sogou {
-    config: EngineConfig,
-    fetcher: Arc<dyn PageFetcher>,
-}
+pub type Sogou = HtmlEngine<SogouParser>;
 
 impl Sogou {
     /// Creates a new Sogou engine with a default HTTP fetcher.
     pub fn new() -> Self {
-        Self::with_fetcher(Arc::new(HttpFetcher::new()))
-    }
-
-    /// Creates a new Sogou engine with a custom page fetcher.
-    pub fn with_fetcher(fetcher: Arc<dyn PageFetcher>) -> Self {
-        Self {
-            config: EngineConfig {
-                name: "Sogou".to_string(),
-                shortcut: "sogou".to_string(),
-                categories: vec![EngineCategory::General],
-                weight: 1.0,
-                timeout: 5,
-                enabled: true,
-                paging: true,
-                safesearch: false,
-            },
-            fetcher,
-        }
-    }
-
-    /// Creates with custom configuration.
-    pub fn with_config(mut self, config: EngineConfig) -> Self {
-        self.config = config;
-        self
+        HtmlEngine::with_fetcher(SogouParser, std::sync::Arc::new(crate::HttpFetcher::new()))
     }
 }
 
 impl Default for Sogou {
     fn default() -> Self {
-        Self::new()
+        Sogou::new()
     }
 }
 
-#[async_trait]
-impl Engine for Sogou {
-    fn config(&self) -> &EngineConfig {
-        &self.config
+impl HtmlParser for SogouParser {
+    fn default_config() -> EngineConfig {
+        EngineConfig {
+            name: "Sogou".to_string(),
+            shortcut: "sogou".to_string(),
+            categories: vec![EngineCategory::General],
+            weight: 1.0,
+            timeout: 5,
+            enabled: true,
+            paging: true,
+            safesearch: false,
+        }
     }
 
-    async fn search(&self, query: &SearchQuery) -> Result<Vec<SearchResult>> {
-        let url = format!(
+    fn build_url(&self, query: &SearchQuery) -> String {
+        let mut url = format!(
             "https://www.sogou.com/web?query={}",
             urlencoding::encode(&query.query)
         );
-
-        let html = self.fetcher.fetch(&url).await?;
-
-        self.parse_results(&html)
+        if query.page > 1 {
+            url.push_str(&format!("&page={}", query.page));
+        }
+        url
     }
-}
 
-impl Sogou {
-    fn parse_results(&self, html: &str) -> Result<Vec<SearchResult>> {
+    fn parse(&self, html: &str) -> Result<Vec<SearchResult>> {
         let document = Html::parse_document(html);
-
-        let result_selector = Selector::parse("div.vrwrap, div.rb")
-            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
-        let title_selector = Selector::parse("h3 a, .vr-title a")
-            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
-        let snippet_selector = Selector::parse(".str-text, .str_info, .space-txt")
-            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
+        let result_sel = selector("div.vrwrap, div.rb")?;
+        let title_sel = selector("h3 a, .vr-title a")?;
+        let snippet_sel = selector(".str-text, .str_info, .space-txt")?;
 
         let mut results = Vec::new();
 
-        for element in document.select(&result_selector) {
-            let title_elem = element.select(&title_selector).next();
+        for element in document.select(&result_sel) {
+            let title_elem = match element.select(&title_sel).next() {
+                Some(el) => el,
+                None => continue,
+            };
 
-            if let Some(title_elem) = title_elem {
-                let title = title_elem.text().collect::<String>().trim().to_string();
-                let raw_url = title_elem.value().attr("href").unwrap_or_default();
+            let title = title_elem.text().collect::<String>().trim().to_string();
+            let raw_url = title_elem.value().attr("href").unwrap_or_default();
 
-                // Sogou returns relative redirect URLs like /link?url=...
-                let url = if raw_url.starts_with('/') {
-                    format!("https://www.sogou.com{}", raw_url)
-                } else {
-                    raw_url.to_string()
-                };
+            // Sogou returns relative redirect URLs like /link?url=...
+            let url = if raw_url.starts_with('/') {
+                format!("https://www.sogou.com{}", raw_url)
+            } else {
+                raw_url.to_string()
+            };
 
-                let content = element
-                    .select(&snippet_selector)
-                    .next()
-                    .map(|e| e.text().collect::<String>().trim().to_string())
-                    .unwrap_or_default();
+            let content = element
+                .select(&snippet_sel)
+                .next()
+                .map(|e| e.text().collect::<String>().trim().to_string())
+                .unwrap_or_default();
 
-                if !url.is_empty() && !title.is_empty() {
-                    results.push(SearchResult::new(url, title, content));
-                }
+            if !url.is_empty() && !title.is_empty() {
+                results.push(SearchResult::new(url, title, content));
             }
         }
 
@@ -117,27 +90,29 @@ impl Sogou {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Engine;
     use crate::HttpFetcher;
+    use std::sync::Arc;
 
     #[test]
     fn test_sogou_new() {
         let engine = Sogou::new();
-        assert_eq!(engine.config.name, "Sogou");
-        assert_eq!(engine.config.shortcut, "sogou");
-        assert_eq!(engine.config.weight, 1.0);
+        assert_eq!(engine.config().name, "Sogou");
+        assert_eq!(engine.config().shortcut, "sogou");
+        assert_eq!(engine.config().weight, 1.0);
     }
 
     #[test]
     fn test_sogou_with_fetcher() {
-        let fetcher: Arc<dyn PageFetcher> = Arc::new(HttpFetcher::new());
-        let engine = Sogou::with_fetcher(fetcher);
-        assert_eq!(engine.name(), "Sogou");
+        let fetcher: Arc<dyn crate::PageFetcher> = Arc::new(HttpFetcher::new());
+        let engine = Sogou::with_fetcher(SogouParser, fetcher);
+        assert_eq!(engine.config().name, "Sogou");
     }
 
     #[test]
     fn test_sogou_default() {
         let engine = Sogou::default();
-        assert_eq!(engine.name(), "Sogou");
+        assert_eq!(engine.config().name, "Sogou");
     }
 
     #[test]
@@ -148,7 +123,7 @@ mod tests {
             ..Default::default()
         };
         let engine = Sogou::new().with_config(custom_config);
-        assert_eq!(engine.name(), "Custom Sogou");
+        assert_eq!(engine.config().name, "Custom Sogou");
     }
 
     #[test]
@@ -161,14 +136,14 @@ mod tests {
 
     #[test]
     fn test_sogou_parse_results_empty() {
-        let engine = Sogou::new();
-        let results = engine.parse_results("<html><body></body></html>").unwrap();
+        let parser = SogouParser;
+        let results = parser.parse("<html><body></body></html>").unwrap();
         assert!(results.is_empty());
     }
 
     #[test]
     fn test_sogou_parse_results_with_data() {
-        let engine = Sogou::new();
+        let parser = SogouParser;
         let html = r#"
         <html><body>
         <div class="vrwrap">
@@ -181,7 +156,7 @@ mod tests {
         </div>
         </body></html>
         "#;
-        let results = engine.parse_results(html).unwrap();
+        let results = parser.parse(html).unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].title, "Rust Programming");
         assert_eq!(results[0].url, "https://www.sogou.com/link?url=abc123");
@@ -192,7 +167,7 @@ mod tests {
 
     #[test]
     fn test_sogou_parse_results_relative_url() {
-        let engine = Sogou::new();
+        let parser = SogouParser;
         let html = r#"
         <html><body>
         <div class="vrwrap">
@@ -201,7 +176,7 @@ mod tests {
         </div>
         </body></html>
         "#;
-        let results = engine.parse_results(html).unwrap();
+        let results = parser.parse(html).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].url, "https://www.sogou.com/link?url=xyz789");
     }

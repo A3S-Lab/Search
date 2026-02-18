@@ -1,6 +1,7 @@
 //! Search engine implementations.
 
 // International engines
+mod bing;
 mod brave;
 mod duckduckgo;
 mod wikipedia;
@@ -17,16 +18,17 @@ mod bing_china;
 #[cfg(feature = "headless")]
 mod google;
 
-pub use brave::Brave;
-pub use duckduckgo::DuckDuckGo;
+pub use bing::{Bing, BingParser};
+pub use brave::{Brave, BraveParser};
+pub use duckduckgo::{DuckDuckGo, DuckDuckGoParser};
 pub use wikipedia::Wikipedia;
 
-pub use so360::So360;
-pub use sogou::Sogou;
+pub use so360::{So360, So360Parser};
+pub use sogou::{Sogou, SogouParser};
 
 #[cfg(feature = "headless")]
-pub use baidu::Baidu;
+pub use baidu::{Baidu, BaiduParser};
 #[cfg(feature = "headless")]
-pub use bing_china::BingChina;
+pub use bing_china::{BingChina, BingChinaParser};
 #[cfg(feature = "headless")]
-pub use google::Google;
+pub use google::{Google, GoogleParser};

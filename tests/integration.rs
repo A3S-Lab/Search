@@ -273,6 +273,119 @@ mod bing_china_tests {
     }
 }
 
+mod bing_tests {
+    use super::*;
+    use a3s_search::engines::Bing;
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_bing_search() {
+        let engine = Bing::new();
+        let results = test_engine(engine, "rust programming").await;
+        println!("Bing returned {} results", results.len());
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_bing_config() {
+        let engine = Bing::new();
+        assert_eq!(engine.name(), "Bing");
+        assert_eq!(engine.shortcut(), "bing");
+        assert!(engine.is_enabled());
+    }
+}
+
+mod health_monitor_tests {
+    use std::time::Duration;
+
+    use a3s_search::{
+        engines::DuckDuckGo, HealthConfig, Search, SearchQuery,
+    };
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_health_monitor_with_real_engines() {
+        let config = HealthConfig {
+            max_failures: 2,
+            suspend_duration: Duration::from_secs(60),
+        };
+        let mut search = Search::with_health_config(config);
+        search.add_engine(DuckDuckGo::new());
+
+        let query = SearchQuery::new("rust programming");
+        let results = search.search(query).await.unwrap();
+
+        println!(
+            "Health monitor test: {} results in {}ms, {} errors",
+            results.count,
+            results.duration_ms,
+            results.errors().len()
+        );
+    }
+}
+
+mod config_tests {
+    use a3s_search::SearchConfig;
+
+    #[test]
+    fn test_load_hcl_config() {
+        let hcl = r#"
+            timeout = 8
+
+            health {
+                max_failures    = 5
+                suspend_seconds = 120
+            }
+
+            engine "ddg" {
+                enabled = true
+                weight  = 1.0
+            }
+
+            engine "bing" {
+                enabled = true
+                weight  = 1.2
+            }
+
+            engine "wiki" {
+                enabled = true
+                weight  = 0.8
+            }
+        "#;
+
+        let config = SearchConfig::parse(hcl).unwrap();
+        assert_eq!(config.timeout, 8);
+        assert_eq!(config.engines.len(), 3);
+
+        let health = config.health_config();
+        assert_eq!(health.max_failures, 5);
+
+        let enabled = config.enabled_engines();
+        assert_eq!(enabled.len(), 3);
+        assert!(enabled.contains(&"ddg"));
+        assert!(enabled.contains(&"bing"));
+        assert!(enabled.contains(&"wiki"));
+    }
+
+    #[test]
+    fn test_config_disabled_engines() {
+        let hcl = r#"
+            engine "ddg" {
+                enabled = true
+            }
+
+            engine "sogou" {
+                enabled = false
+            }
+        "#;
+
+        let config = SearchConfig::parse(hcl).unwrap();
+        let enabled = config.enabled_engines();
+        assert_eq!(enabled.len(), 1);
+        assert!(enabled.contains(&"ddg"));
+    }
+}
+
 mod meta_search_tests {
     use a3s_search::{
         engines::{DuckDuckGo, Wikipedia},
@@ -335,5 +448,138 @@ mod meta_search_tests {
                 result.engines
             );
         }
+    }
+}
+
+mod proxy_pool_tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use async_trait::async_trait;
+    use a3s_search::proxy::{
+        ProxyConfig, ProxyPool, ProxyProvider, ProxyStrategy, spawn_auto_refresh,
+    };
+    use a3s_search::PooledHttpFetcher;
+
+    /// A mock provider that returns a fixed list and tracks call count.
+    struct CountingProvider {
+        proxies: Vec<ProxyConfig>,
+        call_count: Arc<tokio::sync::Mutex<u32>>,
+    }
+
+    #[async_trait]
+    impl ProxyProvider for CountingProvider {
+        async fn fetch_proxies(&self) -> a3s_search::Result<Vec<ProxyConfig>> {
+            let mut count = self.call_count.lock().await;
+            *count += 1;
+            Ok(self.proxies.clone())
+        }
+
+        fn refresh_interval(&self) -> Duration {
+            Duration::from_millis(100) // fast refresh for testing
+        }
+    }
+
+    #[test]
+    fn test_proxy_pool_enabled_toggle() {
+        let pool = Arc::new(ProxyPool::with_proxies(vec![
+            ProxyConfig::new("10.0.0.1", 8080),
+        ]));
+
+        assert!(pool.is_enabled());
+        pool.set_enabled(false);
+        assert!(!pool.is_enabled());
+        pool.set_enabled(true);
+        assert!(pool.is_enabled());
+    }
+
+    #[tokio::test]
+    async fn test_proxy_pool_disabled_returns_none() {
+        let pool = Arc::new(ProxyPool::with_proxies(vec![
+            ProxyConfig::new("10.0.0.1", 8080),
+        ]));
+
+        // Enabled — should return proxy
+        let proxy = pool.get_proxy().await;
+        assert!(proxy.is_some());
+
+        // Disabled — should return None
+        pool.set_enabled(false);
+        let proxy = pool.get_proxy().await;
+        assert!(proxy.is_none());
+
+        // Re-enabled — should return proxy again
+        pool.set_enabled(true);
+        let proxy = pool.get_proxy().await;
+        assert!(proxy.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_proxy_pool_round_robin_rotation() {
+        let pool = ProxyPool::with_proxies(vec![
+            ProxyConfig::new("10.0.0.1", 8080),
+            ProxyConfig::new("10.0.0.2", 8080),
+            ProxyConfig::new("10.0.0.3", 8080),
+        ]);
+
+        let p1 = pool.get_proxy().await.unwrap();
+        let p2 = pool.get_proxy().await.unwrap();
+        let p3 = pool.get_proxy().await.unwrap();
+        let p4 = pool.get_proxy().await.unwrap();
+
+        assert_eq!(p1.host, "10.0.0.1");
+        assert_eq!(p2.host, "10.0.0.2");
+        assert_eq!(p3.host, "10.0.0.3");
+        assert_eq!(p4.host, "10.0.0.1"); // wraps around
+    }
+
+    #[tokio::test]
+    async fn test_proxy_pool_random_strategy() {
+        let pool = ProxyPool::with_proxies(vec![
+            ProxyConfig::new("10.0.0.1", 8080),
+            ProxyConfig::new("10.0.0.2", 8080),
+        ])
+        .with_strategy(ProxyStrategy::Random);
+
+        let proxy = pool.get_proxy().await.unwrap();
+        assert!(proxy.host == "10.0.0.1" || proxy.host == "10.0.0.2");
+    }
+
+    #[tokio::test]
+    async fn test_auto_refresh_calls_provider() {
+        let call_count = Arc::new(tokio::sync::Mutex::new(0u32));
+        let provider = CountingProvider {
+            proxies: vec![ProxyConfig::new("10.0.0.1", 8080)],
+            call_count: Arc::clone(&call_count),
+        };
+
+        let pool = Arc::new(ProxyPool::with_provider(provider));
+        let handle = spawn_auto_refresh(Arc::clone(&pool));
+
+        // Wait for initial refresh + at least one periodic refresh
+        tokio::time::sleep(Duration::from_millis(250)).await;
+
+        let count = *call_count.lock().await;
+        assert!(count >= 2, "Provider should be called at least twice, got {}", count);
+        assert_eq!(pool.len().await, 1);
+
+        handle.abort();
+    }
+
+    #[test]
+    fn test_pooled_http_fetcher_creation() {
+        let pool = Arc::new(ProxyPool::with_proxies(vec![
+            ProxyConfig::new("10.0.0.1", 8080),
+        ]));
+        let _fetcher = PooledHttpFetcher::new(pool);
+    }
+
+    #[test]
+    fn test_pooled_http_fetcher_with_timeout() {
+        let pool = Arc::new(ProxyPool::new());
+        let fetcher = PooledHttpFetcher::new(pool)
+            .with_timeout(Duration::from_secs(15));
+        // Should not panic
+        drop(fetcher);
     }
 }

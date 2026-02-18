@@ -31,23 +31,22 @@
 //! }
 //! ```
 //!
-//! ## Using Proxy Pool
+//! ## Using Proxy
 //!
 //! ```rust,no_run
-//! use a3s_search::{Search, SearchQuery, engines::DuckDuckGo};
-//! use a3s_search::proxy::{ProxyPool, ProxyConfig};
+//! use a3s_search::{Search, SearchQuery, engines::DuckDuckGo, HttpFetcher, PageFetcher};
+//! use std::sync::Arc;
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
-//!     // Create a proxy pool with multiple proxies
-//!     let proxy_pool = ProxyPool::with_proxies(vec![
-//!         ProxyConfig::new("proxy1.example.com", 8080),
-//!         ProxyConfig::new("proxy2.example.com", 8080),
-//!     ]);
+//!     let fetcher: Arc<dyn PageFetcher> = Arc::new(
+//!         HttpFetcher::with_proxy("http://proxy1.example.com:8080")?
+//!     );
 //!
 //!     let mut search = Search::new();
-//!     search.set_proxy_pool(proxy_pool);
-//!     search.add_engine(DuckDuckGo::new());
+//!     search.add_engine(DuckDuckGo::with_fetcher(
+//!         a3s_search::engines::DuckDuckGoParser, fetcher,
+//!     ));
 //!
 //!     let query = SearchQuery::new("rust programming");
 //!     let results = search.search(query).await?;
@@ -55,12 +54,53 @@
 //!     Ok(())
 //! }
 //! ```
+//!
+//! ## Using Dynamic Proxy Pool
+//!
+//! ```rust,no_run
+//! use std::sync::Arc;
+//! use a3s_search::{Search, SearchQuery, PooledHttpFetcher, PageFetcher};
+//! use a3s_search::engines::{DuckDuckGo, DuckDuckGoParser};
+//! use a3s_search::proxy::{ProxyPool, ProxyProvider, ProxyConfig, spawn_auto_refresh};
+//!
+//! // Implement your own provider to fetch proxies from any source
+//! struct MyProxyProvider { /* ... */ }
+//!
+//! #[async_trait::async_trait]
+//! impl ProxyProvider for MyProxyProvider {
+//!     async fn fetch_proxies(&self) -> a3s_search::Result<Vec<ProxyConfig>> {
+//!         // Fetch from your proxy API, database, etc.
+//!         Ok(vec![ProxyConfig::new("10.0.0.1", 8080)])
+//!     }
+//!     fn refresh_interval(&self) -> std::time::Duration {
+//!         std::time::Duration::from_secs(60) // refresh every minute
+//!     }
+//! }
+//!
+//! #[tokio::main]
+//! async fn main() -> anyhow::Result<()> {
+//!     let pool = Arc::new(ProxyPool::with_provider(MyProxyProvider { /* ... */ }));
+//!     let _refresh_handle = spawn_auto_refresh(Arc::clone(&pool));
+//!
+//!     let fetcher: Arc<dyn PageFetcher> = Arc::new(PooledHttpFetcher::new(Arc::clone(&pool)));
+//!
+//!     let mut search = Search::new();
+//!     search.add_engine(DuckDuckGo::with_fetcher(DuckDuckGoParser, fetcher));
+//!
+//!     let query = SearchQuery::new("rust programming");
+//!     let results = search.search(query).await?;
+//!     Ok(())
+//! }
+//! ```
 
 mod aggregator;
+mod config;
 mod engine;
 mod error;
 mod fetcher;
 mod fetcher_http;
+mod health;
+mod html_engine;
 pub mod proxy;
 mod query;
 mod result;
@@ -75,10 +115,13 @@ pub mod browser;
 pub mod browser_setup;
 
 pub use aggregator::Aggregator;
+pub use config::{EngineEntry, HealthEntry, SearchConfig};
 pub use engine::{Engine, EngineCategory, EngineConfig};
 pub use error::{Result, SearchError};
 pub use fetcher::{PageFetcher, WaitStrategy};
-pub use fetcher_http::HttpFetcher;
+pub use fetcher_http::{HttpFetcher, PooledHttpFetcher};
+pub use health::{HealthConfig, HealthMonitor};
+pub use html_engine::{selector, HtmlEngine, HtmlParser};
 pub use query::SearchQuery;
 pub use result::{ResultType, SearchResult, SearchResults};
 pub use search::Search;

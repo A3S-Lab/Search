@@ -56,23 +56,30 @@ pub struct PySearchOptions {
     /// HTTP/SOCKS5 proxy URL.
     #[pyo3(get, set)]
     pub proxy: Option<String>,
+    /// Proxy pool URLs for IP rotation (e.g. ["http://10.0.0.1:8080"]).
+    /// When provided, proxies are rotated round-robin per request.
+    /// Takes precedence over `proxy` if both are set.
+    #[pyo3(get, set)]
+    pub proxy_pool: Option<Vec<String>>,
 }
 
 #[pymethods]
 impl PySearchOptions {
     #[new]
-    #[pyo3(signature = (engines=None, limit=None, timeout=None, proxy=None))]
+    #[pyo3(signature = (engines=None, limit=None, timeout=None, proxy=None, proxy_pool=None))]
     fn new(
         engines: Option<Vec<String>>,
         limit: Option<u32>,
         timeout: Option<u32>,
         proxy: Option<String>,
+        proxy_pool: Option<Vec<String>>,
     ) -> Self {
         Self {
             engines,
             limit,
             timeout,
             proxy,
+            proxy_pool,
         }
     }
 

@@ -1,21 +1,22 @@
 //! Search orchestration.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use futures::future::join_all;
 use tokio::time::{timeout, Duration};
 use tracing::{debug, warn};
 
-use crate::proxy::ProxyPool;
-use crate::{Aggregator, Engine, Result, SearchError, SearchQuery, SearchResults};
+use crate::{
+    Aggregator, Engine, HealthConfig, HealthMonitor, Result, SearchError, SearchQuery, SearchResults,
+};
 
 /// Meta search engine that orchestrates searches across multiple engines.
 pub struct Search {
     engines: Vec<Arc<dyn Engine>>,
     aggregator: Aggregator,
     default_timeout: Duration,
-    proxy_pool: Option<Arc<ProxyPool>>,
+    health: Mutex<HealthMonitor>,
 }
 
 impl Search {
@@ -25,7 +26,17 @@ impl Search {
             engines: Vec::new(),
             aggregator: Aggregator::new(),
             default_timeout: Duration::from_secs(5),
-            proxy_pool: None,
+            health: Mutex::new(HealthMonitor::default()),
+        }
+    }
+
+    /// Creates a new search instance with a custom health configuration.
+    pub fn with_health_config(config: HealthConfig) -> Self {
+        Self {
+            engines: Vec::new(),
+            aggregator: Aggregator::new(),
+            default_timeout: Duration::from_secs(5),
+            health: Mutex::new(HealthMonitor::new(config)),
         }
     }
 
@@ -40,16 +51,6 @@ impl Search {
     /// Sets the default timeout for searches.
     pub fn set_timeout(&mut self, timeout: Duration) {
         self.default_timeout = timeout;
-    }
-
-    /// Sets the proxy pool for anti-crawler protection.
-    pub fn set_proxy_pool(&mut self, proxy_pool: ProxyPool) {
-        self.proxy_pool = Some(Arc::new(proxy_pool));
-    }
-
-    /// Returns a reference to the proxy pool if configured.
-    pub fn proxy_pool(&self) -> Option<&Arc<ProxyPool>> {
-        self.proxy_pool.as_ref()
     }
 
     /// Returns the number of configured engines.
@@ -114,6 +115,16 @@ impl Search {
             })
             .collect();
 
+        // Update health state for each engine
+        if let Ok(mut health) = self.health.lock() {
+            for (name, _) in &results {
+                health.record_success(name);
+            }
+            for (name, _) in &engine_errors {
+                health.record_failure(name);
+            }
+        }
+
         let mut search_results = self.aggregator.aggregate(results);
         for (engine, error) in engine_errors {
             search_results.add_error(engine, error);
@@ -123,13 +134,23 @@ impl Search {
         Ok(search_results)
     }
 
-    /// Selects engines based on query parameters.
+    /// Selects engines based on query parameters, filtering out suspended engines.
     fn select_engines(&self, query: &SearchQuery) -> Vec<Arc<dyn Engine>> {
+        let health = self.health.lock().ok();
+
         self.engines
             .iter()
             .filter(|engine| {
                 if !engine.is_enabled() {
                     return false;
+                }
+
+                // Skip suspended engines
+                if let Some(ref h) = health {
+                    if h.is_suspended(engine.name()) {
+                        debug!("Engine {} is suspended, skipping", engine.name());
+                        return false;
+                    }
                 }
 
                 if !query.engines.is_empty() {
@@ -241,6 +262,16 @@ mod tests {
     #[tokio::test]
     async fn test_search_default() {
         let search = Search::default();
+        assert_eq!(search.engine_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_search_with_health_config() {
+        let config = HealthConfig {
+            max_failures: 5,
+            suspend_duration: Duration::from_secs(120),
+        };
+        let search = Search::with_health_config(config);
         assert_eq!(search.engine_count(), 0);
     }
 
@@ -492,30 +523,92 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_search_set_proxy_pool() {
-        use crate::proxy::{ProxyConfig, ProxyPool};
-
+    async fn test_health_records_success_on_engine_result() {
         let mut search = Search::new();
-        assert!(search.proxy_pool().is_none());
+        search.add_engine(MockEngine::new(
+            "engine1",
+            vec![SearchResult::new("https://example.com", "Title", "Content")],
+        ));
 
-        let proxy_pool = ProxyPool::with_proxies(vec![ProxyConfig::new("127.0.0.1", 8080)]);
-        search.set_proxy_pool(proxy_pool);
+        let query = SearchQuery::new("test");
+        search.search(query).await.unwrap();
 
-        assert!(search.proxy_pool().is_some());
+        let health = search.health.lock().unwrap();
+        assert_eq!(health.failure_count("engine1"), 0);
+        assert!(!health.is_suspended("engine1"));
     }
 
     #[tokio::test]
-    async fn test_search_proxy_pool_reference() {
-        use crate::proxy::{ProxyConfig, ProxyPool};
-
+    async fn test_health_records_failure_on_engine_error() {
         let mut search = Search::new();
-        let proxy_pool = ProxyPool::with_proxies(vec![
-            ProxyConfig::new("127.0.0.1", 8080),
-            ProxyConfig::new("127.0.0.1", 8081),
-        ]);
-        search.set_proxy_pool(proxy_pool);
+        search.add_engine(FailingEngine::new("bad_engine"));
 
-        let pool_ref = search.proxy_pool().unwrap();
-        assert!(pool_ref.is_enabled());
+        let query = SearchQuery::new("test");
+        search.search(query).await.unwrap();
+
+        let health = search.health.lock().unwrap();
+        assert_eq!(health.failure_count("bad_engine"), 1);
+    }
+
+    #[tokio::test]
+    async fn test_health_suspends_after_repeated_failures() {
+        let config = HealthConfig {
+            max_failures: 2,
+            suspend_duration: Duration::from_secs(3600),
+        };
+        let mut search = Search::with_health_config(config);
+        search.add_engine(FailingEngine::new("flaky"));
+        search.add_engine(MockEngine::new(
+            "stable",
+            vec![SearchResult::new("https://stable.com", "Stable", "Content")],
+        ));
+
+        // First failure
+        let query = SearchQuery::new("test1");
+        search.search(query).await.unwrap();
+
+        // Second failure — should trigger suspension
+        let query = SearchQuery::new("test2");
+        search.search(query).await.unwrap();
+
+        // Third search — flaky engine should be suspended
+        let query = SearchQuery::new("test3");
+        let results = search.search(query).await.unwrap();
+
+        // Only stable engine should have been used
+        assert_eq!(results.items().len(), 1);
+        assert_eq!(results.items()[0].url, "https://stable.com");
+        assert!(results.errors().is_empty());
+
+        let health = search.health.lock().unwrap();
+        assert!(health.is_suspended("flaky"));
+    }
+
+    #[tokio::test]
+    async fn test_health_success_resets_failure_count() {
+        let config = HealthConfig {
+            max_failures: 3,
+            suspend_duration: Duration::from_secs(60),
+        };
+        let mut search = Search::with_health_config(config);
+        search.add_engine(MockEngine::new(
+            "engine1",
+            vec![SearchResult::new("https://example.com", "Title", "Content")],
+        ));
+
+        // Manually inject failures
+        {
+            let mut health = search.health.lock().unwrap();
+            health.record_failure("engine1");
+            health.record_failure("engine1");
+            assert_eq!(health.failure_count("engine1"), 2);
+        }
+
+        // Successful search should reset
+        let query = SearchQuery::new("test");
+        search.search(query).await.unwrap();
+
+        let health = search.health.lock().unwrap();
+        assert_eq!(health.failure_count("engine1"), 0);
     }
 }

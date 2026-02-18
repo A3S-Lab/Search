@@ -8,8 +8,7 @@ use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
 use a3s_search::{
-    engines::{Brave, DuckDuckGo, So360, Sogou, Wikipedia},
-    proxy::{ProxyConfig, ProxyPool, ProxyProtocol},
+    engines::{Bing, BingParser, Brave, BraveParser, DuckDuckGo, DuckDuckGoParser, So360, So360Parser, Sogou, SogouParser, Wikipedia},
     HttpFetcher, PageFetcher, Search, SearchQuery,
 };
 
@@ -29,7 +28,7 @@ struct Cli {
     query: Option<String>,
 
     /// Search engines to use (comma-separated)
-    /// Available: ddg, brave, wiki, sogou, 360, g, baidu, bing_cn
+    /// Available: ddg, brave, bing, wiki, sogou, 360, g, baidu, bing_cn
     #[arg(short, long, value_delimiter = ',')]
     engines: Option<Vec<String>>,
 
@@ -126,7 +125,7 @@ async fn main() -> Result<()> {
                 println!("  a3s-search \"Rust\" -p http://127.0.0.1:8080\n");
                 println!("Options:");
                 println!(
-                    "  -e, --engines <ENGINES>  Engines: ddg,brave,wiki,sogou,360,g,baidu,bing_cn"
+                    "  -e, --engines <ENGINES>  Engines: ddg,brave,bing,wiki,sogou,360,g,baidu,bing_cn"
                 );
                 println!("  -l, --limit <N>          Max results (default: 10)");
                 println!("  -t, --timeout <SECS>     Timeout in seconds (default: 10)");
@@ -156,6 +155,7 @@ fn list_engines() -> Result<()> {
     println!("  International:");
     println!("    ddg      - DuckDuckGo (privacy-focused search)");
     println!("    brave    - Brave Search");
+    println!("    bing     - Bing International");
     println!("    wiki     - Wikipedia");
     println!();
     println!("  Chinese:");
@@ -180,11 +180,8 @@ async fn run_search(args: SearchArgs) -> Result<()> {
     let mut search = Search::new();
     search.set_timeout(Duration::from_secs(args.timeout));
 
-    // Setup proxy if provided
+    // Log proxy usage
     if let Some(proxy_url) = &args.proxy {
-        let proxy_config = parse_proxy_url(proxy_url)?;
-        let proxy_pool = ProxyPool::with_proxies(vec![proxy_config]);
-        search.set_proxy_pool(proxy_pool);
         if matches!(args.format, OutputFormat::Text) {
             eprintln!("Using proxy: {}", proxy_url);
         }
@@ -194,7 +191,7 @@ async fn run_search(args: SearchArgs) -> Result<()> {
     #[cfg(not(feature = "headless"))]
     {
         let engine_list = args.engines.as_deref().unwrap_or(&[]);
-        let headless_engines = ["g", "google", "baidu", "bing_cn", "bing"];
+        let headless_engines = ["g", "google", "baidu", "bing_cn"];
         for e in engine_list {
             if headless_engines.contains(&e.as_str()) {
                 eprintln!(
@@ -234,9 +231,11 @@ async fn run_search(args: SearchArgs) -> Result<()> {
     for shortcut in &engine_shortcuts {
         match shortcut.as_str() {
             "ddg" | "duckduckgo" => search.add_engine(DuckDuckGo::with_fetcher(
+                DuckDuckGoParser,
                 std::sync::Arc::clone(&http_fetcher),
             )),
-            "brave" => search.add_engine(Brave::with_fetcher(std::sync::Arc::clone(&http_fetcher))),
+            "brave" => search.add_engine(Brave::with_fetcher(BraveParser, std::sync::Arc::clone(&http_fetcher))),
+            "bing" => search.add_engine(Bing::with_fetcher(BingParser, std::sync::Arc::clone(&http_fetcher))),
             "wiki" | "wikipedia" => {
                 // Wikipedia needs its own fetcher since it uses JSON API, not HTML
                 let fetcher = if let Some(proxy_url) = &args.proxy {
@@ -248,9 +247,9 @@ async fn run_search(args: SearchArgs) -> Result<()> {
                 };
                 search.add_engine(Wikipedia::with_http_fetcher(fetcher))
             }
-            "sogou" => search.add_engine(Sogou::with_fetcher(std::sync::Arc::clone(&http_fetcher))),
+            "sogou" => search.add_engine(Sogou::with_fetcher(SogouParser, std::sync::Arc::clone(&http_fetcher))),
             "360" | "so360" => {
-                search.add_engine(So360::with_fetcher(std::sync::Arc::clone(&http_fetcher)))
+                search.add_engine(So360::with_fetcher(So360Parser, std::sync::Arc::clone(&http_fetcher)))
             }
             #[cfg(feature = "headless")]
             "g" | "google" => {
@@ -277,7 +276,7 @@ async fn run_search(args: SearchArgs) -> Result<()> {
                 search.add_engine(Baidu::new(fetcher));
             }
             #[cfg(feature = "headless")]
-            "bing_cn" | "bing" => {
+            "bing_cn" => {
                 let fetcher: std::sync::Arc<dyn PageFetcher> = std::sync::Arc::new(
                     BrowserFetcher::new(std::sync::Arc::clone(&browser_pool))
                         .with_wait(WaitStrategy::Delay { ms: 2000 }),
@@ -285,7 +284,7 @@ async fn run_search(args: SearchArgs) -> Result<()> {
                 search.add_engine(BingChina::new(fetcher));
             }
             #[cfg(not(feature = "headless"))]
-            "g" | "google" | "baidu" | "bing_cn" | "bing" => {
+            "g" | "google" | "baidu" | "bing_cn" => {
                 eprintln!(
                     "Warning: '{}' engine requires the 'headless' feature. \
                      Rebuild with: cargo build --features headless",
@@ -360,38 +359,39 @@ fn truncate_str(s: &str, max_bytes: usize) -> String {
     format!("{}...", truncated)
 }
 
-fn parse_proxy_url(url: &str) -> Result<ProxyConfig> {
-    let url = url::Url::parse(url)?;
-
-    let protocol = match url.scheme() {
-        "http" => ProxyProtocol::Http,
-        "https" => ProxyProtocol::Https,
-        "socks5" => ProxyProtocol::Socks5,
-        scheme => anyhow::bail!("Unsupported proxy protocol: {}", scheme),
-    };
-
-    let host = url
-        .host_str()
-        .ok_or_else(|| anyhow::anyhow!("Missing proxy host"))?;
-    let port = url.port().unwrap_or(match protocol {
-        ProxyProtocol::Http => 8080,
-        ProxyProtocol::Https => 443,
-        ProxyProtocol::Socks5 => 1080,
-    });
-
-    let mut config = ProxyConfig::new(host, port).with_protocol(protocol);
-
-    if let Some(password) = url.password() {
-        config = config.with_auth(url.username(), password);
-    }
-
-    Ok(config)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use a3s_search::proxy::{ProxyConfig, ProxyProtocol};
     use clap::CommandFactory;
+
+    fn parse_proxy_url(url: &str) -> Result<ProxyConfig> {
+        let url = url::Url::parse(url)?;
+
+        let protocol = match url.scheme() {
+            "http" => ProxyProtocol::Http,
+            "https" => ProxyProtocol::Https,
+            "socks5" => ProxyProtocol::Socks5,
+            scheme => anyhow::bail!("Unsupported proxy protocol: {}", scheme),
+        };
+
+        let host = url
+            .host_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing proxy host"))?;
+        let port = url.port().unwrap_or(match protocol {
+            ProxyProtocol::Http => 8080,
+            ProxyProtocol::Https => 443,
+            ProxyProtocol::Socks5 => 1080,
+        });
+
+        let mut config = ProxyConfig::new(host, port).with_protocol(protocol);
+
+        if let Some(password) = url.password() {
+            config = config.with_auth(url.username(), password);
+        }
+
+        Ok(config)
+    }
 
     #[test]
     fn test_cli_parse_help() {
@@ -621,7 +621,7 @@ mod tests {
     #[test]
     fn test_truncate_str_mixed_cjk() {
         let s = "Hello世界！This is a test with 中文 and English mixed content that is long enough to be truncated at some point in the middle of the string somewhere around here.";
-        let result = truncate_str(&s, 150);
+        let result = truncate_str(s, 150);
         assert!(result.ends_with("..."));
         // Must not panic on mixed content
     }

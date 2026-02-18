@@ -38,7 +38,8 @@ class SearchOptions:
     """Options for configuring a search request."""
 
     engines: Optional[list[str]] = None
-    """Engine shortcuts to use. Defaults to ["ddg", "wiki"]."""
+    """Engine shortcuts to use. Defaults to ["ddg", "wiki"].
+    Available: ddg, brave, bing, wiki, sogou, 360."""
 
     limit: Optional[int] = None
     """Maximum number of results to return."""
@@ -48,6 +49,11 @@ class SearchOptions:
 
     proxy: Optional[str] = None
     """HTTP/SOCKS5 proxy URL."""
+
+    proxy_pool: Optional[list[str]] = None
+    """Proxy pool URLs for IP rotation.
+    When provided, proxies are rotated round-robin per request.
+    Takes precedence over `proxy` if both are set."""
 
 
 @dataclass

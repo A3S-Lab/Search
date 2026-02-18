@@ -1,109 +1,99 @@
 //! DuckDuckGo search engine implementation.
 
-use std::sync::Arc;
+use crate::html_engine::{selector, HtmlEngine, HtmlParser};
+use crate::{EngineCategory, EngineConfig, Result, SearchQuery, SearchResult};
+use scraper::Html;
 
-use async_trait::async_trait;
-use scraper::{Html, Selector};
-
-use crate::fetcher::PageFetcher;
-use crate::{
-    Engine, EngineCategory, EngineConfig, HttpFetcher, Result, SearchError, SearchQuery,
-    SearchResult,
-};
+/// DuckDuckGo HTML parser.
+pub struct DuckDuckGoParser;
 
 /// DuckDuckGo search engine.
-pub struct DuckDuckGo {
-    config: EngineConfig,
-    fetcher: Arc<dyn PageFetcher>,
-}
+pub type DuckDuckGo = HtmlEngine<DuckDuckGoParser>;
 
 impl DuckDuckGo {
     /// Creates a new DuckDuckGo engine with a default HTTP fetcher.
     pub fn new() -> Self {
-        Self::with_fetcher(Arc::new(HttpFetcher::new()))
-    }
-
-    /// Creates a new DuckDuckGo engine with a custom page fetcher.
-    pub fn with_fetcher(fetcher: Arc<dyn PageFetcher>) -> Self {
-        Self {
-            config: EngineConfig {
-                name: "DuckDuckGo".to_string(),
-                shortcut: "ddg".to_string(),
-                categories: vec![EngineCategory::General],
-                weight: 1.0,
-                timeout: 5,
-                enabled: true,
-                paging: true,
-                safesearch: true,
-            },
-            fetcher,
-        }
-    }
-
-    /// Creates with custom configuration.
-    pub fn with_config(mut self, config: EngineConfig) -> Self {
-        self.config = config;
-        self
+        HtmlEngine::with_fetcher(DuckDuckGoParser, std::sync::Arc::new(crate::HttpFetcher::new()))
     }
 }
 
 impl Default for DuckDuckGo {
     fn default() -> Self {
-        Self::new()
+        DuckDuckGo::new()
     }
 }
 
-#[async_trait]
-impl Engine for DuckDuckGo {
-    fn config(&self) -> &EngineConfig {
-        &self.config
+impl HtmlParser for DuckDuckGoParser {
+    fn default_config() -> EngineConfig {
+        EngineConfig {
+            name: "DuckDuckGo".to_string(),
+            shortcut: "ddg".to_string(),
+            categories: vec![EngineCategory::General],
+            weight: 1.0,
+            timeout: 5,
+            enabled: true,
+            paging: true,
+            safesearch: true,
+        }
     }
 
-    async fn search(&self, query: &SearchQuery) -> Result<Vec<SearchResult>> {
-        let url = format!(
+    fn build_url(&self, query: &SearchQuery) -> String {
+        use crate::query::{SafeSearch, TimeRange};
+        let mut url = format!(
             "https://html.duckduckgo.com/html/?q={}",
             urlencoding::encode(&query.query)
         );
-
-        let html = self.fetcher.fetch(&url).await?;
-
-        self.parse_results(&html)
+        if query.page > 1 {
+            url.push_str(&format!("&s={}", (query.page - 1) * 30));
+        }
+        match query.safesearch {
+            SafeSearch::Off => {}
+            SafeSearch::Moderate => url.push_str("&kp=-1"),
+            SafeSearch::Strict => url.push_str("&kp=1"),
+        }
+        if let Some(range) = query.time_range {
+            let df = match range {
+                TimeRange::Day => "d",
+                TimeRange::Week => "w",
+                TimeRange::Month => "m",
+                TimeRange::Year => "y",
+            };
+            url.push_str(&format!("&df={}", df));
+        }
+        url
     }
-}
 
-impl DuckDuckGo {
-    fn parse_results(&self, html: &str) -> Result<Vec<SearchResult>> {
+    fn parse(&self, html: &str) -> Result<Vec<SearchResult>> {
         let document = Html::parse_document(html);
-        let result_selector = Selector::parse(".result")
-            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
-        let title_selector = Selector::parse(".result__title a")
-            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
-        let snippet_selector = Selector::parse(".result__snippet")
-            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
+        let result_sel = selector(".result")?;
+        let title_sel = selector(".result__title a")?;
+        let snippet_sel = selector(".result__snippet")?;
 
         let mut results = Vec::new();
 
-        for element in document.select(&result_selector) {
-            let title_elem = element.select(&title_selector).next();
-            let snippet_elem = element.select(&snippet_selector).next();
+        for element in document.select(&result_sel) {
+            let title_elem = match element.select(&title_sel).next() {
+                Some(el) => el,
+                None => continue,
+            };
 
-            if let Some(title_elem) = title_elem {
-                let title = title_elem.text().collect::<String>().trim().to_string();
-                let url = title_elem.value().attr("href").unwrap_or_default();
+            let title = title_elem.text().collect::<String>().trim().to_string();
+            let url = title_elem.value().attr("href").unwrap_or_default();
 
-                let url = if url.starts_with("//duckduckgo.com/l/") {
-                    extract_redirect_url(url).unwrap_or_else(|| url.to_string())
-                } else {
-                    url.to_string()
-                };
+            let url = if url.starts_with("//duckduckgo.com/l/") {
+                extract_redirect_url(url).unwrap_or_else(|| url.to_string())
+            } else {
+                url.to_string()
+            };
 
-                let content = snippet_elem
-                    .map(|e| e.text().collect::<String>().trim().to_string())
-                    .unwrap_or_default();
+            let content = element
+                .select(&snippet_sel)
+                .next()
+                .map(|e| e.text().collect::<String>().trim().to_string())
+                .unwrap_or_default();
 
-                if !url.is_empty() && !title.is_empty() {
-                    results.push(SearchResult::new(url, title, content));
-                }
+            if !url.is_empty() && !title.is_empty() {
+                results.push(SearchResult::new(url, title, content));
             }
         }
 
@@ -121,32 +111,34 @@ fn extract_redirect_url(url: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Engine;
     use crate::HttpFetcher;
+    use std::sync::Arc;
 
     #[test]
     fn test_duckduckgo_new() {
         let engine = DuckDuckGo::new();
-        assert_eq!(engine.config.name, "DuckDuckGo");
-        assert_eq!(engine.config.shortcut, "ddg");
-        assert_eq!(engine.config.categories, vec![EngineCategory::General]);
-        assert_eq!(engine.config.weight, 1.0);
-        assert_eq!(engine.config.timeout, 5);
-        assert!(engine.config.enabled);
-        assert!(engine.config.paging);
-        assert!(engine.config.safesearch);
+        assert_eq!(engine.config().name, "DuckDuckGo");
+        assert_eq!(engine.config().shortcut, "ddg");
+        assert_eq!(engine.config().categories, vec![EngineCategory::General]);
+        assert_eq!(engine.config().weight, 1.0);
+        assert_eq!(engine.config().timeout, 5);
+        assert!(engine.config().enabled);
+        assert!(engine.config().paging);
+        assert!(engine.config().safesearch);
     }
 
     #[test]
     fn test_duckduckgo_with_fetcher() {
-        let fetcher: Arc<dyn PageFetcher> = Arc::new(HttpFetcher::new());
-        let engine = DuckDuckGo::with_fetcher(fetcher);
-        assert_eq!(engine.name(), "DuckDuckGo");
+        let fetcher: Arc<dyn crate::PageFetcher> = Arc::new(HttpFetcher::new());
+        let engine = DuckDuckGo::with_fetcher(DuckDuckGoParser, fetcher);
+        assert_eq!(engine.config().name, "DuckDuckGo");
     }
 
     #[test]
     fn test_duckduckgo_default() {
         let engine = DuckDuckGo::default();
-        assert_eq!(engine.name(), "DuckDuckGo");
+        assert_eq!(engine.config().name, "DuckDuckGo");
     }
 
     #[test]
@@ -158,9 +150,9 @@ mod tests {
             ..Default::default()
         };
         let engine = DuckDuckGo::new().with_config(custom_config);
-        assert_eq!(engine.name(), "Custom DDG");
-        assert_eq!(engine.shortcut(), "cddg");
-        assert_eq!(engine.weight(), 2.0);
+        assert_eq!(engine.config().name, "Custom DDG");
+        assert_eq!(engine.config().shortcut, "cddg");
+        assert_eq!(engine.config().weight, 2.0);
     }
 
     #[test]
@@ -188,14 +180,14 @@ mod tests {
 
     #[test]
     fn test_parse_results_empty_html() {
-        let engine = DuckDuckGo::new();
-        let results = engine.parse_results("<html><body></body></html>").unwrap();
+        let parser = DuckDuckGoParser;
+        let results = parser.parse("<html><body></body></html>").unwrap();
         assert!(results.is_empty());
     }
 
     #[test]
     fn test_parse_results_with_results() {
-        let engine = DuckDuckGo::new();
+        let parser = DuckDuckGoParser;
         let html = r#"
             <html>
             <body>
@@ -206,7 +198,7 @@ mod tests {
             </body>
             </html>
         "#;
-        let results = engine.parse_results(html).unwrap();
+        let results = parser.parse(html).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Example Title");
         assert_eq!(results[0].url, "https://example.com");
@@ -215,7 +207,7 @@ mod tests {
 
     #[test]
     fn test_parse_results_with_redirect_url() {
-        let engine = DuckDuckGo::new();
+        let parser = DuckDuckGoParser;
         let html = r#"
             <html>
             <body>
@@ -226,7 +218,7 @@ mod tests {
             </body>
             </html>
         "#;
-        let results = engine.parse_results(html).unwrap();
+        let results = parser.parse(html).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].url, "https://example.com/page");
         assert_eq!(results[0].title, "Redirected Result");
@@ -235,7 +227,7 @@ mod tests {
 
     #[test]
     fn test_parse_results_multiple() {
-        let engine = DuckDuckGo::new();
+        let parser = DuckDuckGoParser;
         let html = r#"
             <html>
             <body>
@@ -250,7 +242,7 @@ mod tests {
             </body>
             </html>
         "#;
-        let results = engine.parse_results(html).unwrap();
+        let results = parser.parse(html).unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].url, "https://first.com");
         assert_eq!(results[1].url, "https://second.com");
@@ -258,7 +250,7 @@ mod tests {
 
     #[test]
     fn test_parse_results_no_snippet() {
-        let engine = DuckDuckGo::new();
+        let parser = DuckDuckGoParser;
         let html = r#"
             <html>
             <body>
@@ -268,14 +260,14 @@ mod tests {
             </body>
             </html>
         "#;
-        let results = engine.parse_results(html).unwrap();
+        let results = parser.parse(html).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].content, "");
     }
 
     #[test]
     fn test_parse_results_skips_empty_title() {
-        let engine = DuckDuckGo::new();
+        let parser = DuckDuckGoParser;
         let html = r#"
             <html>
             <body>
@@ -285,13 +277,13 @@ mod tests {
             </body>
             </html>
         "#;
-        let results = engine.parse_results(html).unwrap();
+        let results = parser.parse(html).unwrap();
         assert!(results.is_empty());
     }
 
     #[test]
     fn test_parse_results_skips_empty_url() {
-        let engine = DuckDuckGo::new();
+        let parser = DuckDuckGoParser;
         let html = r#"
             <html>
             <body>
@@ -301,13 +293,13 @@ mod tests {
             </body>
             </html>
         "#;
-        let results = engine.parse_results(html).unwrap();
+        let results = parser.parse(html).unwrap();
         assert!(results.is_empty());
     }
 
     #[test]
     fn test_parse_results_no_title_element() {
-        let engine = DuckDuckGo::new();
+        let parser = DuckDuckGoParser;
         let html = r#"
             <html>
             <body>
@@ -317,13 +309,12 @@ mod tests {
             </body>
             </html>
         "#;
-        let results = engine.parse_results(html).unwrap();
+        let results = parser.parse(html).unwrap();
         assert!(results.is_empty());
     }
 
     #[test]
     fn test_extract_redirect_url_invalid_encoding() {
-        // URL with invalid percent encoding should still return something
         let url = "//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com";
         let result = extract_redirect_url(url);
         assert!(result.is_some());

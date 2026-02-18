@@ -7,7 +7,12 @@
   "napi": {
     "name": "a3s-search",
     "triples": {
-      "defaults": true
+      "defaults": true,
+      "additional": [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-unknown-linux-musl"
+      ]
     }
   },
   "scripts": {
@@ -27,13 +32,13 @@
     "dist/lib/**/*.d.ts"
   ],
   "optionalDependencies": {
-    "@a3s-lab/search-win32-x64-msvc": "0.5.5",
-    "@a3s-lab/search-darwin-x64": "0.5.5",
-    "@a3s-lab/search-darwin-arm64": "0.5.5",
-    "@a3s-lab/search-linux-x64-gnu": "0.5.5",
-    "@a3s-lab/search-linux-x64-musl": "0.5.5",
-    "@a3s-lab/search-linux-arm64-gnu": "0.5.5",
-    "@a3s-lab/search-linux-arm64-musl": "0.5.5"
+    "@a3s-lab/search-win32-x64-msvc": "0.6.0",
+    "@a3s-lab/search-darwin-x64": "0.6.0",
+    "@a3s-lab/search-darwin-arm64": "0.6.0",
+    "@a3s-lab/search-linux-x64-gnu": "0.6.0",
+    "@a3s-lab/search-linux-x64-musl": "0.6.0",
+    "@a3s-lab/search-linux-arm64-gnu": "0.6.0",
+    "@a3s-lab/search-linux-arm64-musl": "0.6.0"
   },
   "devDependencies": {
     "@napi-rs/cli": "^2.18.0",

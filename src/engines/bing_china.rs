@@ -3,61 +3,58 @@
 //! This engine requires the `headless` feature because Bing China's search results
 //! page relies on JavaScript rendering that plain HTTP requests cannot handle.
 
-use std::sync::Arc;
+use crate::html_engine::{selector, HtmlEngine, HtmlParser};
+use crate::{EngineCategory, EngineConfig, Result, SearchQuery, SearchResult};
+use scraper::Html;
 
-use async_trait::async_trait;
-use scraper::{Html, Selector};
-
-use crate::fetcher::PageFetcher;
-use crate::{Engine, EngineCategory, EngineConfig, Result, SearchError, SearchQuery, SearchResult};
+/// Bing China HTML parser.
+pub struct BingChinaParser;
 
 /// Bing China search engine (必应中国).
-///
-/// Requires a `PageFetcher` (typically a `BrowserFetcher`) to render
-/// Bing China's JavaScript-heavy result pages.
-pub struct BingChina {
-    config: EngineConfig,
-    fetcher: Arc<dyn PageFetcher>,
-}
+pub type BingChina = HtmlEngine<BingChinaParser>;
 
 impl BingChina {
     /// Creates a new Bing China engine with the given page fetcher.
-    pub fn new(fetcher: Arc<dyn PageFetcher>) -> Self {
-        Self {
-            config: EngineConfig {
-                name: "Bing China".to_string(),
-                shortcut: "bing_cn".to_string(),
-                categories: vec![EngineCategory::General],
-                weight: 1.0,
-                timeout: 10,
-                enabled: true,
-                paging: true,
-                safesearch: true,
-            },
-            fetcher,
+    pub fn new(fetcher: std::sync::Arc<dyn crate::PageFetcher>) -> Self {
+        HtmlEngine::with_fetcher(BingChinaParser, fetcher)
+    }
+}
+
+impl HtmlParser for BingChinaParser {
+    fn default_config() -> EngineConfig {
+        EngineConfig {
+            name: "Bing China".to_string(),
+            shortcut: "bing_cn".to_string(),
+            categories: vec![EngineCategory::General],
+            weight: 1.0,
+            timeout: 10,
+            enabled: true,
+            paging: true,
+            safesearch: true,
         }
     }
 
-    /// Creates with custom configuration.
-    pub fn with_config(mut self, config: EngineConfig) -> Self {
-        self.config = config;
-        self
+    fn build_url(&self, query: &SearchQuery) -> String {
+        let mut url = format!(
+            "https://cn.bing.com/search?q={}",
+            urlencoding::encode(&query.query)
+        );
+        if query.page > 1 {
+            url.push_str(&format!("&first={}", (query.page - 1) * 10 + 1));
+        }
+        url
     }
 
-    fn parse_results(&self, html: &str) -> Result<Vec<SearchResult>> {
+    fn parse(&self, html: &str) -> Result<Vec<SearchResult>> {
         let document = Html::parse_document(html);
-
-        let result_selector = Selector::parse("li.b_algo")
-            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
-        let title_selector = Selector::parse("h2 a")
-            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
-        let snippet_selector = Selector::parse(".b_caption p, .b_algoSlug")
-            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
+        let result_sel = selector("li.b_algo")?;
+        let title_sel = selector("h2 a")?;
+        let snippet_sel = selector(".b_caption p, .b_algoSlug")?;
 
         let mut results = Vec::new();
 
-        for element in document.select(&result_selector) {
-            let title_elem = match element.select(&title_selector).next() {
+        for element in document.select(&result_sel) {
+            let title_elem = match element.select(&title_sel).next() {
                 Some(el) => el,
                 None => continue,
             };
@@ -70,7 +67,7 @@ impl BingChina {
                 .to_string();
 
             let content = element
-                .select(&snippet_selector)
+                .select(&snippet_sel)
                 .next()
                 .map(|e| e.text().collect::<String>().trim().to_string())
                 .unwrap_or_default();
@@ -84,27 +81,12 @@ impl BingChina {
     }
 }
 
-#[async_trait]
-impl Engine for BingChina {
-    fn config(&self) -> &EngineConfig {
-        &self.config
-    }
-
-    async fn search(&self, query: &SearchQuery) -> Result<Vec<SearchResult>> {
-        let url = format!(
-            "https://cn.bing.com/search?q={}",
-            urlencoding::encode(&query.query)
-        );
-
-        let html = self.fetcher.fetch(&url).await?;
-        self.parse_results(&html)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Engine;
     use crate::fetcher_http::HttpFetcher;
+    use std::sync::Arc;
 
     fn make_bing_china() -> BingChina {
         BingChina::new(Arc::new(HttpFetcher::new()))
@@ -113,14 +95,14 @@ mod tests {
     #[test]
     fn test_bing_china_new() {
         let engine = make_bing_china();
-        assert_eq!(engine.config.name, "Bing China");
-        assert_eq!(engine.config.shortcut, "bing_cn");
-        assert_eq!(engine.config.categories, vec![EngineCategory::General]);
-        assert_eq!(engine.config.weight, 1.0);
-        assert_eq!(engine.config.timeout, 10);
-        assert!(engine.config.enabled);
-        assert!(engine.config.paging);
-        assert!(engine.config.safesearch);
+        assert_eq!(engine.config().name, "Bing China");
+        assert_eq!(engine.config().shortcut, "bing_cn");
+        assert_eq!(engine.config().categories, vec![EngineCategory::General]);
+        assert_eq!(engine.config().weight, 1.0);
+        assert_eq!(engine.config().timeout, 10);
+        assert!(engine.config().enabled);
+        assert!(engine.config().paging);
+        assert!(engine.config().safesearch);
     }
 
     #[test]
@@ -132,9 +114,9 @@ mod tests {
             ..Default::default()
         };
         let engine = make_bing_china().with_config(custom_config);
-        assert_eq!(engine.name(), "Custom Bing");
-        assert_eq!(engine.shortcut(), "cbing");
-        assert_eq!(engine.weight(), 1.5);
+        assert_eq!(engine.config().name, "Custom Bing");
+        assert_eq!(engine.config().shortcut, "cbing");
+        assert_eq!(engine.config().weight, 1.5);
     }
 
     #[test]
@@ -148,14 +130,14 @@ mod tests {
 
     #[test]
     fn test_parse_results_empty_html() {
-        let engine = make_bing_china();
-        let results = engine.parse_results("<html><body></body></html>").unwrap();
+        let parser = BingChinaParser;
+        let results = parser.parse("<html><body></body></html>").unwrap();
         assert!(results.is_empty());
     }
 
     #[test]
     fn test_parse_results_with_results() {
-        let engine = make_bing_china();
+        let parser = BingChinaParser;
         let html = r#"
             <html>
             <body>
@@ -172,7 +154,7 @@ mod tests {
             </body>
             </html>
         "#;
-        let results = engine.parse_results(html).unwrap();
+        let results = parser.parse(html).unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].title, "Rust Programming Language");
         assert_eq!(results[0].url, "https://www.rust-lang.org/");
@@ -182,7 +164,7 @@ mod tests {
 
     #[test]
     fn test_parse_results_skips_non_http_urls() {
-        let engine = make_bing_china();
+        let parser = BingChinaParser;
         let html = r#"
             <html>
             <body>
@@ -192,13 +174,13 @@ mod tests {
             </body>
             </html>
         "#;
-        let results = engine.parse_results(html).unwrap();
+        let results = parser.parse(html).unwrap();
         assert!(results.is_empty());
     }
 
     #[test]
     fn test_parse_results_skips_missing_title() {
-        let engine = make_bing_china();
+        let parser = BingChinaParser;
         let html = r#"
             <html>
             <body>
@@ -208,13 +190,13 @@ mod tests {
             </body>
             </html>
         "#;
-        let results = engine.parse_results(html).unwrap();
+        let results = parser.parse(html).unwrap();
         assert!(results.is_empty());
     }
 
     #[test]
     fn test_parse_results_with_algo_slug() {
-        let engine = make_bing_china();
+        let parser = BingChinaParser;
         let html = r#"
             <html>
             <body>
@@ -225,7 +207,7 @@ mod tests {
             </body>
             </html>
         "#;
-        let results = engine.parse_results(html).unwrap();
+        let results = parser.parse(html).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].content, "Snippet from algo slug.");
     }

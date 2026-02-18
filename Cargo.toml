@@ -31,7 +31,7 @@ name = "a3s-search"
 path = "src/main.rs"
 
 [features]
-default = ["headless"]
+default = []
 headless = ["dep:chromiumoxide", "dep:which", "dep:zip"]
 
 [dependencies]
@@ -63,8 +63,8 @@ scraper = "0.22"
 url = "2"
 urlencoding = "2"
 
-# Regex
-regex = "1"
+# Configuration file parsing
+hcl-rs = "0.19"
 
 # Headless browser (optional, for JS-rendered engines)
 chromiumoxide = { version = "0.7", features = ["tokio-runtime"], optional = true }

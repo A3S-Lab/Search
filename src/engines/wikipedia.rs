@@ -56,7 +56,7 @@ impl Wikipedia {
 
 impl Default for Wikipedia {
     fn default() -> Self {
-        Self::new()
+        Wikipedia::new()
     }
 }
 
@@ -85,11 +85,14 @@ impl Engine for Wikipedia {
     }
 
     async fn search(&self, query: &SearchQuery) -> Result<Vec<SearchResult>> {
-        let url = format!(
+        let mut url = format!(
             "https://{}.wikipedia.org/w/api.php?action=query&list=search&srsearch={}&format=json&srlimit=10",
             self.language,
             urlencoding::encode(&query.query)
         );
+        if query.page > 1 {
+            url.push_str(&format!("&sroffset={}", (query.page - 1) * 10));
+        }
 
         let response = self.fetcher.client().get(&url).send().await?;
         let wiki_response: WikiResponse = response.json().await?;

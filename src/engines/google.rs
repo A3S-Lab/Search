@@ -3,68 +3,89 @@
 //! This engine requires the `headless` feature because Google's search results
 //! page relies on JavaScript rendering that plain HTTP requests cannot handle.
 
-use std::sync::Arc;
+use crate::html_engine::{selector, HtmlEngine, HtmlParser};
+use crate::{EngineCategory, EngineConfig, Result, SearchError, SearchQuery, SearchResult};
+use scraper::Html;
 
-use async_trait::async_trait;
-use scraper::{Html, Selector};
-
-use crate::fetcher::PageFetcher;
-use crate::{Engine, EngineCategory, EngineConfig, Result, SearchError, SearchQuery, SearchResult};
+/// Google HTML parser with CAPTCHA detection.
+pub struct GoogleParser;
 
 /// Google search engine.
-///
-/// Requires a `PageFetcher` (typically a `BrowserFetcher`) to render
-/// Google's JavaScript-heavy result pages.
-pub struct Google {
-    config: EngineConfig,
-    fetcher: Arc<dyn PageFetcher>,
-}
+pub type Google = HtmlEngine<GoogleParser>;
 
 impl Google {
     /// Creates a new Google engine with the given page fetcher.
-    pub fn new(fetcher: Arc<dyn PageFetcher>) -> Self {
-        Self {
-            config: EngineConfig {
-                name: "Google".to_string(),
-                shortcut: "g".to_string(),
-                categories: vec![EngineCategory::General],
-                weight: 1.5,
-                timeout: 10,
-                enabled: true,
-                paging: true,
-                safesearch: true,
-            },
-            fetcher,
+    pub fn new(fetcher: std::sync::Arc<dyn crate::PageFetcher>) -> Self {
+        HtmlEngine::with_fetcher(GoogleParser, fetcher)
+    }
+}
+
+impl HtmlParser for GoogleParser {
+    fn default_config() -> EngineConfig {
+        EngineConfig {
+            name: "Google".to_string(),
+            shortcut: "g".to_string(),
+            categories: vec![EngineCategory::General],
+            weight: 1.5,
+            timeout: 10,
+            enabled: true,
+            paging: true,
+            safesearch: true,
         }
     }
 
-    /// Creates with custom configuration.
-    pub fn with_config(mut self, config: EngineConfig) -> Self {
-        self.config = config;
-        self
+    fn build_url(&self, query: &SearchQuery) -> String {
+        use crate::query::{SafeSearch, TimeRange};
+        let mut url = format!(
+            "https://www.google.com/search?q={}&hl=en",
+            urlencoding::encode(&query.query)
+        );
+        if query.page > 1 {
+            url.push_str(&format!("&start={}", (query.page - 1) * 10));
+        }
+        match query.safesearch {
+            SafeSearch::Off => {}
+            SafeSearch::Moderate => url.push_str("&safe=medium"),
+            SafeSearch::Strict => url.push_str("&safe=active"),
+        }
+        if let Some(range) = query.time_range {
+            let tbs = match range {
+                TimeRange::Day => "d",
+                TimeRange::Week => "w",
+                TimeRange::Month => "m",
+                TimeRange::Year => "y",
+            };
+            url.push_str(&format!("&tbs=qdr:{}", tbs));
+        }
+        url
     }
 
-    fn parse_results(&self, html: &str) -> Result<Vec<SearchResult>> {
-        let document = Html::parse_document(html);
+    fn validate(&self, html: &str) -> Result<()> {
+        if html.contains("/sorry/index") || html.contains("recaptcha") {
+            return Err(SearchError::Other(
+                "Google returned a CAPTCHA page (bot detected). Try again later or use a proxy (-p)."
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
 
-        let container_selector = Selector::parse("div.g")
-            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
-        let title_selector = Selector::parse("h3")
-            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
-        let link_selector = Selector::parse("a[href]")
-            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
-        let snippet_selector = Selector::parse("div[data-sncf], div.VwiC3b")
-            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
+    fn parse(&self, html: &str) -> Result<Vec<SearchResult>> {
+        let document = Html::parse_document(html);
+        let container_sel = selector("div.g")?;
+        let title_sel = selector("h3")?;
+        let link_sel = selector("a[href]")?;
+        let snippet_sel = selector("div[data-sncf], div.VwiC3b")?;
 
         let mut results = Vec::new();
 
-        for element in document.select(&container_selector) {
-            let title = match element.select(&title_selector).next() {
+        for element in document.select(&container_sel) {
+            let title = match element.select(&title_sel).next() {
                 Some(el) => el.text().collect::<String>().trim().to_string(),
                 None => continue,
             };
 
-            let url = match element.select(&link_selector).next() {
+            let url = match element.select(&link_sel).next() {
                 Some(el) => {
                     let href = el.value().attr("href").unwrap_or_default();
                     // Skip Google's internal links
@@ -82,7 +103,7 @@ impl Google {
             };
 
             let content = element
-                .select(&snippet_selector)
+                .select(&snippet_sel)
                 .next()
                 .map(|el| el.text().collect::<String>().trim().to_string())
                 .unwrap_or_default();
@@ -96,36 +117,12 @@ impl Google {
     }
 }
 
-#[async_trait]
-impl Engine for Google {
-    fn config(&self) -> &EngineConfig {
-        &self.config
-    }
-
-    async fn search(&self, query: &SearchQuery) -> Result<Vec<SearchResult>> {
-        let url = format!(
-            "https://www.google.com/search?q={}&hl=en",
-            urlencoding::encode(&query.query)
-        );
-
-        let html = self.fetcher.fetch(&url).await?;
-
-        // Detect CAPTCHA / bot-block pages before parsing
-        if html.contains("/sorry/index") || html.contains("recaptcha") {
-            return Err(SearchError::Other(
-                "Google returned a CAPTCHA page (bot detected). Try again later or use a proxy (-p)."
-                    .to_string(),
-            ));
-        }
-
-        self.parse_results(&html)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Engine;
     use crate::fetcher_http::HttpFetcher;
+    use std::sync::Arc;
 
     fn make_google() -> Google {
         Google::new(Arc::new(HttpFetcher::new()))
@@ -134,14 +131,14 @@ mod tests {
     #[test]
     fn test_google_new() {
         let engine = make_google();
-        assert_eq!(engine.config.name, "Google");
-        assert_eq!(engine.config.shortcut, "g");
-        assert_eq!(engine.config.categories, vec![EngineCategory::General]);
-        assert_eq!(engine.config.weight, 1.5);
-        assert_eq!(engine.config.timeout, 10);
-        assert!(engine.config.enabled);
-        assert!(engine.config.paging);
-        assert!(engine.config.safesearch);
+        assert_eq!(engine.config().name, "Google");
+        assert_eq!(engine.config().shortcut, "g");
+        assert_eq!(engine.config().categories, vec![EngineCategory::General]);
+        assert_eq!(engine.config().weight, 1.5);
+        assert_eq!(engine.config().timeout, 10);
+        assert!(engine.config().enabled);
+        assert!(engine.config().paging);
+        assert!(engine.config().safesearch);
     }
 
     #[test]
@@ -153,9 +150,9 @@ mod tests {
             ..Default::default()
         };
         let engine = make_google().with_config(custom_config);
-        assert_eq!(engine.name(), "Custom Google");
-        assert_eq!(engine.shortcut(), "cg");
-        assert_eq!(engine.weight(), 2.0);
+        assert_eq!(engine.config().name, "Custom Google");
+        assert_eq!(engine.config().shortcut, "cg");
+        assert_eq!(engine.config().weight, 2.0);
     }
 
     #[test]
@@ -169,14 +166,14 @@ mod tests {
 
     #[test]
     fn test_parse_results_empty_html() {
-        let engine = make_google();
-        let results = engine.parse_results("<html><body></body></html>").unwrap();
+        let parser = GoogleParser;
+        let results = parser.parse("<html><body></body></html>").unwrap();
         assert!(results.is_empty());
     }
 
     #[test]
     fn test_parse_results_with_results() {
-        let engine = make_google();
+        let parser = GoogleParser;
         let html = r#"
             <html>
             <body>
@@ -195,7 +192,7 @@ mod tests {
             </body>
             </html>
         "#;
-        let results = engine.parse_results(html).unwrap();
+        let results = parser.parse(html).unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].title, "Rust Programming Language");
         assert_eq!(results[0].url, "https://www.rust-lang.org/");
@@ -209,7 +206,7 @@ mod tests {
 
     #[test]
     fn test_parse_results_with_redirect_url() {
-        let engine = make_google();
+        let parser = GoogleParser;
         let html = r#"
             <html>
             <body>
@@ -222,7 +219,7 @@ mod tests {
             </body>
             </html>
         "#;
-        let results = engine.parse_results(html).unwrap();
+        let results = parser.parse(html).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].url, "https://example.com/page");
         assert_eq!(results[0].content, "Example snippet");
@@ -230,7 +227,7 @@ mod tests {
 
     #[test]
     fn test_parse_results_skips_internal_links() {
-        let engine = make_google();
+        let parser = GoogleParser;
         let html = r#"
             <html>
             <body>
@@ -242,13 +239,13 @@ mod tests {
             </body>
             </html>
         "#;
-        let results = engine.parse_results(html).unwrap();
+        let results = parser.parse(html).unwrap();
         assert!(results.is_empty());
     }
 
     #[test]
     fn test_parse_results_skips_missing_title() {
-        let engine = make_google();
+        let parser = GoogleParser;
         let html = r#"
             <html>
             <body>
@@ -258,12 +255,40 @@ mod tests {
             </body>
             </html>
         "#;
-        let results = engine.parse_results(html).unwrap();
+        let results = parser.parse(html).unwrap();
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_validate_detects_sorry_page() {
+        let parser = GoogleParser;
+        let html = r#"<html><body>
+            <a href="/sorry/index?continue=https://www.google.com/search">blocked</a>
+        </body></html>"#;
+        assert!(parser.validate(html).is_err());
+    }
+
+    #[test]
+    fn test_validate_detects_recaptcha() {
+        let parser = GoogleParser;
+        let html = r#"<html><body>
+            <iframe src="https://www.google.com/recaptcha/enterprise/anchor"></iframe>
+        </body></html>"#;
+        assert!(parser.validate(html).is_err());
+    }
+
+    #[test]
+    fn test_validate_passes_normal_page() {
+        let parser = GoogleParser;
+        let html = r#"<html><body>
+            <div class="g"><a href="https://example.com"><h3>Test</h3></a></div>
+        </body></html>"#;
+        assert!(parser.validate(html).is_ok());
     }
 
     #[tokio::test]
     async fn test_search_detects_captcha_sorry_page() {
+        use async_trait::async_trait;
         use crate::fetcher::PageFetcher;
 
         struct FakeFetcher(String);
@@ -291,6 +316,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_detects_captcha_recaptcha() {
+        use async_trait::async_trait;
         use crate::fetcher::PageFetcher;
 
         struct FakeFetcher(String);
@@ -318,6 +344,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_normal_page_no_captcha() {
+        use async_trait::async_trait;
         use crate::fetcher::PageFetcher;
 
         struct FakeFetcher(String);

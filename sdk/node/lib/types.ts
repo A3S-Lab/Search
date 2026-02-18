@@ -20,7 +20,8 @@ export interface SearchResult {
 
 /** Options for configuring a search request. */
 export interface SearchOptions {
-  /** Engine shortcuts to use. Defaults to ["ddg", "wiki"]. */
+  /** Engine shortcuts to use. Defaults to ["ddg", "wiki"].
+   * Available: ddg, brave, bing, wiki, sogou, 360. */
   engines?: string[];
   /** Maximum number of results to return. */
   limit?: number;
@@ -28,6 +29,10 @@ export interface SearchOptions {
   timeout?: number;
   /** HTTP/SOCKS5 proxy URL. */
   proxy?: string;
+  /** Proxy pool URLs for IP rotation.
+   * When provided, proxies are rotated round-robin per request.
+   * Takes precedence over `proxy` if both are set. */
+  proxyPool?: string[];
 }
 
 /** An error from a specific search engine. */

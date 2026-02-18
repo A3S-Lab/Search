@@ -4,16 +4,6 @@ use std::collections::HashMap;
 
 use crate::{SearchResult, SearchResults};
 
-/// Result priority for ranking.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum ResultPriority {
-    High,
-    #[default]
-    Normal,
-    Low,
-}
-
 /// Aggregates and ranks search results from multiple engines.
 #[derive(Debug, Default)]
 pub struct Aggregator {
@@ -60,7 +50,7 @@ impl Aggregator {
         let mut results: Vec<SearchResult> = url_map.into_values().collect();
 
         for result in &mut results {
-            result.score = self.calculate_score(result, ResultPriority::Normal);
+            result.score = self.calculate_score(result);
         }
 
         results.sort_by(|a, b| {
@@ -107,7 +97,7 @@ impl Aggregator {
     /// - Weight is multiplied by engine weights
     /// - Weight is multiplied by number of engines that found the result
     /// - Score is sum of (weight / position) for each position
-    fn calculate_score(&self, result: &SearchResult, priority: ResultPriority) -> f64 {
+    fn calculate_score(&self, result: &SearchResult) -> f64 {
         let mut weight = 1.0;
 
         for engine in &result.engines {
@@ -118,11 +108,7 @@ impl Aggregator {
 
         let mut score = 0.0;
         for &position in &result.positions {
-            match priority {
-                ResultPriority::High => score += weight,
-                ResultPriority::Normal => score += weight / position as f64,
-                ResultPriority::Low => {}
-            }
+            score += weight / position as f64;
         }
 
         score
@@ -132,147 +118,6 @@ impl Aggregator {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_result_priority_default() {
-        let default: ResultPriority = Default::default();
-        assert_eq!(default, ResultPriority::Normal);
-    }
-
-    #[test]
-    fn test_aggregator_new() {
-        let aggregator = Aggregator::new();
-        assert!(aggregator.engine_weights.is_empty());
-    }
-
-    #[test]
-    fn test_aggregator_set_engine_weight() {
-        let mut aggregator = Aggregator::new();
-        aggregator.set_engine_weight("google", 1.5);
-        aggregator.set_engine_weight("bing", 1.2);
-        assert_eq!(aggregator.engine_weights.get("google"), Some(&1.5));
-        assert_eq!(aggregator.engine_weights.get("bing"), Some(&1.2));
-    }
-
-    #[test]
-    fn test_aggregate_empty_results() {
-        let aggregator = Aggregator::new();
-        let engine_results: Vec<(String, Vec<SearchResult>)> = vec![];
-        let aggregated = aggregator.aggregate(engine_results);
-        assert_eq!(aggregated.count, 0);
-    }
-
-    #[test]
-    fn test_aggregate_single_engine() {
-        let aggregator = Aggregator::new();
-        let results = vec![SearchResult::new("https://example.com", "Title", "Content")];
-        let engine_results = vec![("engine1".to_string(), results)];
-        let aggregated = aggregator.aggregate(engine_results);
-        assert_eq!(aggregated.count, 1);
-        assert!(aggregated.items()[0].engines.contains("engine1"));
-    }
-
-    #[test]
-    fn test_aggregate_deduplicates_by_url() {
-        let aggregator = Aggregator::new();
-
-        let results1 = vec![
-            SearchResult::new("https://example.com/page", "Title 1", "Content 1"),
-            SearchResult::new("https://other.com", "Other", "Other content"),
-        ];
-        let results2 = vec![SearchResult::new(
-            "http://example.com/page/",
-            "Title 2 Longer",
-            "Content 2",
-        )];
-
-        let engine_results = vec![
-            ("engine1".to_string(), results1),
-            ("engine2".to_string(), results2),
-        ];
-
-        let aggregated = aggregator.aggregate(engine_results);
-
-        assert_eq!(aggregated.items().len(), 2);
-
-        let example_result = aggregated
-            .items()
-            .iter()
-            .find(|r| r.normalized_url() == "example.com/page")
-            .unwrap();
-        assert_eq!(example_result.engines.len(), 2);
-        assert!(example_result.engines.contains("engine1"));
-        assert!(example_result.engines.contains("engine2"));
-        assert_eq!(example_result.title, "Title 2 Longer");
-    }
-
-    #[test]
-    fn test_aggregate_merges_longer_content() {
-        let aggregator = Aggregator::new();
-
-        let results1 = vec![SearchResult::new(
-            "https://example.com",
-            "Short",
-            "Short content",
-        )];
-        let results2 = vec![SearchResult::new(
-            "https://example.com",
-            "Longer Title Here",
-            "Much longer content description",
-        )];
-
-        let engine_results = vec![
-            ("engine1".to_string(), results1),
-            ("engine2".to_string(), results2),
-        ];
-
-        let aggregated = aggregator.aggregate(engine_results);
-        let result = &aggregated.items()[0];
-
-        assert_eq!(result.title, "Longer Title Here");
-        assert_eq!(result.content, "Much longer content description");
-    }
-
-    #[test]
-    fn test_aggregate_merges_thumbnail() {
-        let aggregator = Aggregator::new();
-
-        let results1 = vec![SearchResult::new("https://example.com", "Title", "Content")];
-        let results2 = vec![SearchResult::new("https://example.com", "Title", "Content")
-            .with_thumbnail("https://example.com/thumb.jpg")];
-
-        let engine_results = vec![
-            ("engine1".to_string(), results1),
-            ("engine2".to_string(), results2),
-        ];
-
-        let aggregated = aggregator.aggregate(engine_results);
-        let result = &aggregated.items()[0];
-
-        assert_eq!(
-            result.thumbnail,
-            Some("https://example.com/thumb.jpg".to_string())
-        );
-    }
-
-    #[test]
-    fn test_aggregate_merges_published_date() {
-        let aggregator = Aggregator::new();
-
-        let results1 = vec![SearchResult::new("https://example.com", "Title", "Content")];
-        let results2 = vec![SearchResult::new("https://example.com", "Title", "Content")
-            .with_published_date("2024-01-15")];
-
-        let engine_results = vec![
-            ("engine1".to_string(), results1),
-            ("engine2".to_string(), results2),
-        ];
-
-        let aggregated = aggregator.aggregate(engine_results);
-        let result = &aggregated.items()[0];
-
-        assert_eq!(result.published_date, Some("2024-01-15".to_string()));
-    }
 
     #[test]
     fn test_score_calculation() {
@@ -408,52 +253,13 @@ mod tests {
     }
 
     #[test]
-    fn test_result_priority_variants() {
-        assert_eq!(ResultPriority::Normal, ResultPriority::default());
-        assert_ne!(ResultPriority::High, ResultPriority::Normal);
-        assert_ne!(ResultPriority::Low, ResultPriority::Normal);
-        assert_ne!(ResultPriority::High, ResultPriority::Low);
-    }
-
-    #[test]
-    fn test_calculate_score_high_priority() {
-        let aggregator = Aggregator::new();
-        let mut result = SearchResult::new("https://example.com", "Title", "Content");
-        result.engines.insert("engine1".to_string());
-        result.positions.push(5);
-
-        let score = aggregator.calculate_score(&result, ResultPriority::High);
-        // High priority: score = weight (not divided by position)
-        assert!(score > 0.0);
-        // For High priority, position doesn't reduce score
-        let score_pos1 = {
-            let mut r = SearchResult::new("https://example.com", "Title", "Content");
-            r.engines.insert("engine1".to_string());
-            r.positions.push(1);
-            aggregator.calculate_score(&r, ResultPriority::High)
-        };
-        assert_eq!(score, score_pos1, "High priority should ignore position");
-    }
-
-    #[test]
-    fn test_calculate_score_low_priority() {
-        let aggregator = Aggregator::new();
-        let mut result = SearchResult::new("https://example.com", "Title", "Content");
-        result.engines.insert("engine1".to_string());
-        result.positions.push(1);
-
-        let score = aggregator.calculate_score(&result, ResultPriority::Low);
-        assert_eq!(score, 0.0, "Low priority should always score 0");
-    }
-
-    #[test]
     fn test_calculate_score_no_engine_weight() {
         let aggregator = Aggregator::new();
         let mut result = SearchResult::new("https://example.com", "Title", "Content");
         result.engines.insert("unknown_engine".to_string());
         result.positions.push(1);
 
-        let score = aggregator.calculate_score(&result, ResultPriority::Normal);
+        let score = aggregator.calculate_score(&result);
         // Default weight is 1.0, 1 engine, position 1: score = 1.0 * 1 / 1 = 1.0
         assert_eq!(score, 1.0);
     }

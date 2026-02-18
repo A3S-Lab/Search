@@ -4,7 +4,7 @@
 //! search engines to rotate through multiple proxy IPs to avoid being
 //! blocked by anti-crawler mechanisms.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -135,7 +135,7 @@ pub struct ProxyPool {
     provider: Option<Arc<dyn ProxyProvider>>,
     strategy: ProxyStrategy,
     current_index: AtomicUsize,
-    enabled: bool,
+    enabled: AtomicBool,
 }
 
 impl ProxyPool {
@@ -146,7 +146,7 @@ impl ProxyPool {
             provider: None,
             strategy: ProxyStrategy::RoundRobin,
             current_index: AtomicUsize::new(0),
-            enabled: false,
+            enabled: AtomicBool::new(false),
         }
     }
 
@@ -158,7 +158,7 @@ impl ProxyPool {
             provider: None,
             strategy: ProxyStrategy::RoundRobin,
             current_index: AtomicUsize::new(0),
-            enabled,
+            enabled: AtomicBool::new(enabled),
         }
     }
 
@@ -169,7 +169,7 @@ impl ProxyPool {
             provider: Some(Arc::new(provider)),
             strategy: ProxyStrategy::RoundRobin,
             current_index: AtomicUsize::new(0),
-            enabled: true,
+            enabled: AtomicBool::new(true),
         }
     }
 
@@ -180,13 +180,16 @@ impl ProxyPool {
     }
 
     /// Enables or disables the proxy pool.
-    pub fn set_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
+    ///
+    /// This can be called at any time through an `Arc<ProxyPool>` to
+    /// dynamically toggle proxy usage at runtime.
+    pub fn set_enabled(&self, enabled: bool) {
+        self.enabled.store(enabled, Ordering::SeqCst);
     }
 
     /// Returns whether the proxy pool is enabled.
     pub fn is_enabled(&self) -> bool {
-        self.enabled
+        self.enabled.load(Ordering::SeqCst)
     }
 
     /// Refreshes the proxy list from the provider.
@@ -212,7 +215,7 @@ impl ProxyPool {
 
     /// Gets the next proxy based on the selection strategy.
     pub async fn get_proxy(&self) -> Option<ProxyConfig> {
-        if !self.enabled {
+        if !self.is_enabled() {
             return None;
         }
 
@@ -269,6 +272,41 @@ impl ProxyPool {
             .build()
             .map_err(|e| SearchError::Other(format!("Failed to create HTTP client: {}", e)))
     }
+}
+
+/// Spawns a background task that periodically refreshes the proxy pool.
+///
+/// Returns a `JoinHandle` that can be used to abort the refresh loop.
+/// The task runs until the handle is dropped/aborted or the provider
+/// returns a fatal error.
+pub fn spawn_auto_refresh(pool: Arc<ProxyPool>) -> tokio::task::JoinHandle<()> {
+    let interval = pool
+        .provider
+        .as_ref()
+        .map(|p| p.refresh_interval())
+        .unwrap_or(Duration::from_secs(300));
+
+    tokio::spawn(async move {
+        // Initial refresh
+        if let Err(e) = pool.refresh().await {
+            tracing::warn!("Initial proxy pool refresh failed: {}", e);
+        }
+
+        let mut ticker = tokio::time::interval(interval);
+        ticker.tick().await; // consume the immediate first tick
+
+        loop {
+            ticker.tick().await;
+            match pool.refresh().await {
+                Ok(()) => {
+                    debug!("Auto-refreshed proxy pool ({} proxies)", pool.len().await);
+                }
+                Err(e) => {
+                    tracing::warn!("Proxy pool auto-refresh failed: {}", e);
+                }
+            }
+        }
+    })
 }
 
 impl Default for ProxyPool {
@@ -391,7 +429,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_proxy_pool_set_enabled() {
-        let mut pool = ProxyPool::new();
+        let pool = ProxyPool::new();
         assert!(!pool.is_enabled());
         pool.set_enabled(true);
         assert!(pool.is_enabled());
@@ -418,14 +456,14 @@ mod tests {
     #[tokio::test]
     async fn test_proxy_pool_get_proxy_disabled() {
         let proxies = vec![ProxyConfig::new("127.0.0.1", 8080)];
-        let mut pool = ProxyPool::with_proxies(proxies);
+        let pool = ProxyPool::with_proxies(proxies);
         pool.set_enabled(false);
         assert!(pool.get_proxy().await.is_none());
     }
 
     #[tokio::test]
     async fn test_proxy_pool_get_proxy_empty() {
-        let mut pool = ProxyPool::new();
+        let pool = ProxyPool::new();
         pool.set_enabled(true);
         assert!(pool.get_proxy().await.is_none());
     }
@@ -608,5 +646,51 @@ mod tests {
 
         let provider = CustomProvider;
         assert_eq!(provider.refresh_interval(), Duration::from_secs(300));
+    }
+
+    // --- spawn_auto_refresh tests ---
+
+    #[tokio::test]
+    async fn test_spawn_auto_refresh_initial_load() {
+        let proxies = vec![
+            ProxyConfig::new("127.0.0.1", 8080),
+            ProxyConfig::new("127.0.0.1", 8081),
+        ];
+        let provider = StaticProxyProvider::new(proxies);
+        let pool = Arc::new(ProxyPool::with_provider(provider));
+
+        assert!(pool.is_empty().await);
+
+        let handle = spawn_auto_refresh(Arc::clone(&pool));
+
+        // Give the background task time to do the initial refresh
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        assert_eq!(pool.len().await, 2);
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_spawn_auto_refresh_abortable() {
+        let provider = StaticProxyProvider::new(vec![ProxyConfig::new("127.0.0.1", 8080)]);
+        let pool = Arc::new(ProxyPool::with_provider(provider));
+
+        let handle = spawn_auto_refresh(Arc::clone(&pool));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        handle.abort();
+        // Should not panic after abort
+        assert_eq!(pool.len().await, 1);
+    }
+
+    #[tokio::test]
+    async fn test_spawn_auto_refresh_no_provider() {
+        let pool = Arc::new(ProxyPool::new());
+        let handle = spawn_auto_refresh(Arc::clone(&pool));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Should not crash, pool stays empty
+        assert!(pool.is_empty().await);
+        handle.abort();
     }
 }

@@ -60,12 +60,14 @@ async fn main() -> anyhow::Result<()> {
 - **Async-First**: Built on Tokio for high-performance concurrent searches
 - **Timeout Handling**: Per-engine timeout with graceful degradation
 - **Extensible**: Easy to add custom search engines via the `Engine` trait
-- **Proxy Pool**: Dynamic proxy IP rotation to avoid anti-crawler blocking
+- **Dynamic Proxy Pool**: IP rotation with pluggable `ProxyProvider` trait and auto-refresh
+- **Health Monitor**: Automatic engine suspension after repeated failures with configurable recovery
+- **HCL Configuration**: Load engine and health settings from HCL config files
 - **Headless Browser**: Optional Chrome/Chromium integration for JS-rendered engines (feature-gated)
 - **Auto-Install Chrome**: Automatically detects or downloads Chrome for Testing when no browser is found
-- **PageFetcher Abstraction**: Pluggable page fetching (plain HTTP or headless browser)
+- **PageFetcher Abstraction**: Pluggable page fetching — `HttpFetcher`, `PooledHttpFetcher`, or `BrowserFetcher`
 - **CLI Tool**: Command-line interface for quick searches
-- **Native SDKs**: TypeScript (NAPI) and Python (PyO3) bindings with async support
+- **Native SDKs**: TypeScript (NAPI) and Python (PyO3) bindings with async support and dynamic proxy pool management
 
 ## CLI Usage
 
@@ -125,6 +127,7 @@ a3s-search engines
 |----------|--------|-------------|
 | `ddg` | DuckDuckGo | Privacy-focused search |
 | `brave` | Brave | Brave Search |
+| `bing` | Bing | Bing International |
 | `wiki` | Wikipedia | Wikipedia API |
 | `sogou` | Sogou | 搜狗搜索 |
 | `360` | 360 Search | 360搜索 |
@@ -140,6 +143,7 @@ a3s-search engines
 |--------|----------|-------------|
 | DuckDuckGo | `ddg` | Privacy-focused search |
 | Brave | `brave` | Brave Search |
+| Bing | `bing` | Bing International |
 | Wikipedia | `wiki` | Wikipedia API |
 | Google | `g` | Google Search (headless browser) |
 
@@ -198,11 +202,23 @@ const response = await search.search('rust programming');
 
 // With options
 const response = await search.search('rust programming', {
-  engines: ['ddg', 'wiki', 'brave'],
+  engines: ['ddg', 'wiki', 'brave', 'bing'],
   limit: 5,
   timeout: 15,
   proxy: 'http://127.0.0.1:8080',
 });
+
+// Dynamic proxy pool (IP rotation)
+await search.setProxyPool([
+  'http://10.0.0.1:8080',
+  'http://10.0.0.2:8080',
+  'socks5://10.0.0.3:1080',
+]);
+const response = await search.search('rust programming');
+
+// Toggle proxy pool at runtime
+search.setProxyPoolEnabled(false);  // direct connection
+search.setProxyPoolEnabled(true);   // re-enable rotation
 
 for (const r of response.results) {
   console.log(`${r.title}: ${r.url} (score: ${r.score})`);
@@ -227,11 +243,23 @@ response = await search.search("rust programming")
 
 # With options
 response = await search.search("rust programming",
-    engines=["ddg", "wiki", "brave"],
+    engines=["ddg", "wiki", "brave", "bing"],
     limit=5,
     timeout=15,
     proxy="http://127.0.0.1:8080",
 )
+
+# Dynamic proxy pool (IP rotation)
+await search.set_proxy_pool([
+    "http://10.0.0.1:8080",
+    "http://10.0.0.2:8080",
+    "socks5://10.0.0.3:1080",
+])
+response = await search.search("rust programming")
+
+# Toggle proxy pool at runtime
+search.set_proxy_pool_enabled(False)  # direct connection
+search.set_proxy_pool_enabled(True)   # re-enable rotation
 
 for r in response.results:
     print(f"{r.title}: {r.url} (score: {r.score})")
@@ -246,6 +274,7 @@ Both SDKs support HTTP-based engines (no headless browser required):
 |----------|---------|--------|
 | `ddg` | `duckduckgo` | DuckDuckGo |
 | `brave` | — | Brave Search |
+| `bing` | — | Bing International |
 | `wiki` | `wikipedia` | Wikipedia API |
 | `sogou` | — | Sogou (搜狗) |
 | `360` | `so360` | 360 Search (360搜索) |
@@ -311,10 +340,10 @@ just cov-html
 ### Running Tests
 
 ```bash
-# Default build (8 engines, 298 tests)
+# Default build (9 engines, 244+ lib tests)
 cargo test -p a3s-search --lib
 
-# Without headless (5 engines)
+# Without headless (6 engines)
 cargo test -p a3s-search --no-default-features --lib
 
 # Integration tests (requires network + Chrome for Google)
@@ -373,8 +402,9 @@ weight = engine_weight × num_engines_found
 └─────────────────────────────────────────────────────┘
 
 PageFetcher (trait)
-  ├── HttpFetcher     (reqwest, plain HTTP)
-  └── BrowserFetcher  (chromiumoxide, headless Chrome)
+  ├── HttpFetcher        (reqwest, plain HTTP, single proxy)
+  ├── PooledHttpFetcher  (reqwest, proxy pool rotation)
+  └── BrowserFetcher     (chromiumoxide, headless Chrome)
         └── BrowserPool (shared process, tab semaphore)
 ```
 
@@ -386,11 +416,11 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-a3s-search = "0.5"
+a3s-search = "0.6"
 tokio = { version = "1", features = ["full"] }
 
 # To disable headless browser support:
-# a3s-search = { version = "0.5", default-features = false }
+# a3s-search = { version = "0.6", default-features = false }
 ```
 
 ### Basic Search
@@ -453,34 +483,43 @@ search.add_engine(wiki);
 ### Using Proxy Pool (Anti-Crawler Protection)
 
 ```rust
-use a3s_search::{Search, SearchQuery, engines::DuckDuckGo};
+use std::sync::Arc;
+use a3s_search::{Search, SearchQuery, PooledHttpFetcher, PageFetcher};
+use a3s_search::engines::{DuckDuckGo, DuckDuckGoParser};
 use a3s_search::proxy::{ProxyPool, ProxyConfig, ProxyProtocol, ProxyStrategy};
 
 // Create a proxy pool with multiple proxies
-let proxy_pool = ProxyPool::with_proxies(vec![
+let pool = Arc::new(ProxyPool::with_proxies(vec![
     ProxyConfig::new("proxy1.example.com", 8080),
     ProxyConfig::new("proxy2.example.com", 8080)
         .with_protocol(ProxyProtocol::Socks5),
     ProxyConfig::new("proxy3.example.com", 8080)
         .with_auth("username", "password"),
-]).with_strategy(ProxyStrategy::RoundRobin);
+]).with_strategy(ProxyStrategy::RoundRobin));
+
+// PooledHttpFetcher rotates proxies per request
+let fetcher: Arc<dyn PageFetcher> = Arc::new(PooledHttpFetcher::new(Arc::clone(&pool)));
 
 let mut search = Search::new();
-search.set_proxy_pool(proxy_pool);
-search.add_engine(DuckDuckGo::new());
+search.add_engine(DuckDuckGo::with_fetcher(DuckDuckGoParser, fetcher));
 
 let query = SearchQuery::new("rust programming");
 let results = search.search(query).await?;
+
+// Toggle proxy pool at runtime (thread-safe via AtomicBool)
+pool.set_enabled(false);  // direct connection
+pool.set_enabled(true);   // re-enable rotation
 ```
 
 ### Dynamic Proxy Provider
 
 ```rust
-use a3s_search::proxy::{ProxyPool, ProxyConfig, ProxyProvider};
+use std::sync::Arc;
+use a3s_search::proxy::{ProxyPool, ProxyConfig, ProxyProvider, spawn_auto_refresh};
 use async_trait::async_trait;
 use std::time::Duration;
 
-// Implement custom proxy provider (e.g., from API)
+// Implement custom proxy provider (e.g., from API, Redis, database)
 struct MyProxyProvider {
     api_url: String,
 }
@@ -488,7 +527,7 @@ struct MyProxyProvider {
 #[async_trait]
 impl ProxyProvider for MyProxyProvider {
     async fn fetch_proxies(&self) -> a3s_search::Result<Vec<ProxyConfig>> {
-        // Fetch proxies from your API
+        // Fetch proxies from your API — format is up to you
         Ok(vec![
             ProxyConfig::new("dynamic-proxy.example.com", 8080),
         ])
@@ -499,10 +538,12 @@ impl ProxyProvider for MyProxyProvider {
     }
 }
 
-// Use with proxy pool
-let provider = MyProxyProvider { api_url: "https://api.example.com/proxies".into() };
-let proxy_pool = ProxyPool::with_provider(provider);
-proxy_pool.refresh().await?; // Initial fetch
+// Use with auto-refresh background task
+let pool = Arc::new(ProxyPool::with_provider(
+    MyProxyProvider { api_url: "https://api.example.com/proxies".into() }
+));
+let _refresh_handle = spawn_auto_refresh(Arc::clone(&pool));
+// Pool now auto-refreshes every 60 seconds
 ```
 
 ### Implementing Custom Engines
@@ -558,12 +599,11 @@ impl Engine for MySearchEngine {
 | Method | Description |
 |--------|-------------|
 | `new()` | Create a new search instance |
+| `with_health_config(config)` | Create with health monitoring |
 | `add_engine(engine)` | Add a search engine |
 | `set_timeout(duration)` | Set default search timeout |
 | `engine_count()` | Get number of configured engines |
 | `search(query)` | Perform a search |
-| `set_proxy_pool(pool)` | Set proxy pool for anti-crawler |
-| `proxy_pool()` | Get reference to proxy pool |
 
 ### SearchQuery
 
@@ -647,13 +687,67 @@ pub trait Engine: Send + Sync {
 | `with_proxies(proxies)` | Create with static proxy list |
 | `with_provider(provider)` | Create with dynamic provider |
 | `with_strategy(strategy)` | Set selection strategy |
-| `set_enabled(bool)` | Enable/disable proxy pool |
+| `set_enabled(bool)` | Enable/disable proxy pool (thread-safe, `&self`) |
 | `is_enabled()` | Check if enabled |
 | `refresh()` | Refresh proxies from provider |
 | `get_proxy()` | Get next proxy (based on strategy) |
 | `add_proxy(proxy)` | Add a proxy to pool |
 | `remove_proxy(host, port)` | Remove a proxy |
+| `len()` | Number of proxies in pool |
 | `create_client(user_agent)` | Create HTTP client with proxy |
+
+### PooledHttpFetcher
+
+| Method | Description |
+|--------|-------------|
+| `new(pool)` | Create with `Arc<ProxyPool>` — rotates proxy per request |
+| `with_timeout(duration)` | Set request timeout (default: 30s) |
+
+### spawn_auto_refresh
+
+```rust
+pub fn spawn_auto_refresh(pool: Arc<ProxyPool>) -> tokio::task::JoinHandle<()>
+```
+
+Spawns a background task that periodically calls `pool.refresh()` based on the provider's `refresh_interval()`. Returns a handle that can be aborted to stop refreshing.
+
+### HealthMonitor / HealthConfig
+
+| Field/Method | Description |
+|--------|-------------|
+| `HealthConfig { max_failures, suspend_duration }` | Configure failure threshold and suspension time |
+| `Search::with_health_config(config)` | Create search with health monitoring |
+
+Engines are automatically suspended after `max_failures` consecutive failures and re-enabled after `suspend_duration`.
+
+### SearchConfig (HCL)
+
+| Method | Description |
+|--------|-------------|
+| `SearchConfig::load(path)` | Load config from `.hcl` file |
+| `SearchConfig::parse(content)` | Parse HCL string |
+| `health_config()` | Get `HealthConfig` from config |
+| `enabled_engines()` | Get list of enabled engine shortcuts |
+
+Example HCL config:
+```hcl
+timeout = 10
+
+health {
+  max_failures    = 5
+  suspend_seconds = 120
+}
+
+engine "ddg" {
+  enabled = true
+  weight  = 1.0
+}
+
+engine "bing" {
+  enabled = true
+  weight  = 1.2
+}
+```
 
 ### ProxyConfig
 
@@ -763,16 +857,20 @@ search/
     ├── query.rs             # SearchQuery
     ├── result.rs            # SearchResult, SearchResults
     ├── aggregator.rs        # Result aggregation and ranking
-    ├── search.rs            # Search orchestrator
-    ├── proxy.rs             # Proxy pool and configuration
+    ├── search.rs            # Search orchestrator with HealthMonitor
+    ├── config.rs            # HCL configuration loading
+    ├── health.rs            # HealthMonitor, HealthConfig
+    ├── proxy.rs             # ProxyPool, ProxyProvider, spawn_auto_refresh
     ├── fetcher.rs           # PageFetcher trait, WaitStrategy
-    ├── fetcher_http.rs      # HttpFetcher (reqwest wrapper)
+    ├── fetcher_http.rs      # HttpFetcher + PooledHttpFetcher
+    ├── html_engine.rs       # HtmlEngine<P> generic engine framework
     ├── browser.rs           # BrowserPool, BrowserFetcher (headless browser)
     ├── browser_setup.rs     # Chrome auto-detection and download
     └── engines/
         ├── mod.rs           # Engine exports
         ├── duckduckgo.rs    # DuckDuckGo
         ├── brave.rs         # Brave Search
+        ├── bing.rs          # Bing International
         ├── google.rs        # Google (headless browser)
         ├── wikipedia.rs     # Wikipedia
         ├── baidu.rs         # Baidu (百度, headless browser)
@@ -816,17 +914,22 @@ A3S Search is a **utility component** of the A3S ecosystem.
 - [x] Consensus-based ranking algorithm
 - [x] Parallel async search execution
 - [x] Per-engine timeout handling
-- [x] 8 built-in engines (4 international + 4 Chinese)
+- [x] 9 built-in engines (5 international + 4 Chinese)
+- [x] Bing International engine (HTTP, no headless required)
 - [x] Headless browser support for JS-rendered engines (Google, Baidu, Bing China — enabled by default)
-- [x] PageFetcher abstraction (HttpFetcher + BrowserFetcher)
+- [x] PageFetcher abstraction (HttpFetcher + PooledHttpFetcher + BrowserFetcher)
 - [x] BrowserPool with tab concurrency control
-- [x] Proxy pool with dynamic provider support
+- [x] Dynamic proxy pool with pluggable `ProxyProvider` trait and `spawn_auto_refresh`
+- [x] `PooledHttpFetcher` for per-request proxy IP rotation
+- [x] Runtime proxy pool toggle via `AtomicBool` (`set_enabled(&self)`)
+- [x] Health monitoring with automatic engine suspension and recovery
+- [x] HCL configuration file loading for engines and health settings
 - [x] CLI tool with Homebrew distribution
 - [x] Automatic Chrome detection and download (Chrome for Testing)
-- [x] 298 comprehensive unit tests with 91.15% line coverage
 - [x] Proxy support for all engines via `-p` flag (HTTP/HTTPS/SOCKS5)
 - [x] UTF-8 safe content truncation for CJK/emoji
-- [x] Native SDKs: TypeScript (NAPI-RS) and Python (PyO3) with 103 tests
+- [x] Native SDKs: TypeScript (NAPI-RS) and Python (PyO3) with dynamic proxy pool management
+- [x] SDK proxy pool: `setProxyPool()`, `setProxyPoolEnabled()`, per-request `proxyPool` option
 
 ## License
 

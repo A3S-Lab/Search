@@ -1,107 +1,84 @@
 //! Brave search engine implementation.
 
-use std::sync::Arc;
+use crate::html_engine::{selector, HtmlEngine, HtmlParser};
+use crate::{EngineCategory, EngineConfig, Result, SearchQuery, SearchResult};
+use scraper::Html;
 
-use async_trait::async_trait;
-use scraper::{Html, Selector};
-
-use crate::fetcher::PageFetcher;
-use crate::{
-    Engine, EngineCategory, EngineConfig, HttpFetcher, Result, SearchError, SearchQuery,
-    SearchResult,
-};
+/// Brave HTML parser.
+pub struct BraveParser;
 
 /// Brave search engine.
-pub struct Brave {
-    config: EngineConfig,
-    fetcher: Arc<dyn PageFetcher>,
-}
+pub type Brave = HtmlEngine<BraveParser>;
 
 impl Brave {
     /// Creates a new Brave engine with a default HTTP fetcher.
     pub fn new() -> Self {
-        Self::with_fetcher(Arc::new(HttpFetcher::new()))
-    }
-
-    /// Creates a new Brave engine with a custom page fetcher.
-    pub fn with_fetcher(fetcher: Arc<dyn PageFetcher>) -> Self {
-        Self {
-            config: EngineConfig {
-                name: "Brave".to_string(),
-                shortcut: "brave".to_string(),
-                categories: vec![EngineCategory::General],
-                weight: 1.0,
-                timeout: 5,
-                enabled: true,
-                paging: true,
-                safesearch: true,
-            },
-            fetcher,
-        }
-    }
-
-    /// Creates with custom configuration.
-    pub fn with_config(mut self, config: EngineConfig) -> Self {
-        self.config = config;
-        self
+        HtmlEngine::with_fetcher(BraveParser, std::sync::Arc::new(crate::HttpFetcher::new()))
     }
 }
 
 impl Default for Brave {
     fn default() -> Self {
-        Self::new()
+        Brave::new()
     }
 }
 
-#[async_trait]
-impl Engine for Brave {
-    fn config(&self) -> &EngineConfig {
-        &self.config
+impl HtmlParser for BraveParser {
+    fn default_config() -> EngineConfig {
+        EngineConfig {
+            name: "Brave".to_string(),
+            shortcut: "brave".to_string(),
+            categories: vec![EngineCategory::General],
+            weight: 1.0,
+            timeout: 5,
+            enabled: true,
+            paging: true,
+            safesearch: true,
+        }
     }
 
-    async fn search(&self, query: &SearchQuery) -> Result<Vec<SearchResult>> {
-        let url = format!(
+    fn build_url(&self, query: &SearchQuery) -> String {
+        use crate::query::SafeSearch;
+        let mut url = format!(
             "https://search.brave.com/search?q={}",
             urlencoding::encode(&query.query)
         );
-
-        let html = self.fetcher.fetch(&url).await?;
-
-        self.parse_results(&html)
+        if query.page > 1 {
+            url.push_str(&format!("&offset={}", query.page - 1));
+        }
+        match query.safesearch {
+            SafeSearch::Off => {}
+            SafeSearch::Moderate => url.push_str("&safesearch=moderate"),
+            SafeSearch::Strict => url.push_str("&safesearch=strict"),
+        }
+        url
     }
-}
 
-impl Brave {
-    fn parse_results(&self, html: &str) -> Result<Vec<SearchResult>> {
+    fn parse(&self, html: &str) -> Result<Vec<SearchResult>> {
         let document = Html::parse_document(html);
-
-        let result_selector = Selector::parse(r#"div.snippet[data-type="web"]"#)
-            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
-        let title_selector = Selector::parse(".search-snippet-title")
-            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
-        let desc_selector = Selector::parse(".generic-snippet .content, .snippet-description")
-            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
-        let url_selector = Selector::parse(r#"a[href^="http"]"#)
-            .map_err(|e| SearchError::Parse(format!("Failed to parse selector: {:?}", e)))?;
+        let result_sel = selector(r#"div.snippet[data-type="web"]"#)?;
+        let title_sel = selector(".search-snippet-title")?;
+        let desc_sel = selector(".generic-snippet .content, .snippet-description")?;
+        let url_sel = selector(r#"a[href^="http"]"#)?;
 
         let mut results = Vec::new();
 
-        for element in document.select(&result_selector) {
+        for element in document.select(&result_sel) {
             let title = element
-                .select(&title_selector)
+                .select(&title_sel)
                 .next()
                 .map(|e| e.text().collect::<String>().trim().to_string())
                 .unwrap_or_default();
 
             let url = element
-                .select(&url_selector)
+                .select(&url_sel)
                 .next()
                 .and_then(|e| e.value().attr("href"))
                 .unwrap_or_default()
                 .to_string();
 
             let content = element
-                .select(&desc_selector)
+                .select(&desc_sel)
                 .next()
                 .map(|e| e.text().collect::<String>().trim().to_string())
                 .unwrap_or_default();
@@ -114,30 +91,33 @@ impl Brave {
         Ok(results)
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Engine;
     use crate::HttpFetcher;
+    use std::sync::Arc;
 
     #[test]
     fn test_brave_new() {
         let engine = Brave::new();
-        assert_eq!(engine.config.name, "Brave");
-        assert_eq!(engine.config.shortcut, "brave");
-        assert_eq!(engine.config.weight, 1.0);
+        assert_eq!(engine.config().name, "Brave");
+        assert_eq!(engine.config().shortcut, "brave");
+        assert_eq!(engine.config().weight, 1.0);
     }
 
     #[test]
     fn test_brave_with_fetcher() {
-        let fetcher: Arc<dyn PageFetcher> = Arc::new(HttpFetcher::new());
-        let engine = Brave::with_fetcher(fetcher);
-        assert_eq!(engine.name(), "Brave");
+        let fetcher: Arc<dyn crate::PageFetcher> = Arc::new(HttpFetcher::new());
+        let engine = Brave::with_fetcher(BraveParser, fetcher);
+        assert_eq!(engine.config().name, "Brave");
     }
 
     #[test]
     fn test_brave_default() {
         let engine = Brave::default();
-        assert_eq!(engine.name(), "Brave");
+        assert_eq!(engine.config().name, "Brave");
     }
 
     #[test]
@@ -148,7 +128,7 @@ mod tests {
             ..Default::default()
         };
         let engine = Brave::new().with_config(custom_config);
-        assert_eq!(engine.name(), "Custom Brave");
+        assert_eq!(engine.config().name, "Custom Brave");
     }
 
     #[test]
@@ -161,14 +141,14 @@ mod tests {
 
     #[test]
     fn test_brave_parse_results_empty() {
-        let engine = Brave::new();
-        let results = engine.parse_results("<html><body></body></html>").unwrap();
+        let parser = BraveParser;
+        let results = parser.parse("<html><body></body></html>").unwrap();
         assert!(results.is_empty());
     }
 
     #[test]
     fn test_brave_parse_results_with_data() {
-        let engine = Brave::new();
+        let parser = BraveParser;
         let html = r#"
         <html><body>
         <div class="snippet" data-type="web">
@@ -181,7 +161,7 @@ mod tests {
         </div>
         </body></html>
         "#;
-        let results = engine.parse_results(html).unwrap();
+        let results = parser.parse(html).unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].title, "Rust Programming Language");
         assert_eq!(results[0].url, "https://www.rust-lang.org/");
@@ -196,7 +176,7 @@ mod tests {
 
     #[test]
     fn test_brave_parse_results_skips_non_web() {
-        let engine = Brave::new();
+        let parser = BraveParser;
         let html = r#"
         <html><body>
         <div class="snippet" data-type="video">
@@ -207,7 +187,7 @@ mod tests {
         </div>
         </body></html>
         "#;
-        let results = engine.parse_results(html).unwrap();
+        let results = parser.parse(html).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "A Page");
     }

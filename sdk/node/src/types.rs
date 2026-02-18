@@ -26,8 +26,9 @@ pub struct JsSearchResult {
 #[napi(object)]
 #[derive(Clone, Debug)]
 pub struct JsSearchOptions {
-    /// Engine shortcuts to use (e.g. ["ddg", "wiki", "brave"]).
+    /// Engine shortcuts to use (e.g. ["ddg", "wiki", "brave", "bing"]).
     /// Defaults to ["ddg", "wiki"] if not specified.
+    /// Available: ddg, brave, bing, wiki, sogou, 360.
     pub engines: Option<Vec<String>>,
     /// Maximum number of results to return.
     pub limit: Option<u32>,
@@ -35,6 +36,10 @@ pub struct JsSearchOptions {
     pub timeout: Option<u32>,
     /// HTTP/SOCKS5 proxy URL (e.g. "http://127.0.0.1:8080").
     pub proxy: Option<String>,
+    /// Proxy pool URLs for IP rotation (e.g. ["http://10.0.0.1:8080", "http://10.0.0.2:8080"]).
+    /// When provided, proxies are rotated round-robin per request.
+    /// Takes precedence over `proxy` if both are set.
+    pub proxy_pool: Option<Vec<String>>,
 }
 
 /// Aggregated search response containing results and metadata.
