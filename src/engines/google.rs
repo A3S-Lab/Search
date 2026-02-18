@@ -120,8 +120,8 @@ impl HtmlParser for GoogleParser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Engine;
     use crate::fetcher_http::HttpFetcher;
+    use crate::Engine;
     use std::sync::Arc;
 
     fn make_google() -> Google {
@@ -288,8 +288,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_detects_captcha_sorry_page() {
-        use async_trait::async_trait;
         use crate::fetcher::PageFetcher;
+        use async_trait::async_trait;
 
         struct FakeFetcher(String);
         #[async_trait]
@@ -316,8 +316,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_detects_captcha_recaptcha() {
-        use async_trait::async_trait;
         use crate::fetcher::PageFetcher;
+        use async_trait::async_trait;
 
         struct FakeFetcher(String);
         #[async_trait]
@@ -344,8 +344,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_normal_page_no_captcha() {
-        use async_trait::async_trait;
         use crate::fetcher::PageFetcher;
+        use async_trait::async_trait;
 
         struct FakeFetcher(String);
         #[async_trait]

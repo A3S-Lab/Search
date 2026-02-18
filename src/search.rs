@@ -8,7 +8,8 @@ use tokio::time::{timeout, Duration};
 use tracing::{debug, warn};
 
 use crate::{
-    Aggregator, Engine, HealthConfig, HealthMonitor, Result, SearchError, SearchQuery, SearchResults,
+    Aggregator, Engine, HealthConfig, HealthMonitor, Result, SearchError, SearchQuery,
+    SearchResults,
 };
 
 /// Meta search engine that orchestrates searches across multiple engines.

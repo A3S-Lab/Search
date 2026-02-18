@@ -111,9 +111,8 @@ impl SearchConfig {
 
     /// Parses configuration from an HCL string.
     pub fn parse(content: &str) -> crate::Result<Self> {
-        hcl::from_str(content).map_err(|e| {
-            SearchError::Parse(format!("Failed to parse HCL config: {}", e))
-        })
+        hcl::from_str(content)
+            .map_err(|e| SearchError::Parse(format!("Failed to parse HCL config: {}", e)))
     }
 
     /// Converts the health entry to a `HealthConfig`.

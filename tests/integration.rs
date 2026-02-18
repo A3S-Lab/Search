@@ -298,9 +298,7 @@ mod bing_tests {
 mod health_monitor_tests {
     use std::time::Duration;
 
-    use a3s_search::{
-        engines::DuckDuckGo, HealthConfig, Search, SearchQuery,
-    };
+    use a3s_search::{engines::DuckDuckGo, HealthConfig, Search, SearchQuery};
 
     #[tokio::test]
     #[ignore]
@@ -455,11 +453,11 @@ mod proxy_pool_tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use async_trait::async_trait;
     use a3s_search::proxy::{
-        ProxyConfig, ProxyPool, ProxyProvider, ProxyStrategy, spawn_auto_refresh,
+        spawn_auto_refresh, ProxyConfig, ProxyPool, ProxyProvider, ProxyStrategy,
     };
     use a3s_search::PooledHttpFetcher;
+    use async_trait::async_trait;
 
     /// A mock provider that returns a fixed list and tracks call count.
     struct CountingProvider {
@@ -482,9 +480,9 @@ mod proxy_pool_tests {
 
     #[test]
     fn test_proxy_pool_enabled_toggle() {
-        let pool = Arc::new(ProxyPool::with_proxies(vec![
-            ProxyConfig::new("10.0.0.1", 8080),
-        ]));
+        let pool = Arc::new(ProxyPool::with_proxies(vec![ProxyConfig::new(
+            "10.0.0.1", 8080,
+        )]));
 
         assert!(pool.is_enabled());
         pool.set_enabled(false);
@@ -495,9 +493,9 @@ mod proxy_pool_tests {
 
     #[tokio::test]
     async fn test_proxy_pool_disabled_returns_none() {
-        let pool = Arc::new(ProxyPool::with_proxies(vec![
-            ProxyConfig::new("10.0.0.1", 8080),
-        ]));
+        let pool = Arc::new(ProxyPool::with_proxies(vec![ProxyConfig::new(
+            "10.0.0.1", 8080,
+        )]));
 
         // Enabled — should return proxy
         let proxy = pool.get_proxy().await;
@@ -560,7 +558,11 @@ mod proxy_pool_tests {
         tokio::time::sleep(Duration::from_millis(250)).await;
 
         let count = *call_count.lock().await;
-        assert!(count >= 2, "Provider should be called at least twice, got {}", count);
+        assert!(
+            count >= 2,
+            "Provider should be called at least twice, got {}",
+            count
+        );
         assert_eq!(pool.len().await, 1);
 
         handle.abort();
@@ -568,17 +570,16 @@ mod proxy_pool_tests {
 
     #[test]
     fn test_pooled_http_fetcher_creation() {
-        let pool = Arc::new(ProxyPool::with_proxies(vec![
-            ProxyConfig::new("10.0.0.1", 8080),
-        ]));
+        let pool = Arc::new(ProxyPool::with_proxies(vec![ProxyConfig::new(
+            "10.0.0.1", 8080,
+        )]));
         let _fetcher = PooledHttpFetcher::new(pool);
     }
 
     #[test]
     fn test_pooled_http_fetcher_with_timeout() {
         let pool = Arc::new(ProxyPool::new());
-        let fetcher = PooledHttpFetcher::new(pool)
-            .with_timeout(Duration::from_secs(15));
+        let fetcher = PooledHttpFetcher::new(pool).with_timeout(Duration::from_secs(15));
         // Should not panic
         drop(fetcher);
     }

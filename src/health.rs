@@ -70,14 +70,20 @@ impl HealthMonitor {
 
     /// Records a successful search for the engine, resetting its failure count.
     pub fn record_success(&mut self, name: &str) {
-        let health = self.engines.entry(name.to_string()).or_insert_with(EngineHealth::new);
+        let health = self
+            .engines
+            .entry(name.to_string())
+            .or_insert_with(EngineHealth::new);
         health.consecutive_failures = 0;
         health.suspended_until = None;
     }
 
     /// Records a failed search. Suspends the engine if it exceeds `max_failures`.
     pub fn record_failure(&mut self, name: &str) {
-        let health = self.engines.entry(name.to_string()).or_insert_with(EngineHealth::new);
+        let health = self
+            .engines
+            .entry(name.to_string())
+            .or_insert_with(EngineHealth::new);
         health.consecutive_failures += 1;
 
         if health.consecutive_failures >= self.config.max_failures {

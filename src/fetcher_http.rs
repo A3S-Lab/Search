@@ -130,9 +130,8 @@ impl PageFetcher for PooledHttpFetcher {
                 "PooledHttpFetcher using proxy {}:{}",
                 proxy_config.host, proxy_config.port
             );
-            let proxy = reqwest::Proxy::all(proxy_config.url()).map_err(|e| {
-                crate::SearchError::Other(format!("Failed to create proxy: {}", e))
-            })?;
+            let proxy = reqwest::Proxy::all(proxy_config.url())
+                .map_err(|e| crate::SearchError::Other(format!("Failed to create proxy: {}", e)))?;
             Client::builder()
                 .user_agent(DEFAULT_USER_AGENT)
                 .timeout(self.timeout)

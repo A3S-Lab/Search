@@ -8,7 +8,10 @@ use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
 use a3s_search::{
-    engines::{Bing, BingParser, Brave, BraveParser, DuckDuckGo, DuckDuckGoParser, So360, So360Parser, Sogou, SogouParser, Wikipedia},
+    engines::{
+        Bing, BingParser, Brave, BraveParser, DuckDuckGo, DuckDuckGoParser, So360, So360Parser,
+        Sogou, SogouParser, Wikipedia,
+    },
     HttpFetcher, PageFetcher, Search, SearchQuery,
 };
 
@@ -234,8 +237,14 @@ async fn run_search(args: SearchArgs) -> Result<()> {
                 DuckDuckGoParser,
                 std::sync::Arc::clone(&http_fetcher),
             )),
-            "brave" => search.add_engine(Brave::with_fetcher(BraveParser, std::sync::Arc::clone(&http_fetcher))),
-            "bing" => search.add_engine(Bing::with_fetcher(BingParser, std::sync::Arc::clone(&http_fetcher))),
+            "brave" => search.add_engine(Brave::with_fetcher(
+                BraveParser,
+                std::sync::Arc::clone(&http_fetcher),
+            )),
+            "bing" => search.add_engine(Bing::with_fetcher(
+                BingParser,
+                std::sync::Arc::clone(&http_fetcher),
+            )),
             "wiki" | "wikipedia" => {
                 // Wikipedia needs its own fetcher since it uses JSON API, not HTML
                 let fetcher = if let Some(proxy_url) = &args.proxy {
@@ -247,10 +256,14 @@ async fn run_search(args: SearchArgs) -> Result<()> {
                 };
                 search.add_engine(Wikipedia::with_http_fetcher(fetcher))
             }
-            "sogou" => search.add_engine(Sogou::with_fetcher(SogouParser, std::sync::Arc::clone(&http_fetcher))),
-            "360" | "so360" => {
-                search.add_engine(So360::with_fetcher(So360Parser, std::sync::Arc::clone(&http_fetcher)))
-            }
+            "sogou" => search.add_engine(Sogou::with_fetcher(
+                SogouParser,
+                std::sync::Arc::clone(&http_fetcher),
+            )),
+            "360" | "so360" => search.add_engine(So360::with_fetcher(
+                So360Parser,
+                std::sync::Arc::clone(&http_fetcher),
+            )),
             #[cfg(feature = "headless")]
             "g" | "google" => {
                 let fetcher: std::sync::Arc<dyn PageFetcher> = std::sync::Arc::new(

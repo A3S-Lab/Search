@@ -13,7 +13,10 @@ pub type DuckDuckGo = HtmlEngine<DuckDuckGoParser>;
 impl DuckDuckGo {
     /// Creates a new DuckDuckGo engine with a default HTTP fetcher.
     pub fn new() -> Self {
-        HtmlEngine::with_fetcher(DuckDuckGoParser, std::sync::Arc::new(crate::HttpFetcher::new()))
+        HtmlEngine::with_fetcher(
+            DuckDuckGoParser,
+            std::sync::Arc::new(crate::HttpFetcher::new()),
+        )
     }
 }
 

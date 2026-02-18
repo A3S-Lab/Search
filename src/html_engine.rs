@@ -11,9 +11,7 @@ use async_trait::async_trait;
 use scraper::Selector;
 
 use crate::fetcher::PageFetcher;
-use crate::{
-    Engine, EngineConfig, Result, SearchError, SearchQuery, SearchResult,
-};
+use crate::{Engine, EngineConfig, Result, SearchError, SearchQuery, SearchResult};
 
 /// Parse a CSS selector string, returning a `SearchError::Parse` on failure.
 pub fn selector(css: &str) -> Result<Selector> {
