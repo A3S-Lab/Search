@@ -36,6 +36,14 @@ const KNOWN_PATHS: &[&str] = &[
     "/snap/bin/chromium",
 ];
 
+#[cfg(target_os = "windows")]
+const KNOWN_PATHS: &[&str] = &[
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+];
+
 /// Well-known command names to search in PATH.
 const KNOWN_COMMANDS: &[&str] = &[
     "google-chrome",
@@ -59,10 +67,20 @@ fn platform_id() -> Result<&'static str> {
     {
         Ok("linux64")
     }
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    {
+        Ok("win64")
+    }
+    #[cfg(all(target_os = "windows", target_arch = "x86"))]
+    {
+        Ok("win32")
+    }
     #[cfg(not(any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "macos", target_arch = "x86_64"),
         all(target_os = "linux", target_arch = "x86_64"),
+        all(target_os = "windows", target_arch = "x86_64"),
+        all(target_os = "windows", target_arch = "x86"),
     )))]
     {
         Err(SearchError::Browser(
@@ -85,6 +103,11 @@ fn chrome_executable_in_zip(platform: &str) -> String {
     format!("chrome-{}/chrome", platform)
 }
 
+#[cfg(target_os = "windows")]
+fn chrome_executable_in_zip(platform: &str) -> String {
+    format!("chrome-{}\\chrome.exe", platform)
+}
+
 /// Base directory for cached Chrome downloads.
 fn cache_dir() -> Result<PathBuf> {
     let home = dirs_path()?;
@@ -94,6 +117,7 @@ fn cache_dir() -> Result<PathBuf> {
 /// Returns the user's home directory.
 fn dirs_path() -> Result<PathBuf> {
     std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
         .map(PathBuf::from)
         .map_err(|_| SearchError::Browser("Cannot determine home directory".to_string()))
 }
