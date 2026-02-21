@@ -972,6 +972,10 @@ A3S Search is a **utility component** of the A3S ecosystem.
 - [x] Python post-install: `a3s-search-setup` CLI + `python -m a3s_search.ensure_chrome`
 - [x] Node post-install: automatic Chrome download on `npm install`
 
+## Community
+
+Join us on [Discord](https://discord.gg/XVg6Hu6H) for questions, discussions, and updates.
+
 ## License
 
 MIT
