@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup workspace context
+        run: bash .github/setup-workspace.sh
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "crates/search -> target"
+
+      - name: Format check
+        run: cargo fmt -p a3s-search -- --check
+
+      - name: Clippy (no default features)
+        run: cargo clippy -p a3s-search --no-default-features -- -D warnings
+
+      - name: Clippy (all features)
+        run: cargo clippy -p a3s-search --all-features -- -D warnings
+
+      - name: Tests (no default features)
+        run: cargo test -p a3s-search --no-default-features --lib
+
+      - name: Tests (all features)
+        run: cargo test -p a3s-search --all-features --lib
+
+  sdk-node:
+    name: Node SDK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup workspace context
+        run: bash .github/setup-workspace.sh
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "crates/search -> target"
+
+      - name: Install dependencies
+        working-directory: crates/search/sdk/node
+        run: npm install
+
+      - name: Build native module
+        working-directory: crates/search/sdk/node
+        run: npm run build:native
+
+      - name: Build TypeScript
+        working-directory: crates/search/sdk/node
+        run: npm run build:ts
+
+      - name: Run tests
+        working-directory: crates/search/sdk/node
+        run: npm test
+
+  sdk-python:
+    name: Python SDK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup workspace context
+        run: bash .github/setup-workspace.sh
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "crates/search -> target"
+
+      - name: Install maturin
+        run: pip install maturin[patchelf]
+
+      - name: Build wheel
+        working-directory: crates/search/sdk/python
+        run: maturin build --release
+
+      - name: Install wheel
+        run: pip install crates/search/sdk/python/target/wheels/*.whl
+
+      - name: Install test dependencies
+        run: pip install pytest pytest-asyncio
+
+      - name: Run tests
+        working-directory: crates/search/sdk/python
+        run: pytest tests/

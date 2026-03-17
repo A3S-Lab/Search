@@ -393,9 +393,344 @@ cd sdk/python && pytest       # 54 tests (pytest)
 
 ## Architecture
 
+### System Overview
+
+A3S Search is a **meta search engine** that aggregates results from multiple search engines, deduplicates them, and ranks them using a consensus-based algorithm. It supports both HTTP-based engines and JavaScript-rendered engines via headless browsers.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        A3S Search System                        │
+│                                                                 │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    │
+│  │   Rust API   │    │  Python SDK  │    │  Node.js SDK │    │
+│  │   (Core)     │◄───┤   (PyO3)     │    │   (NAPI-RS)  │    │
+│  └──────┬───────┘    └──────────────┘    └──────────────┘    │
+│         │                                                       │
+│         ▼                                                       │
+│  ┌─────────────────────────────────────────────────────────┐  │
+│  │                    Search Orchestrator                   │  │
+│  │  • Query parsing & validation                           │  │
+│  │  • Engine selection & filtering                         │  │
+│  │  • Parallel execution (tokio::join_all)                 │  │
+│  │  • Timeout handling (per-engine)                        │  │
+│  │  • Health monitoring (auto-suspend failed engines)      │  │
+│  └─────────────────────────────────────────────────────────┘  │
+│         │                                                       │
+│         ▼                                                       │
+│  ┌─────────────────────────────────────────────────────────┐  │
+│  │                    Engine Layer                          │  │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │  │
+│  │  │ HTTP Engines │  │   Headless   │  │   Custom     │  │  │
+│  │  │              │  │   Engines    │  │   Engines    │  │  │
+│  │  │ • DuckDuckGo │  │ • Google     │  │ • User-      │  │  │
+│  │  │ • Brave      │  │ • Baidu      │  │   defined    │  │  │
+│  │  │ • Bing       │  │ • BingChina  │  │   (trait)    │  │  │
+│  │  │ • Wikipedia  │  │              │  │              │  │  │
+│  │  │ • Sogou      │  │              │  │              │  │  │
+│  │  │ • 360        │  │              │  │              │  │  │
+│  │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  │  │
+│  └─────────┼──────────────────┼──────────────────┼─────────┘  │
+│            │                  │                  │             │
+│            ▼                  ▼                  ▼             │
+│  ┌─────────────────────────────────────────────────────────┐  │
+│  │                  PageFetcher Layer                       │  │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │  │
+│  │  │ HttpFetcher  │  │PooledHttp    │  │Browser       │  │  │
+│  │  │              │  │Fetcher       │  │Fetcher       │  │  │
+│  │  │ • reqwest    │  │ • ProxyPool  │  │ • Lightpanda │  │  │
+│  │  │ • single     │  │ • Round-robin│  │ • Chrome     │  │  │
+│  │  │   proxy      │  │ • IP rotation│  │ • CDP        │  │  │
+│  │  └──────────────┘  └──────────────┘  └──────┬───────┘  │  │
+│  └─────────────────────────────────────────────┼─────────┘  │
+│                                                 │             │
+│                                                 ▼             │
+│  ┌─────────────────────────────────────────────────────────┐  │
+│  │                  Browser Pool                            │  │
+│  │  • Shared browser process (Lightpanda/Chrome)           │  │
+│  │  • Tab concurrency control (semaphore)                  │  │
+│  │  • Auto-download & cache (~/.a3s/)                      │  │
+│  │  • CDP connection management                            │  │
+│  └─────────────────────────────────────────────────────────┘  │
+│         │                                                       │
+│         ▼                                                       │
+│  ┌─────────────────────────────────────────────────────────┐  │
+│  │                    Aggregator                            │  │
+│  │  • URL normalization & deduplication                    │  │
+│  │  • Consensus-based scoring                              │  │
+│  │  • Result merging & ranking                             │  │
+│  │  • Suggestions & answers extraction                     │  │
+│  └─────────────────────────────────────────────────────────┘  │
+│         │                                                       │
+│         ▼                                                       │
+│  ┌─────────────────────────────────────────────────────────┐  │
+│  │                  SearchResults                           │  │
+│  │  • Ranked results (by score)                            │  │
+│  │  • Engine attribution                                   │  │
+│  │  • Metadata (duration, count, errors)                   │  │
+│  └─────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Core Components
+
+#### 1. Search Orchestrator
+- **Query Processing**: Parses and validates search queries
+- **Engine Selection**: Filters engines based on query requirements
+- **Parallel Execution**: Executes all engines concurrently using `tokio::join_all`
+- **Timeout Management**: Per-engine timeout with graceful degradation
+- **Health Monitoring**: Tracks engine failures and auto-suspends unhealthy engines
+
+#### 2. Engine Layer
+- **HTTP Engines**: Direct HTTP requests (DuckDuckGo, Brave, Bing, Wikipedia, Sogou, 360)
+- **Headless Engines**: JavaScript rendering via browser (Google, Baidu, BingChina)
+- **Custom Engines**: User-defined engines via `Engine` trait
+
+#### 3. PageFetcher Layer
+- **HttpFetcher**: Simple HTTP client with optional proxy
+- **PooledHttpFetcher**: Proxy pool with round-robin IP rotation
+- **BrowserFetcher**: Headless browser rendering (Lightpanda/Chrome)
+
+#### 4. Browser Pool
+- **Shared Process**: Single browser instance shared across all headless engines
+- **Tab Concurrency**: Semaphore-based tab limit (default: 4)
+- **Auto-Setup**: Automatic browser detection and download
+- **CDP Protocol**: Chrome DevTools Protocol for page control
+
+#### 5. Aggregator
+- **Deduplication**: Normalizes URLs and merges duplicate results
+- **Scoring**: Consensus-based ranking algorithm
+- **Merging**: Combines results from multiple engines
+- **Extraction**: Pulls out suggestions and instant answers
+
+### Search Workflow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      Search Execution Flow                      │
+└─────────────────────────────────────────────────────────────────┘
+
+1. User Query
+   │
+   ├─► "rust programming"
+   │   engines: ["ddg", "brave", "google"]
+   │   limit: 10
+   │   timeout: 15s
+   │
+   ▼
+2. Query Validation & Parsing
+   │
+   ├─► SearchQuery {
+   │     query: "rust programming",
+   │     categories: [General],
+   │     language: "en",
+   │     safesearch: Moderate,
+   │     page: 1
+   │   }
+   │
+   ▼
+3. Engine Selection & Filtering
+   │
+   ├─► Selected Engines:
+   │   • DuckDuckGo (HTTP, weight: 1.0)
+   │   • Brave (HTTP, weight: 1.0)
+   │   • Google (Headless, weight: 1.0)
+   │
+   ▼
+4. Parallel Engine Execution (tokio::join_all)
+   │
+   ├─────────────────┬─────────────────┬─────────────────┐
+   │                 │                 │                 │
+   ▼                 ▼                 ▼                 ▼
+┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
+│DuckDuckGo│    │  Brave   │    │  Google  │    │  Health  │
+│          │    │          │    │          │    │ Monitor  │
+│ HTTP GET │    │ HTTP GET │    │ Browser  │    │          │
+│  ↓       │    │  ↓       │    │  Render  │    │ Track    │
+│ Parse    │    │ Parse    │    │  ↓       │    │ Failures │
+│ HTML     │    │ HTML     │    │ Parse    │    │          │
+│  ↓       │    │  ↓       │    │ HTML     │    │          │
+│ Results  │    │ Results  │    │  ↓       │    │          │
+│ [10]     │    │ [10]     │    │ Results  │    │          │
+│          │    │          │    │ [10]     │    │          │
+└────┬─────┘    └────┬─────┘    └────┬─────┘    └──────────┘
+     │               │               │
+     │               │               │ (timeout: 15s each)
+     │               │               │
+     └───────────────┴───────────────┘
+                     │
+                     ▼
+5. Result Aggregation
+   │
+   ├─► Collect all results (30 total)
+   │   • DuckDuckGo: 10 results
+   │   • Brave: 10 results
+   │   • Google: 10 results
+   │
+   ▼
+6. URL Normalization & Deduplication
+   │
+   ├─► Normalize URLs:
+   │   • Remove tracking params
+   │   • Lowercase domain
+   │   • Remove www prefix
+   │   • Normalize path
+   │
+   ├─► Merge duplicates:
+   │   • Same URL from multiple engines
+   │   • Combine engine lists
+   │   • Merge positions
+   │
+   ├─► Result: 18 unique results
+   │
+   ▼
+7. Consensus-Based Scoring
+   │
+   ├─► For each result:
+   │   score = Σ (weight / position) for each engine
+   │   weight = engine_weight × num_engines_found
+   │
+   ├─► Example:
+   │   Result A found by DuckDuckGo (#1) and Brave (#2):
+   │   score = (1.0 × 2 / 1) + (1.0 × 2 / 2) = 2.0 + 1.0 = 3.0
+   │
+   │   Result B found only by Google (#1):
+   │   score = (1.0 × 1 / 1) = 1.0
+   │
+   │   → Result A ranks higher (consensus bonus)
+   │
+   ▼
+8. Sorting & Limiting
+   │
+   ├─► Sort by score (descending)
+   ├─► Apply limit (10 results)
+   │
+   ▼
+9. SearchResults
+   │
+   └─► {
+         results: [10 ranked results],
+         count: 10,
+         duration_ms: 1234,
+         errors: [],
+         suggestions: ["rust tutorial", "rust book"],
+         answers: []
+       }
+```
+
+### Headless Browser Workflow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│              Headless Engine Execution (Google)                 │
+└─────────────────────────────────────────────────────────────────┘
+
+1. Engine Initialization
+   │
+   ├─► Check if browser needed
+   │   • Engine: Google (requires JS rendering)
+   │   • Browser: Lightpanda (default) or Chrome
+   │
+   ▼
+2. Browser Detection & Setup
+   │
+   ├─► Lightpanda (default):
+   │   ├─ Check LIGHTPANDA env var
+   │   ├─ Check PATH for lightpanda command
+   │   ├─ Check cache: ~/.a3s/lightpanda/<tag>/
+   │   └─ If not found: Download from GitHub releases
+   │       ├─ Platform: macOS arm64
+   │       ├─ URL: github.com/lightpanda-io/browser/releases
+   │       ├─ Download: lightpanda-darwin-aarch64.tar.gz
+   │       ├─ Extract to: ~/.a3s/lightpanda/nightly/
+   │       └─ Set executable: chmod +x lightpanda
+   │
+   ├─► Chrome (fallback, browser="chrome"):
+   │   ├─ Check CHROME env var
+   │   ├─ Check PATH for chrome/chromium commands
+   │   ├─ Check known paths (/Applications/Google Chrome.app, etc.)
+   │   ├─ Check cache: ~/.a3s/chromium/<version>/
+   │   └─ If not found: Download Chrome for Testing
+   │       ├─ Platform: mac-arm64
+   │       ├─ URL: googlechromelabs.github.io/chrome-for-testing
+   │       ├─ Download: chrome-mac-arm64.zip (150MB)
+   │       ├─ Extract to: ~/.a3s/chromium/131.0.6778.85/
+   │       └─ Return: chrome executable path
+   │
+   ▼
+3. Browser Pool Initialization
+   │
+   ├─► BrowserPool::new(config)
+   │   • backend: Lightpanda (default)
+   │   • max_tabs: 4
+   │   • headless: true
+   │   • proxy_url: None
+   │
+   ▼
+4. Browser Launch (Lazy, on first request)
+   │
+   ├─► Lightpanda:
+   │   ├─ Find free port (OS-assigned)
+   │   ├─ Spawn: lightpanda serve --host 127.0.0.1 --port <port>
+   │   ├─ Wait for CDP server ready (TCP connect)
+   │   └─ Connect via WebSocket: ws://127.0.0.1:<port>
+   │
+   ├─► Chrome:
+   │   ├─ Launch with args:
+   │   │   --headless=new
+   │   │   --disable-gpu
+   │   │   --no-sandbox
+   │   │   --disable-blink-features=AutomationControlled
+   │   │   --user-agent=<realistic UA>
+   │   └─ Connect via CDP (chromiumoxide)
+   │
+   ▼
+5. Page Rendering
+   │
+   ├─► Acquire tab permit (semaphore, max 4 concurrent)
+   │
+   ├─► Create new tab
+   │   • browser.new_page(url)
+   │
+   ├─► Navigate to search URL
+   │   • https://www.google.com/search?q=rust+programming
+   │
+   ├─► Wait for page load
+   │   • Strategy: Load (default)
+   │   • Alternatives: NetworkIdle, Selector, Delay
+   │
+   ├─► Extract rendered HTML
+   │   • page.content() → full HTML string
+   │
+   ├─► Close tab
+   │   • page.close()
+   │
+   └─► Release tab permit
+   │
+   ▼
+6. HTML Parsing
+   │
+   ├─► Parse with scraper (HTML5 parser)
+   │
+   ├─► Extract results:
+   │   • Selector: div.g (Google result container)
+   │   • Title: h3
+   │   • URL: a[href]
+   │   • Snippet: div.VwiC3b
+   │
+   ├─► Handle errors:
+   │   • CAPTCHA detection
+   │   • Rate limiting
+   │   • Empty results
+   │
+   ▼
+7. Return Results
+   │
+   └─► Vec<SearchResult> [10 results]
+```
+
 ### Ranking Algorithm
 
-The scoring algorithm is based on SearXNG's approach:
+The scoring algorithm is based on SearXNG's approach with consensus weighting:
 
 ```
 score = Σ (weight / position) for each engine
@@ -407,39 +742,167 @@ weight = engine_weight × num_engines_found
 2. **Consensus**: Results found by multiple engines score higher
 3. **Position**: Earlier positions in individual engines score higher
 
-### Components
+**Example Calculation:**
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                     Search                          │
-│  ┌───────────────────────────────────────────────┐ │
-│  │              Engine Registry                   │ │
-│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐         │ │
-│  │  │DuckDuck │ │ Brave   │ │Wikipedia│  ...    │ │
-│  │  │  Go     │ │         │ │         │         │ │
-│  │  └─────────┘ └─────────┘ └─────────┘         │ │
-│  │  ┌─────────────────────────────────┐          │ │
-│  │  │ Google (headless browser)       │          │ │
-│  │  │   └─ PageFetcher → BrowserPool  │          │ │
-│  │  └─────────────────────────────────┘          │ │
-│  └───────────────────────────────────────────────┘ │
-│                      ↓ parallel search              │
-│  ┌───────────────────────────────────────────────┐ │
-│  │              Aggregator                        │ │
-│  │  • Deduplicate by normalized URL              │ │
-│  │  • Merge results from multiple engines        │ │
-│  │  • Calculate consensus-based scores           │ │
-│  │  • Sort by score (descending)                 │ │
-│  └───────────────────────────────────────────────┘ │
-│                      ↓                              │
-│              SearchResults                          │
-└─────────────────────────────────────────────────────┘
+Query: "rust programming"
+Engines: DuckDuckGo (weight: 1.0), Brave (weight: 1.0), Google (weight: 1.0)
 
+Result A: "The Rust Programming Language"
+  • Found by DuckDuckGo at position 1
+  • Found by Brave at position 1
+  • Found by Google at position 2
+  • num_engines_found = 3
+
+  score = (1.0 × 3 / 1) + (1.0 × 3 / 1) + (1.0 × 3 / 2)
+        = 3.0 + 3.0 + 1.5
+        = 7.5
+
+Result B: "Rust Tutorial"
+  • Found by DuckDuckGo at position 3
+  • Found by Google at position 5
+  • num_engines_found = 2
+
+  score = (1.0 × 2 / 3) + (1.0 × 2 / 5)
+        = 0.67 + 0.4
+        = 1.07
+
+→ Result A ranks higher (consensus + better positions)
+```
+
+### Proxy Pool Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      Proxy Pool System                          │
+└─────────────────────────────────────────────────────────────────┘
+
+1. ProxyPool (Arc<ProxyPool>)
+   │
+   ├─► Configuration:
+   │   • Strategy: RoundRobin | Random
+   │   • Enabled: AtomicBool (thread-safe toggle)
+   │   • Proxies: RwLock<Vec<ProxyConfig>>
+   │
+   ├─► Static Mode:
+   │   ProxyPool::with_proxies([
+   │     "http://10.0.0.1:8080",
+   │     "socks5://10.0.0.2:1080",
+   │   ])
+   │
+   ├─► Dynamic Mode:
+   │   ProxyPool::with_provider(MyProxyProvider)
+   │   • Implements ProxyProvider trait
+   │   • fetch_proxies() → Vec<ProxyConfig>
+   │   • refresh_interval() → Duration
+   │
+   └─► Auto-Refresh:
+       spawn_auto_refresh(pool)
+       • Background task
+       • Periodic refresh
+       • Updates pool atomically
+   │
+   ▼
+2. PooledHttpFetcher
+   │
+   ├─► Per-Request Rotation:
+   │   • get_proxy() → ProxyConfig
+   │   • create_client(proxy) → reqwest::Client
+   │   • fetch(url) → HTML
+   │
+   ├─► Strategy: RoundRobin
+   │   Request 1 → Proxy A
+   │   Request 2 → Proxy B
+   │   Request 3 → Proxy C
+   │   Request 4 → Proxy A (cycle)
+   │
+   └─► Strategy: Random
+       Request 1 → Proxy B
+       Request 2 → Proxy A
+       Request 3 → Proxy B
+       Request 4 → Proxy C
+   │
+   ▼
+3. Runtime Control
+   │
+   ├─► Enable/Disable (thread-safe):
+   │   pool.set_enabled(false)  // Direct connection
+   │   pool.set_enabled(true)   // Resume rotation
+   │
+   └─► No restart required
+       • AtomicBool check on each request
+       • Instant toggle
+```
+
+### Health Monitoring
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Health Monitor System                        │
+└─────────────────────────────────────────────────────────────────┘
+
+1. Configuration
+   │
+   ├─► HealthConfig {
+   │     max_failures: 5,        // Suspend after 5 consecutive failures
+   │     suspend_duration: 120s  // Suspend for 2 minutes
+   │   }
+   │
+   ▼
+2. Failure Tracking (per engine)
+   │
+   ├─► Success: Reset counter to 0
+   │
+   ├─► Failure: Increment counter
+   │   • Network error
+   │   • Timeout
+   │   • Parse error
+   │   • CAPTCHA
+   │
+   ├─► Threshold Reached:
+   │   failures >= max_failures
+   │   → Suspend engine
+   │   → Record suspend_until timestamp
+   │
+   ▼
+3. Engine Suspension
+   │
+   ├─► Suspended Engine:
+   │   • Skipped in search execution
+   │   • Not counted in results
+   │   • Logged as suspended
+   │
+   ├─► Auto-Recovery:
+   │   • Check suspend_until on each search
+   │   • If current_time > suspend_until:
+   │     → Re-enable engine
+   │     → Reset failure counter
+   │
+   ▼
+4. Example Timeline
+   │
+   ├─► T=0s:  Google search succeeds (failures: 0)
+   ├─► T=10s: Google search fails (failures: 1)
+   ├─► T=20s: Google search fails (failures: 2)
+   ├─► T=30s: Google search fails (failures: 3)
+   ├─► T=40s: Google search fails (failures: 4)
+   ├─► T=50s: Google search fails (failures: 5)
+   │           → SUSPENDED until T=170s
+   ├─► T=60s: Google skipped (suspended)
+   ├─► T=170s: Google re-enabled (auto-recovery)
+   └─► T=180s: Google search succeeds (failures: 0)
+```
+
+### Component Diagram
+
+```
 PageFetcher (trait)
   ├── HttpFetcher        (reqwest, plain HTTP, single proxy)
   ├── PooledHttpFetcher  (reqwest, proxy pool rotation)
-  └── BrowserFetcher     (chromiumoxide, headless Chrome)
+  └── BrowserFetcher     (chromiumoxide, headless browser)
         └── BrowserPool (shared process, tab semaphore)
+              ├── Lightpanda (default, 59MB, <100ms startup)
+              └── Chrome (fallback, 200MB, 1-2s startup)
 ```
 
 ## Quick Start
@@ -858,6 +1321,30 @@ just clean                   # Clean build artifacts
 just update                  # Update dependencies
 ```
 
+### Releasing
+
+See [RELEASE.md](RELEASE.md) for detailed release instructions.
+
+**Quick release:**
+```bash
+# Check GitHub secrets are configured
+./scripts/check-secrets.sh
+
+# Release new version (runs tests, commits, tags, pushes)
+./scripts/release.sh 0.9.0
+
+# Monitor CI/CD progress
+gh run watch --repo A3S-Lab/Search
+```
+
+The release workflow automatically:
+- ✅ Runs CI checks (fmt, clippy, tests)
+- 📦 Publishes to crates.io
+- 🐍 Publishes Python SDK to PyPI (7 platforms)
+- 📦 Publishes Node.js SDK to npm (7 platforms)
+- 🍺 Updates Homebrew formula
+- 🎉 Creates GitHub Release with CLI binaries
+
 ### Project Structure
 
 ```
@@ -865,6 +1352,17 @@ search/
 ├── Cargo.toml
 ├── justfile
 ├── README.md
+├── RELEASE.md               # Release guide
+├── .github/
+│   ├── setup-workspace.sh   # CI workspace restructuring
+│   └── workflows/
+│       ├── ci.yml           # Push/PR checks
+│       ├── release.yml      # Tag-triggered release
+│       ├── publish-node.yml # Node SDK publishing
+│       └── publish-python.yml # Python SDK publishing
+├── scripts/
+│   ├── release.sh           # Automated release script
+│   └── check-secrets.sh     # Check GitHub secrets
 ├── examples/
 │   ├── basic_search.rs      # Basic usage example
 │   └── chinese_search.rs    # Chinese engines example
