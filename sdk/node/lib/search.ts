@@ -82,6 +82,14 @@ export class A3SSearch {
             timeout: options.timeout,
             proxy: options.proxy,
             proxyPool: options.proxyPool,
+            language: options.language,
+            safesearch: options.safesearch,
+            page: options.page,
+            timeRange: options.timeRange,
+            category: options.category,
+            engineWeights: options.engineWeights,
+            healthMaxFailures: options.healthMaxFailures,
+            healthSuspendSecs: options.healthSuspendSecs,
           }
         : undefined;
 
@@ -113,6 +121,8 @@ export class A3SSearch {
             message: e.message,
           })
         ),
+        suggestions: response.suggestions,
+        answers: response.answers,
       };
     } catch (err) {
       if (err instanceof SearchError) {

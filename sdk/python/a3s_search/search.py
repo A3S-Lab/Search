@@ -76,19 +76,44 @@ class A3SSearch:
         timeout: Optional[int] = None,
         proxy: Optional[str] = None,
         proxy_pool: Optional[list[str]] = None,
+        language: Optional[str] = None,
+        safesearch: Optional[str] = None,
+        page: Optional[int] = None,
+        time_range: Optional[str] = None,
+        category: Optional[str] = None,
+        engine_weights: Optional[dict[str, float]] = None,
+        health_max_failures: Optional[int] = None,
+        health_suspend_secs: Optional[int] = None,
+        browser: Optional[str] = None,
+        chrome_path: Optional[str] = None,
+        lightpanda_path: Optional[str] = None,
+        max_tabs: Optional[int] = None,
     ) -> SearchResponse:
         """Perform a search query.
 
         Args:
             query: The search query string.
             engines: Engine shortcuts to use. Defaults to ["ddg", "wiki"].
-                Available: ddg, brave, bing, wiki, sogou, 360.
+                Available: ddg, brave, bing, wiki, sogou, 360, google, baidu, bingchina.
+                Note: google, baidu, bingchina require headless browser (slower but more reliable).
             limit: Maximum number of results to return.
             timeout: Per-engine timeout in seconds. Defaults to 10.
             proxy: HTTP/SOCKS5 proxy URL.
             proxy_pool: Proxy pool URLs for IP rotation.
                 When provided, proxies are rotated round-robin per request.
                 Takes precedence over `proxy` if both are set.
+            language: Search language (e.g. "en", "zh", "ja").
+            safesearch: Safe search level: "off", "moderate", or "strict".
+            page: Page number for pagination (1-indexed).
+            time_range: Time range filter: "day", "week", "month", or "year".
+            category: Search category (e.g. "general", "images", "videos", "news").
+            engine_weights: Per-engine weight multipliers (e.g. {"ddg": 1.5, "brave": 0.8}).
+            health_max_failures: Maximum consecutive failures before suspending an engine.
+            health_suspend_secs: Suspension duration in seconds after max failures reached.
+            browser: Browser backend for headless engines: "chrome" or "lightpanda". Defaults to "lightpanda".
+            chrome_path: Path to Chrome executable (only used when browser_backend is "chrome").
+            lightpanda_path: Path to Lightpanda executable (only used when browser_backend is "lightpanda").
+            max_tabs: Maximum concurrent browser tabs. Defaults to 4.
 
         Returns:
             A SearchResponse containing results and metadata.
@@ -106,6 +131,18 @@ class A3SSearch:
                 timeout=timeout,
                 proxy=proxy,
                 proxy_pool=proxy_pool,
+                language=language,
+                safesearch=safesearch,
+                page=page,
+                time_range=time_range,
+                category=category,
+                engine_weights=engine_weights,
+                health_max_failures=health_max_failures,
+                health_suspend_secs=health_suspend_secs,
+                browser=browser,
+                chrome_path=chrome_path,
+                lightpanda_path=lightpanda_path,
+                max_tabs=max_tabs,
             )
 
             response = await self._native.search(query, native_opts)
@@ -134,6 +171,8 @@ class A3SSearch:
                 count=response.count,
                 duration_ms=response.duration_ms,
                 errors=errors,
+                suggestions=response.suggestions,
+                answers=response.answers,
             )
         except SearchError:
             raise

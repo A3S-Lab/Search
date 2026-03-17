@@ -2,7 +2,18 @@
 //!
 //! This module is only available when the `headless` Cargo feature is enabled.
 //! It provides a shared browser process pool and a `PageFetcher` implementation
-//! that renders pages using Chrome/Chromium via the Chrome DevTools Protocol.
+//! that renders pages using a headless browser via the Chrome DevTools Protocol.
+//!
+//! ## Backends
+//!
+//! Two backends are supported, selected via `BrowserPoolConfig::backend`:
+//!
+//! - **`BrowserBackend::Chrome`** (default): Launches Chrome/Chromium locally.
+//!   Requires the `headless` feature. Chrome is auto-detected or downloaded.
+//!
+//! - **`BrowserBackend::Lightpanda`**: Spawns a Lightpanda process and connects
+//!   via CDP over WebSocket. Requires the `lightpanda` feature. Supported on
+//!   Linux (x86_64/aarch64) and macOS (x86_64/aarch64) only.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,19 +28,57 @@ use tracing::{debug, warn};
 use crate::fetcher::{PageFetcher, WaitStrategy};
 use crate::{Result, SearchError};
 
+/// Selects which headless browser backend the pool uses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BrowserBackend {
+    /// Launch Chrome/Chromium locally.
+    ///
+    /// Chrome is auto-detected on the system or downloaded from Google's
+    /// Chrome for Testing CDN and cached in `~/.a3s/chromium/`.
+    Chrome,
+
+    /// Spawn a Lightpanda process and connect via CDP over WebSocket (default when available).
+    ///
+    /// Requires the `lightpanda` feature. Supported on Linux and macOS only.
+    /// Lightpanda is auto-detected via `LIGHTPANDA` env var, PATH, or
+    /// downloaded from GitHub releases and cached in `~/.a3s/lightpanda/`.
+    #[cfg(feature = "lightpanda")]
+    Lightpanda,
+}
+
+impl Default for BrowserBackend {
+    fn default() -> Self {
+        #[cfg(feature = "lightpanda")]
+        {
+            Self::Lightpanda
+        }
+        #[cfg(not(feature = "lightpanda"))]
+        {
+            Self::Chrome
+        }
+    }
+}
+
 /// Configuration for the browser pool.
 #[derive(Debug, Clone)]
 pub struct BrowserPoolConfig {
     /// Maximum number of concurrent browser tabs.
     pub max_tabs: usize,
-    /// Whether to run the browser in headless mode.
+    /// Whether to run Chrome in headless mode (ignored for Lightpanda).
     pub headless: bool,
     /// Path to the Chrome/Chromium executable. If `None`, auto-detected.
+    /// Only used when `backend` is `BrowserBackend::Chrome`.
     pub chrome_path: Option<String>,
+    /// Path to the Lightpanda executable. If `None`, auto-detected.
+    /// Only used when `backend` is `BrowserBackend::Lightpanda`.
+    #[cfg(feature = "lightpanda")]
+    pub lightpanda_path: Option<String>,
     /// Proxy URL for the browser to use.
     pub proxy_url: Option<String>,
-    /// Additional launch arguments for Chrome.
+    /// Additional launch arguments for Chrome (ignored for Lightpanda).
     pub launch_args: Vec<String>,
+    /// Which browser backend to use.
+    pub backend: BrowserBackend,
 }
 
 impl Default for BrowserPoolConfig {
@@ -38,8 +87,11 @@ impl Default for BrowserPoolConfig {
             max_tabs: 4,
             headless: true,
             chrome_path: None,
+            #[cfg(feature = "lightpanda")]
+            lightpanda_path: None,
             proxy_url: None,
             launch_args: Vec::new(),
+            backend: BrowserBackend::default(),
         }
     }
 }
@@ -51,6 +103,9 @@ impl Default for BrowserPoolConfig {
 pub struct BrowserPool {
     config: BrowserPoolConfig,
     browser: Mutex<Option<Arc<Browser>>>,
+    /// Child process handle for the Lightpanda backend.
+    /// Always present to simplify the struct; `None` for the Chrome backend.
+    child: Mutex<Option<tokio::process::Child>>,
     tab_semaphore: Arc<Semaphore>,
 }
 
@@ -61,6 +116,7 @@ impl BrowserPool {
         Self {
             config,
             browser: Mutex::new(None),
+            child: Mutex::new(None),
             tab_semaphore: Arc::new(Semaphore::new(max_tabs)),
         }
     }
@@ -70,15 +126,27 @@ impl BrowserPool {
         &self.tab_semaphore
     }
 
-    /// Lazily launches the browser and returns a shared handle.
+    /// Lazily acquires the browser, launching it on the first call.
+    ///
+    /// Routes to the appropriate backend based on `config.backend`.
     pub async fn acquire_browser(&self) -> Result<Arc<Browser>> {
+        #[cfg(feature = "lightpanda")]
+        if self.config.backend == BrowserBackend::Lightpanda {
+            return self.acquire_lightpanda().await;
+        }
+
+        self.acquire_chrome().await
+    }
+
+    /// Launches Chrome/Chromium and returns a shared handle.
+    async fn acquire_chrome(&self) -> Result<Arc<Browser>> {
         let mut guard = self.browser.lock().await;
 
         if let Some(ref browser) = *guard {
             return Ok(Arc::clone(browser));
         }
 
-        debug!("Launching headless browser");
+        debug!("Launching Chrome headless browser");
 
         let mut builder = BrowserConfig::builder();
 
@@ -133,16 +201,15 @@ impl BrowserPool {
 
         let (browser, mut handler) = Browser::launch(browser_config)
             .await
-            .map_err(|e| SearchError::Browser(format!("Failed to launch browser: {}", e)))?;
+            .map_err(|e| SearchError::Browser(format!("Failed to launch Chrome: {}", e)))?;
 
-        // Spawn the CDP event handler as a background task
         tokio::spawn(async move {
             while let Some(event) = handler.next().await {
                 if let Err(e) = event {
-                    warn!("Browser CDP handler error: {}", e);
+                    warn!("Chrome CDP handler error: {}", e);
                 }
             }
-            debug!("Browser CDP handler exited");
+            debug!("Chrome CDP handler exited");
         });
 
         let browser = Arc::new(browser);
@@ -151,12 +218,123 @@ impl BrowserPool {
         Ok(browser)
     }
 
-    /// Shuts down the browser process.
+    /// Spawns a Lightpanda process and connects to it via CDP WebSocket.
+    #[cfg(feature = "lightpanda")]
+    async fn acquire_lightpanda(&self) -> Result<Arc<Browser>> {
+        let mut guard = self.browser.lock().await;
+
+        if let Some(ref browser) = *guard {
+            return Ok(Arc::clone(browser));
+        }
+
+        debug!("Launching Lightpanda browser");
+
+        // Resolve Lightpanda binary
+        let lp_path = if let Some(ref path) = self.config.lightpanda_path {
+            std::path::PathBuf::from(path)
+        } else {
+            crate::browser_setup_lp::ensure_lightpanda().await?
+        };
+
+        // Bind to port 0 to get a free port from the OS
+        let port = find_free_port()?;
+
+        // Spawn `lightpanda serve --host 127.0.0.1 --port <port>`
+        let child = tokio::process::Command::new(&lp_path)
+            .args(["serve", "--host", "127.0.0.1", "--port", &port.to_string()])
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| {
+                SearchError::Browser(format!(
+                    "Failed to spawn Lightpanda ({}): {}",
+                    lp_path.display(),
+                    e
+                ))
+            })?;
+
+        *self.child.lock().await = Some(child);
+
+        // Wait until Lightpanda's CDP server accepts TCP connections
+        wait_for_cdp_ready("127.0.0.1", port, Duration::from_secs(10)).await?;
+
+        let ws_url = format!("ws://127.0.0.1:{}", port);
+        debug!("Connecting to Lightpanda CDP at {}", ws_url);
+
+        let (browser, mut handler) = Browser::connect(&ws_url)
+            .await
+            .map_err(|e| SearchError::Browser(format!("Failed to connect to Lightpanda: {}", e)))?;
+
+        tokio::spawn(async move {
+            while let Some(event) = handler.next().await {
+                if let Err(e) = event {
+                    warn!("Lightpanda CDP handler error: {}", e);
+                }
+            }
+            debug!("Lightpanda CDP handler exited");
+        });
+
+        let browser = Arc::new(browser);
+        *guard = Some(Arc::clone(&browser));
+
+        Ok(browser)
+    }
+
+    /// Shuts down the browser and kills any spawned child process.
     pub async fn shutdown(&self) {
         let mut guard = self.browser.lock().await;
         if guard.take().is_some() {
-            debug!("Browser pool shut down");
+            debug!("Browser connection closed");
         }
+
+        let mut child_guard = self.child.lock().await;
+        if let Some(mut child) = child_guard.take() {
+            if let Err(e) = child.kill().await {
+                warn!("Failed to kill browser child process: {}", e);
+            } else {
+                debug!("Browser child process killed");
+            }
+        }
+    }
+}
+
+/// Find a free TCP port by letting the OS assign one.
+///
+/// Binds to `127.0.0.1:0` to get an OS-assigned port, then immediately
+/// drops the listener. There is a small TOCTOU window, but it is acceptable
+/// for local process spawning where port collisions are rare.
+fn find_free_port() -> Result<u16> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| SearchError::Browser(format!("Failed to find a free port: {}", e)))?;
+    let port = listener
+        .local_addr()
+        .map_err(|e| SearchError::Browser(format!("Failed to read assigned port: {}", e)))?
+        .port();
+    Ok(port)
+}
+
+/// Poll until the CDP server at `host:port` accepts TCP connections.
+///
+/// Returns `Ok(())` as soon as a connection succeeds, or an error if
+/// `timeout` elapses without a successful connection.
+#[cfg(feature = "lightpanda")]
+async fn wait_for_cdp_ready(host: &str, port: u16, timeout: Duration) -> Result<()> {
+    let addr = format!("{}:{}", host, port);
+    let deadline = tokio::time::Instant::now() + timeout;
+
+    loop {
+        if tokio::time::Instant::now() >= deadline {
+            return Err(SearchError::Browser(format!(
+                "Timed out waiting for CDP server at {} to become ready",
+                addr
+            )));
+        }
+
+        if tokio::net::TcpStream::connect(&addr).await.is_ok() {
+            debug!("CDP server at {} is ready", addr);
+            return Ok(());
+        }
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
@@ -211,11 +389,16 @@ impl PageFetcher for BrowserFetcher {
             .await
             .map_err(|e| SearchError::Browser(format!("Failed to open tab: {}", e)))?;
 
-        // Set user agent if configured
+        // Set user agent if configured. Applied after tab creation; affects subsequent
+        // requests on the page (e.g. XHR, redirects). For the initial document request
+        // use a browser-level UA launch arg instead.
         if let Some(ref ua) = self.user_agent {
-            page.set_user_agent(SetUserAgentOverrideParams::new(ua))
+            if let Err(e) = page
+                .set_user_agent(SetUserAgentOverrideParams::new(ua))
                 .await
-                .map_err(|e| SearchError::Browser(format!("Failed to set user agent: {}", e)))?;
+            {
+                debug!("Failed to set user agent (non-fatal): {}", e);
+            }
         }
 
         // Apply wait strategy
@@ -282,6 +465,7 @@ mod tests {
         assert!(config.chrome_path.is_none());
         assert!(config.proxy_url.is_none());
         assert!(config.launch_args.is_empty());
+        assert_eq!(config.backend, BrowserBackend::Chrome);
     }
 
     #[test]
@@ -292,6 +476,7 @@ mod tests {
             chrome_path: Some("/usr/bin/chromium".to_string()),
             proxy_url: Some("http://localhost:8080".to_string()),
             launch_args: vec!["--disable-web-security".to_string()],
+            ..Default::default()
         };
         assert_eq!(config.max_tabs, 8);
         assert!(!config.headless);
@@ -385,6 +570,7 @@ mod tests {
             chrome_path: Some("/usr/bin/chromium".to_string()),
             proxy_url: Some("socks5://localhost:1080".to_string()),
             launch_args: vec!["--no-sandbox".to_string()],
+            ..Default::default()
         };
         let cloned = config.clone();
         assert_eq!(cloned.max_tabs, 8);
@@ -431,5 +617,34 @@ mod tests {
         };
         let pool = BrowserPool::new(config);
         assert_eq!(pool.tab_semaphore().available_permits(), 16);
+    }
+
+    #[test]
+    fn test_browser_backend_default_is_chrome() {
+        let backend = BrowserBackend::default();
+        assert_eq!(backend, BrowserBackend::Chrome);
+        let config = BrowserPoolConfig::default();
+        assert_eq!(config.backend, BrowserBackend::Chrome);
+    }
+
+    #[test]
+    fn test_find_free_port() {
+        let port = find_free_port().expect("Should find a free port");
+        assert!(port > 0, "Port should be non-zero");
+    }
+
+    #[cfg(feature = "lightpanda")]
+    #[test]
+    fn test_lightpanda_config() {
+        let config = BrowserPoolConfig {
+            backend: BrowserBackend::Lightpanda,
+            lightpanda_path: Some("/usr/local/bin/lightpanda".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(config.backend, BrowserBackend::Lightpanda);
+        assert_eq!(
+            config.lightpanda_path.as_deref(),
+            Some("/usr/local/bin/lightpanda")
+        );
     }
 }

@@ -19,6 +19,10 @@ build:
 build-headless:
     cargo build -p a3s-search --features headless
 
+# Build with Lightpanda browser support (Linux/macOS only)
+build-lightpanda:
+    cargo build -p a3s-search --features lightpanda
+
 # Build release
 release:
     cargo build -p a3s-search --release
@@ -122,6 +126,103 @@ test:
         echo -e "${BOLD}${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
     fi
     echo ""
+
+# Run Lightpanda browser integration tests (requires: --features lightpanda, Linux/macOS)
+#
+# Prerequisites:
+#   - Lightpanda binary in PATH, or LIGHTPANDA=/path/to/binary env var set,
+#     or it will be auto-downloaded from GitHub releases on first run.
+#
+# Groups (all are --ignored by default, must opt-in):
+#   binary    — ensure_lightpanda() detects/downloads the binary
+#   pool      — BrowserPool lifecycle (start, shutdown, idempotency)
+#   fetch     — real page fetches via Lightpanda CDP
+#   wait      — WaitStrategy variants (Load, Delay, NetworkIdle, Selector)
+#   ua        — custom user-agent header
+#   concur    — concurrent tabs and semaphore limiting
+#   engine    — search engine integration (Google)
+#   error     — error handling (invalid URL, missing binary)
+#   html      — HTML structure validation
+#
+# Examples:
+#   just test-lightpanda                     # run all groups
+#   just test-lightpanda fetch               # run fetch group only
+#   LIGHTPANDA=/usr/local/bin/lightpanda just test-lightpanda
+test-lightpanda GROUP="":
+    #!/usr/bin/env bash
+    set -e
+    BOLD='\033[1m'
+    GREEN='\033[0;32m'
+    RED='\033[0;31m'
+    YELLOW='\033[0;33m'
+    BLUE='\033[0;34m'
+    DIM='\033[2m'
+    RESET='\033[0m'
+
+    echo ""
+    echo -e "${BOLD}${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "${BOLD}  🐼 Lightpanda Browser Integration Tests${RESET}"
+    echo -e "${BOLD}${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+
+    if [ -n "$LIGHTPANDA" ]; then
+        echo -e "  ${DIM}Binary:   $LIGHTPANDA (from \$LIGHTPANDA)${RESET}"
+    else
+        echo -e "  ${DIM}Binary:   auto-detect / auto-download${RESET}"
+    fi
+
+    # Build filter from group name
+    if [ -n "{{GROUP}}" ]; then
+        FILTER="lightpanda_tests::test_lightpanda_{{GROUP}}"
+        echo -e "  ${DIM}Filter:   $FILTER${RESET}"
+    else
+        FILTER="lightpanda_tests"
+        echo -e "  ${DIM}Filter:   all lightpanda tests${RESET}"
+    fi
+    echo ""
+
+    # Run and capture output
+    if OUTPUT=$(cargo test \
+        --features lightpanda \
+        --test integration \
+        -- "$FILTER" --ignored --nocapture 2>&1); then
+        EXIT=0
+    else
+        EXIT=1
+    fi
+
+    # Print output (strip ANSI)
+    echo "$OUTPUT" | sed 's/\x1b\[[0-9;]*m//g' | grep -v "^$" | \
+        while IFS= read -r line; do
+            if echo "$line" | grep -qE "^test .*ok$"; then
+                echo -e "  ${GREEN}✓${RESET} ${DIM}$(echo $line | sed 's/^test //')${RESET}"
+            elif echo "$line" | grep -qE "^test .*FAILED$"; then
+                echo -e "  ${RED}✗${RESET} ${RED}$(echo $line | sed 's/^test //')${RESET}"
+            elif echo "$line" | grep -qE "^test .*ignored$"; then
+                echo -e "  ${YELLOW}○${RESET} ${DIM}$(echo $line | sed 's/^test //')${RESET}"
+            elif echo "$line" | grep -qE "^test result:"; then
+                : # skip — we print our own summary
+            else
+                echo "    $line"
+            fi
+        done
+
+    # Summary
+    RESULT=$(echo "$OUTPUT" | grep "^test result:" | tail -1)
+    PASSED=$(echo "$RESULT" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' || echo 0)
+    FAILED=$(echo "$RESULT" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+' || echo 0)
+    IGNORED=$(echo "$RESULT" | grep -oE '[0-9]+ ignored' | grep -oE '[0-9]+' || echo 0)
+
+    echo ""
+    echo -e "${BOLD}${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    if [ "$EXIT" -ne 0 ] || [ "$FAILED" -gt 0 ]; then
+        echo -e "  ${RED}${BOLD}✗ FAILED${RESET}  ${GREEN}$PASSED passed${RESET}  ${RED}$FAILED failed${RESET}  ${YELLOW}$IGNORED ignored${RESET}"
+    else
+        echo -e "  ${GREEN}${BOLD}✓ PASSED${RESET}  ${GREEN}$PASSED passed${RESET}  ${YELLOW}$IGNORED ignored${RESET}"
+    fi
+    echo -e "${BOLD}${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo ""
+
+    exit $EXIT
 
 # Run tests with headless feature
 test-headless:

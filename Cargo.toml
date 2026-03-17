@@ -33,6 +33,9 @@ path = "src/main.rs"
 [features]
 default = []
 headless = ["dep:chromiumoxide", "dep:which", "dep:zip"]
+# Lightpanda headless backend (Linux/macOS only; Windows unsupported by Lightpanda).
+# Depends on `headless` because it reuses chromiumoxide as the CDP client.
+lightpanda = ["headless"]
 
 [dependencies]
 # Async runtime

@@ -114,6 +114,9 @@ pub mod browser;
 #[cfg(feature = "headless")]
 pub mod browser_setup;
 
+#[cfg(feature = "lightpanda")]
+pub mod browser_setup_lp;
+
 pub use aggregator::Aggregator;
 pub use config::{EngineEntry, HealthEntry, SearchConfig};
 pub use engine::{Engine, EngineCategory, EngineConfig};
@@ -122,9 +125,9 @@ pub use fetcher::{PageFetcher, WaitStrategy};
 pub use fetcher_http::{HttpFetcher, PooledHttpFetcher};
 pub use health::{HealthConfig, HealthMonitor};
 pub use html_engine::{selector, HtmlEngine, HtmlParser};
-pub use query::SearchQuery;
+pub use query::{SafeSearch, SearchQuery, TimeRange};
 pub use result::{ResultType, SearchResult, SearchResults};
 pub use search::Search;
 
 #[cfg(feature = "headless")]
-pub use browser::{BrowserFetcher, BrowserPool, BrowserPoolConfig};
+pub use browser::{BrowserBackend, BrowserFetcher, BrowserPool, BrowserPoolConfig};
