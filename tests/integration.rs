@@ -439,7 +439,8 @@ mod lightpanda_tests {
         // 3. Local download cache (~/.a3s/lightpanda/<tag>/lightpanda)
         let home = std::env::var("HOME").ok()?;
         let cache = std::path::PathBuf::from(home).join(".a3s/lightpanda");
-        std::fs::read_dir(&cache).ok()?
+        std::fs::read_dir(&cache)
+            .ok()?
             .filter_map(|e| e.ok())
             .filter(|e| e.path().is_dir())
             .map(|e| e.path().join("lightpanda"))
@@ -551,7 +552,11 @@ mod lightpanda_tests {
         require_lp!(pool);
 
         let browser = pool.acquire_browser().await;
-        assert!(browser.is_ok(), "acquire_browser() must succeed: {:?}", browser.err());
+        assert!(
+            browser.is_ok(),
+            "acquire_browser() must succeed: {:?}",
+            browser.err()
+        );
         println!("  browser acquired ok");
 
         pool.shutdown().await;
@@ -583,7 +588,10 @@ mod lightpanda_tests {
 
         let b1 = pool.acquire_browser().await.expect("first acquire");
         let b2 = pool.acquire_browser().await.expect("second acquire");
-        assert!(Arc::ptr_eq(&b1, &b2), "Both acquires must return the same Arc<Browser>");
+        assert!(
+            Arc::ptr_eq(&b1, &b2),
+            "Both acquires must return the same Arc<Browser>"
+        );
 
         pool.shutdown().await;
         println!("  both acquires returned same Arc: ok");
@@ -643,7 +651,10 @@ mod lightpanda_tests {
         let elapsed = start.elapsed();
         println!("  elapsed: {}ms", elapsed.as_millis());
 
-        assert!(!html.is_empty(), "HTML must not be empty with Delay strategy");
+        assert!(
+            !html.is_empty(),
+            "HTML must not be empty with Delay strategy"
+        );
         assert!(
             elapsed >= Duration::from_millis(500),
             "Delay of 500ms must be respected, got {}ms",
@@ -669,7 +680,10 @@ mod lightpanda_tests {
         let elapsed = start.elapsed();
         println!("  elapsed: {}ms", elapsed.as_millis());
 
-        assert!(!html.is_empty(), "HTML must not be empty with NetworkIdle strategy");
+        assert!(
+            !html.is_empty(),
+            "HTML must not be empty with NetworkIdle strategy"
+        );
         assert!(
             elapsed >= Duration::from_millis(300),
             "NetworkIdle idle_ms must be respected"
@@ -694,7 +708,10 @@ mod lightpanda_tests {
         .await;
 
         assert!(!html.is_empty(), "HTML must not be empty");
-        assert!(html.contains("Example Domain"), "h1 content must be present");
+        assert!(
+            html.contains("Example Domain"),
+            "h1 content must be present"
+        );
 
         pool.shutdown().await;
     }
@@ -815,7 +832,10 @@ mod lightpanda_tests {
         );
 
         let elapsed = start.elapsed();
-        println!("  sequential total: {}ms (expected ≥600ms)", elapsed.as_millis());
+        println!(
+            "  sequential total: {}ms (expected ≥600ms)",
+            elapsed.as_millis()
+        );
 
         assert!(
             elapsed >= Duration::from_millis(600),
@@ -840,11 +860,12 @@ mod lightpanda_tests {
 
         require_lp!(pool);
 
-        let fetcher: Arc<dyn PageFetcher> =
-            Arc::new(BrowserFetcher::new(Arc::clone(&pool)).with_wait(WaitStrategy::Selector {
+        let fetcher: Arc<dyn PageFetcher> = Arc::new(
+            BrowserFetcher::new(Arc::clone(&pool)).with_wait(WaitStrategy::Selector {
                 css: "div.g".to_string(),
                 timeout_ms: 8000,
-            }));
+            }),
+        );
         let engine = Google::new(fetcher);
 
         let results = test_engine(engine, "rust programming language").await;
@@ -872,7 +893,9 @@ mod lightpanda_tests {
         require_lp!(pool);
 
         let fetcher = BrowserFetcher::new(pool.clone()).with_wait(WaitStrategy::Load);
-        let result = fetcher.fetch("https://this-domain-does-not-exist.invalid").await;
+        let result = fetcher
+            .fetch("https://this-domain-does-not-exist.invalid")
+            .await;
 
         match &result {
             Err(e) => println!("  returned error for invalid URL (expected): {}", e),

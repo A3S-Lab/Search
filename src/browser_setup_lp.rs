@@ -91,7 +91,9 @@ pub fn detect_lightpanda() -> Option<PathBuf> {
 fn find_cached_lightpanda() -> Result<PathBuf> {
     let base = cache_dir()?;
     if !base.exists() {
-        return Err(SearchError::Browser("No cached Lightpanda found".to_string()));
+        return Err(SearchError::Browser(
+            "No cached Lightpanda found".to_string(),
+        ));
     }
 
     // Collect version directories, newest first
@@ -110,7 +112,9 @@ fn find_cached_lightpanda() -> Result<PathBuf> {
         }
     }
 
-    Err(SearchError::Browser("No cached Lightpanda found".to_string()))
+    Err(SearchError::Browser(
+        "No cached Lightpanda found".to_string(),
+    ))
 }
 
 /// Ensure Lightpanda is available, downloading it if necessary.
@@ -199,9 +203,7 @@ async fn download_lightpanda() -> Result<PathBuf> {
         .map_err(|e| SearchError::Browser(format!("Failed to download Lightpanda: {}", e)))?
         .bytes()
         .await
-        .map_err(|e| {
-            SearchError::Browser(format!("Failed to read Lightpanda download: {}", e))
-        })?;
+        .map_err(|e| SearchError::Browser(format!("Failed to read Lightpanda download: {}", e)))?;
 
     eprintln!(
         "Downloaded {:.1} MB, installing...",
@@ -209,9 +211,8 @@ async fn download_lightpanda() -> Result<PathBuf> {
     );
 
     let exe_path = version_dir.join("lightpanda");
-    std::fs::write(&exe_path, &bytes).map_err(|e| {
-        SearchError::Browser(format!("Failed to write Lightpanda binary: {}", e))
-    })?;
+    std::fs::write(&exe_path, &bytes)
+        .map_err(|e| SearchError::Browser(format!("Failed to write Lightpanda binary: {}", e)))?;
 
     // Make executable on Unix
     #[cfg(unix)]
@@ -246,7 +247,13 @@ mod tests {
             assert!(result.is_ok());
             let id = result.unwrap();
             assert!(
-                ["x86_64-linux", "aarch64-linux", "x86_64-macos", "aarch64-macos"].contains(&id),
+                [
+                    "x86_64-linux",
+                    "aarch64-linux",
+                    "x86_64-macos",
+                    "aarch64-macos"
+                ]
+                .contains(&id),
                 "Unexpected platform id: {}",
                 id
             );
@@ -275,7 +282,10 @@ mod tests {
         let original_home = std::env::var("HOME").ok();
         std::env::set_var("HOME", "/tmp/test_lp_cache_home");
         let dir = cache_dir().unwrap();
-        assert_eq!(dir, PathBuf::from("/tmp/test_lp_cache_home/.a3s/lightpanda"));
+        assert_eq!(
+            dir,
+            PathBuf::from("/tmp/test_lp_cache_home/.a3s/lightpanda")
+        );
         if let Some(home) = original_home {
             std::env::set_var("HOME", home);
         }
@@ -324,7 +334,10 @@ mod tests {
     #[test]
     fn test_find_cached_lightpanda_version_dir_no_binary() {
         let tmp = std::env::temp_dir().join("a3s_lp_test_no_binary");
-        let version_dir = tmp.join(".a3s").join("lightpanda").join("nightly-2024-01-01");
+        let version_dir = tmp
+            .join(".a3s")
+            .join("lightpanda")
+            .join("nightly-2024-01-01");
         std::fs::create_dir_all(&version_dir).ok();
 
         let original_home = std::env::var("HOME").ok();
@@ -341,7 +354,10 @@ mod tests {
     #[test]
     fn test_find_cached_lightpanda_with_binary() {
         let tmp = std::env::temp_dir().join("a3s_lp_test_with_binary");
-        let version_dir = tmp.join(".a3s").join("lightpanda").join("nightly-2024-01-01");
+        let version_dir = tmp
+            .join(".a3s")
+            .join("lightpanda")
+            .join("nightly-2024-01-01");
         std::fs::create_dir_all(&version_dir).ok();
 
         // Create a fake binary
