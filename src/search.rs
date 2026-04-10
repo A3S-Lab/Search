@@ -12,6 +12,9 @@ use crate::{
     SearchResults,
 };
 
+#[cfg(any(feature = "chromium", feature = "lightpanda"))]
+use crate::browser::{BrowserBackend, BrowserPool, BrowserPoolConfig};
+
 /// Meta search engine that orchestrates searches across multiple engines.
 pub struct Search {
     engines: Vec<Arc<dyn Engine>>,
@@ -166,6 +169,57 @@ impl Search {
             })
             .cloned()
             .collect()
+    }
+}
+
+/// Headless browser extension for Search.
+///
+/// This impl block is only available when the `chromium` or `lightpanda` feature is enabled.
+#[cfg(any(feature = "chromium", feature = "lightpanda"))]
+impl Search {
+    /// Enable headless browser mode with the specified backend.
+    ///
+    /// This method:
+    /// 1. Creates a browser pool with the specified backend
+    /// 2. Auto-detects if the browser binary exists on the system
+    /// 3. Downloads the browser if not found (Chrome for Testing or Lightpanda)
+    /// 4. Pre-warms the browser by acquiring an initial connection
+    ///
+    /// Returns the browser pool for creating fetchers and adding headless engines.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use a3s_search::{Search, SearchQuery, engines::{Google, GoogleParser}};
+    /// use a3s_search::browser::{BrowserBackend, BrowserFetcher};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> anyhow::Result<()> {
+    ///     let mut search = Search::new();
+    ///
+    ///     // Enable headless browser (auto-download if needed)
+    ///     let pool = search.enable_headless(BrowserBackend::Chrome).await?;
+    ///
+    ///     // Create a browser fetcher and add a headless engine
+    ///     let fetcher = BrowserFetcher::new(pool);
+    ///     search.add_engine(Google::new(fetcher));
+    ///
+    ///     let results = search.search(SearchQuery::new("rust")).await?;
+    ///     println!("Found {} results", results.items().len());
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn enable_headless(&mut self, backend: BrowserBackend) -> Result<Arc<BrowserPool>> {
+        let pool_config = BrowserPoolConfig {
+            backend,
+            ..Default::default()
+        };
+        let pool = Arc::new(BrowserPool::new(pool_config));
+
+        // Pre-warm: acquire browser to trigger auto-detection/download
+        pool.acquire_browser().await?;
+
+        Ok(pool)
     }
 }
 

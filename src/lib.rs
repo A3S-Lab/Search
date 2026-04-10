@@ -108,10 +108,10 @@ mod search;
 
 pub mod engines;
 
-#[cfg(feature = "headless")]
+#[cfg(any(feature = "chromium", feature = "lightpanda"))]
 pub mod browser;
 
-#[cfg(feature = "headless")]
+#[cfg(feature = "chromium")]
 pub mod browser_setup;
 
 #[cfg(feature = "lightpanda")]
@@ -129,5 +129,5 @@ pub use query::{SafeSearch, SearchQuery, TimeRange};
 pub use result::{ResultType, SearchResult, SearchResults};
 pub use search::Search;
 
-#[cfg(feature = "headless")]
+#[cfg(any(feature = "chromium", feature = "lightpanda"))]
 pub use browser::{BrowserBackend, BrowserFetcher, BrowserPool, BrowserPoolConfig};

@@ -1,6 +1,6 @@
 [package]
 name = "a3s-search-python"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 license = "MIT"
 publish = false
@@ -12,16 +12,16 @@ name = "_a3s_search"
 crate-type = ["cdylib"]
 
 [dependencies]
-a3s-search = { path = "../..", default-features = false, features = ["headless", "lightpanda"] }
+a3s-search = { path = "../..", default-features = false, features = ["chromium", "lightpanda"] }
 pyo3 = { version = "0.22", features = ["extension-module"] }
 pyo3-async-runtimes = { version = "0.22", features = ["tokio-runtime"] }
 tokio = { version = "1", features = ["full"] }
 url = "2"
 
 [features]
-default = ["headless", "lightpanda"]
-headless = ["a3s-search/headless"]
-lightpanda = ["a3s-search/lightpanda", "headless"]
+default = ["chromium", "lightpanda"]
+chromium = ["a3s-search/chromium"]
+lightpanda = ["a3s-search/lightpanda", "chromium"]
 
 [profile.release]
 lto = true

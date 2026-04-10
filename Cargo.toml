@@ -32,10 +32,14 @@ path = "src/main.rs"
 
 [features]
 default = []
-headless = ["dep:chromiumoxide", "dep:which", "dep:zip"]
+# Shared CDP client for browser automation (used by both chromium and lightpanda).
+chromiumoxide = ["dep:chromiumoxide", "dep:which", "dep:zip"]
+# Chrome/Chromium headless backend. Auto-detects or downloads Chrome.
+chromium = ["chromiumoxide"]
 # Lightpanda headless backend (Linux/macOS only; Windows unsupported by Lightpanda).
-# Depends on `headless` because it reuses chromiumoxide as the CDP client.
-lightpanda = ["headless"]
+lightpanda = ["chromiumoxide"]
+# Enable both chromium and lightpanda backends.
+all-headless = ["chromium", "lightpanda"]
 
 [dependencies]
 # Async runtime

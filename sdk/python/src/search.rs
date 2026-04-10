@@ -10,9 +10,9 @@ use a3s_search::engines::{
 use a3s_search::proxy::{ProxyConfig, ProxyPool};
 use a3s_search::{EngineCategory, HealthConfig, HttpFetcher, PageFetcher, PooledHttpFetcher, SafeSearch, Search, SearchQuery, TimeRange};
 
-#[cfg(feature = "headless")]
+#[cfg(feature = "chromium")]
 use a3s_search::engines::{Baidu, BaiduParser, BingChina, BingChinaParser, Google, GoogleParser};
-#[cfg(feature = "headless")]
+#[cfg(feature = "chromium")]
 use a3s_search::{BrowserBackend, BrowserFetcher, BrowserPool, BrowserPoolConfig};
 
 use crate::types::{PyEngineError, PySearchOptions, PySearchResponse, PySearchResult};
@@ -164,13 +164,13 @@ impl PySearch {
             };
 
             // Check if any headless engines are requested
-            #[cfg(feature = "headless")]
+            #[cfg(feature = "chromium")]
             let needs_browser = engine_shortcuts.iter().any(|s| {
                 matches!(s.as_str(), "google" | "g" | "baidu" | "bingchina")
             });
 
             // Create browser pool if needed
-            #[cfg(feature = "headless")]
+            #[cfg(feature = "chromium")]
             let browser_fetcher: Option<Arc<dyn PageFetcher>> = if needs_browser {
                 let mut config = BrowserPoolConfig::default();
 
@@ -260,7 +260,7 @@ impl PySearch {
                             Arc::clone(&http_fetcher),
                         ));
                     }
-                    #[cfg(feature = "headless")]
+                    #[cfg(feature = "chromium")]
                     "google" | "g" => {
                         if let Some(ref fetcher) = browser_fetcher {
                             search.add_engine(Google::new(Arc::clone(fetcher)));
@@ -268,7 +268,7 @@ impl PySearch {
                             return Err(to_py_error("Browser fetcher not initialized for Google engine"));
                         }
                     }
-                    #[cfg(feature = "headless")]
+                    #[cfg(feature = "chromium")]
                     "baidu" => {
                         if let Some(ref fetcher) = browser_fetcher {
                             search.add_engine(Baidu::new(Arc::clone(fetcher)));
@@ -276,7 +276,7 @@ impl PySearch {
                             return Err(to_py_error("Browser fetcher not initialized for Baidu engine"));
                         }
                     }
-                    #[cfg(feature = "headless")]
+                    #[cfg(feature = "chromium")]
                     "bingchina" => {
                         if let Some(ref fetcher) = browser_fetcher {
                             search.add_engine(BingChina::new(Arc::clone(fetcher)));
@@ -285,9 +285,9 @@ impl PySearch {
                         }
                     }
                     unknown => {
-                        #[cfg(feature = "headless")]
+                        #[cfg(feature = "chromium")]
                         let available = "ddg, brave, bing, wiki, sogou, 360, google, baidu, bingchina";
-                        #[cfg(not(feature = "headless"))]
+                        #[cfg(not(feature = "chromium"))]
                         let available = "ddg, brave, bing, wiki, sogou, 360";
 
                         return Err(to_py_error(format!(

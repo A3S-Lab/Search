@@ -135,10 +135,25 @@ impl BrowserPool {
             return self.acquire_lightpanda().await;
         }
 
-        self.acquire_chrome().await
+        #[cfg(feature = "chromium")]
+        {
+            self.acquire_chrome().await
+        }
+
+        #[cfg(not(feature = "chromium"))]
+        {
+            #[cfg(feature = "lightpanda")]
+            unreachable!("Lightpanda backend should have been handled above");
+            #[cfg(not(feature = "lightpanda"))]
+            Err(SearchError::Browser(
+                "No headless browser backend available. Enable 'chromium' or 'lightpanda' feature."
+                    .into(),
+            ))
+        }
     }
 
     /// Launches Chrome/Chromium and returns a shared handle.
+    #[cfg(feature = "chromium")]
     async fn acquire_chrome(&self) -> Result<Arc<Browser>> {
         let mut guard = self.browser.lock().await;
 

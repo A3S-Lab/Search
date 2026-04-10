@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "a3s-search"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "a3s-updater",
  "anyhow",
@@ -29,7 +29,7 @@ dependencies = [
 
 [[package]]
 name = "a3s-search-node"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "a3s-search",
  "napi",
