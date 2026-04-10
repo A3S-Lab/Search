@@ -46,6 +46,7 @@ pub enum BrowserBackend {
     Lightpanda,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for BrowserBackend {
     fn default() -> Self {
         #[cfg(feature = "lightpanda")]
