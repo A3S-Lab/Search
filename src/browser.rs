@@ -481,6 +481,9 @@ mod tests {
         assert!(config.chrome_path.is_none());
         assert!(config.proxy_url.is_none());
         assert!(config.launch_args.is_empty());
+        #[cfg(feature = "lightpanda")]
+        assert_eq!(config.backend, BrowserBackend::Lightpanda);
+        #[cfg(not(feature = "lightpanda"))]
         assert_eq!(config.backend, BrowserBackend::Chrome);
     }
 
@@ -638,8 +641,14 @@ mod tests {
     #[test]
     fn test_browser_backend_default_is_chrome() {
         let backend = BrowserBackend::default();
+        #[cfg(feature = "lightpanda")]
+        assert_eq!(backend, BrowserBackend::Lightpanda);
+        #[cfg(not(feature = "lightpanda"))]
         assert_eq!(backend, BrowserBackend::Chrome);
         let config = BrowserPoolConfig::default();
+        #[cfg(feature = "lightpanda")]
+        assert_eq!(config.backend, BrowserBackend::Lightpanda);
+        #[cfg(not(feature = "lightpanda"))]
         assert_eq!(config.backend, BrowserBackend::Chrome);
     }
 
