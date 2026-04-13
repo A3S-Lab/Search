@@ -108,10 +108,10 @@ mod search;
 
 pub mod engines;
 
-#[cfg(feature = "headless")]
+#[cfg(feature = "chromium")]
 pub mod browser;
 
-#[cfg(feature = "headless")]
+#[cfg(feature = "chromium")]
 pub mod browser_setup;
 
 #[cfg(feature = "lightpanda")]
@@ -122,12 +122,24 @@ pub use config::{EngineEntry, HealthEntry, SearchConfig};
 pub use engine::{Engine, EngineCategory, EngineConfig};
 pub use error::{Result, SearchError};
 pub use fetcher::{PageFetcher, WaitStrategy};
-pub use fetcher_http::{HttpFetcher, PooledHttpFetcher};
+pub use fetcher_http::{
+    clear_search_http_metrics_callback, set_search_http_metrics_callback, HttpFetcher,
+    PooledHttpFetcher, SearchHttpMetricsCallback, SearchHttpMetricsRecord,
+};
 pub use health::{HealthConfig, HealthMonitor};
 pub use html_engine::{selector, HtmlEngine, HtmlParser};
 pub use query::{SafeSearch, SearchQuery, TimeRange};
 pub use result::{ResultType, SearchResult, SearchResults};
 pub use search::Search;
 
-#[cfg(feature = "headless")]
+#[cfg(feature = "chromium")]
 pub use browser::{BrowserBackend, BrowserFetcher, BrowserPool, BrowserPoolConfig};
+
+#[cfg(feature = "chromium")]
+pub use browser_setup::{DownloadPhase, DownloadProgress, DownloadProgressCallback};
+
+#[cfg(feature = "lightpanda")]
+pub use browser_setup_lp::{
+    DownloadPhase as LightpandaDownloadPhase, DownloadProgress as LightpandaDownloadProgress,
+    DownloadProgressCallback as LightpandaDownloadProgressCallback,
+};

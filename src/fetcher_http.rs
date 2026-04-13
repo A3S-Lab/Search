@@ -16,6 +16,43 @@ const DEFAULT_USER_AGENT: &str =
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 \
      (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
+// ============================================================================
+// HTTP Metrics Callback
+// ============================================================================
+
+/// HTTP metrics record for search requests.
+#[derive(Debug, Clone)]
+pub struct SearchHttpMetricsRecord {
+    pub url: String,
+    pub status: u16,
+    pub duration_ms: f64,
+    pub request_bytes: u64,
+    pub response_bytes: u64,
+}
+
+/// Callback function type for HTTP metrics collection.
+pub type SearchHttpMetricsCallback = Arc<dyn Fn(SearchHttpMetricsRecord) + Send + Sync>;
+
+/// Global HTTP metrics callback registry.
+static SEARCH_HTTP_METRICS_CALLBACK: std::sync::RwLock<Option<SearchHttpMetricsCallback>> =
+    std::sync::RwLock::new(None);
+
+/// Register a global HTTP metrics callback for search requests.
+pub fn set_search_http_metrics_callback(callback: SearchHttpMetricsCallback) {
+    *SEARCH_HTTP_METRICS_CALLBACK.write().unwrap() = Some(callback);
+}
+
+/// Clear the global HTTP metrics callback.
+pub fn clear_search_http_metrics_callback() {
+    *SEARCH_HTTP_METRICS_CALLBACK.write().unwrap() = None;
+}
+
+fn maybe_record_search_metrics(record: SearchHttpMetricsRecord) {
+    if let Some(callback) = SEARCH_HTTP_METRICS_CALLBACK.read().unwrap().as_ref() {
+        callback(record);
+    }
+}
+
 /// A page fetcher that uses plain HTTP requests via reqwest.
 ///
 /// Suitable for engines that return server-rendered HTML. For engines
@@ -72,8 +109,21 @@ impl Default for HttpFetcher {
 #[async_trait]
 impl PageFetcher for HttpFetcher {
     async fn fetch(&self, url: &str) -> Result<String> {
+        let start = std::time::Instant::now();
         let response = self.client.get(url).send().await?;
+        let status = response.status().as_u16();
+        let response_bytes = response.content_length().unwrap_or(0);
         let html = response.text().await?;
+        let duration_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+        maybe_record_search_metrics(SearchHttpMetricsRecord {
+            url: url.to_string(),
+            status,
+            duration_ms,
+            request_bytes: 0, // GET requests have no body
+            response_bytes,
+        });
+
         Ok(html)
     }
 }
@@ -125,6 +175,7 @@ impl PooledHttpFetcher {
 #[async_trait]
 impl PageFetcher for PooledHttpFetcher {
     async fn fetch(&self, url: &str) -> Result<String> {
+        let start = std::time::Instant::now();
         let client = if let Some(proxy_config) = self.pool.get_proxy().await {
             debug!(
                 "PooledHttpFetcher using proxy {}:{}",
@@ -151,7 +202,18 @@ impl PageFetcher for PooledHttpFetcher {
         };
 
         let response = client.get(url).send().await?;
+        let status = response.status().as_u16();
+        let response_bytes = response.content_length().unwrap_or(0);
         let html = response.text().await?;
+        let duration_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+        maybe_record_search_metrics(SearchHttpMetricsRecord {
+            url: url.to_string(),
+            status,
+            duration_ms,
+            request_bytes: 0,
+            response_bytes,
+        });
         Ok(html)
     }
 }

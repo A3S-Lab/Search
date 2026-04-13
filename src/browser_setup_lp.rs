@@ -13,10 +13,33 @@
 //! Downloaded binaries are cached in `~/.a3s/lightpanda/<tag>/lightpanda`.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use tracing::{debug, info};
 
 use crate::{Result, SearchError};
+
+/// Progress phase during browser download.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DownloadPhase {
+    FetchingVersionInfo,
+    Downloading,
+    Extracting,
+    Completed,
+    Failed,
+}
+
+/// Progress information for browser download.
+#[derive(Clone, Debug)]
+pub struct DownloadProgress {
+    pub phase: DownloadPhase,
+    pub downloaded_bytes: u64,
+    pub total_bytes: Option<u64>,
+    pub message: String,
+}
+
+/// Callback type for progress updates.
+pub type DownloadProgressCallback = Arc<dyn Fn(DownloadProgress) + Send + Sync + 'static>;
 
 /// GitHub API endpoint for the latest Lightpanda release.
 const LIGHTPANDA_RELEASES_API: &str =
@@ -135,6 +158,180 @@ pub async fn ensure_lightpanda() -> Result<PathBuf> {
 
     info!("Lightpanda not found, downloading latest release...");
     download_lightpanda().await
+}
+
+/// Ensure Lightpanda is available with progress reporting.
+///
+/// 1. If Lightpanda is found via `LIGHTPANDA` env var or PATH, returns that path.
+/// 2. If a cached download exists in `~/.a3s/lightpanda/`, returns that path.
+/// 3. Otherwise, downloads the latest release and calls progress_callback at each stage.
+pub async fn ensure_lightpanda_with_progress(
+    progress_callback: DownloadProgressCallback,
+) -> Result<PathBuf> {
+    if let Some(path) = detect_lightpanda() {
+        info!("Using system Lightpanda: {}", path.display());
+        progress_callback(DownloadProgress {
+            phase: DownloadPhase::Completed,
+            downloaded_bytes: 0,
+            total_bytes: None,
+            message: format!("使用系统 Lightpanda: {}", path.display()),
+        });
+        return Ok(path);
+    }
+
+    if let Ok(path) = find_cached_lightpanda() {
+        info!("Using cached Lightpanda: {}", path.display());
+        progress_callback(DownloadProgress {
+            phase: DownloadPhase::Completed,
+            downloaded_bytes: 0,
+            total_bytes: None,
+            message: format!("使用已缓存的 Lightpanda: {}", path.display()),
+        });
+        return Ok(path);
+    }
+
+    info!("Lightpanda not found, downloading latest release...");
+    download_lightpanda_with_progress(progress_callback).await
+}
+
+/// Download the latest Lightpanda binary from GitHub releases with progress reporting.
+async fn download_lightpanda_with_progress(
+    progress_callback: DownloadProgressCallback,
+) -> Result<PathBuf> {
+    use futures::StreamExt;
+
+    let platform = platform_id()?;
+    let asset_name = format!("lightpanda-{}", platform);
+
+    // Fetch latest release metadata
+    progress_callback(DownloadProgress {
+        phase: DownloadPhase::FetchingVersionInfo,
+        downloaded_bytes: 0,
+        total_bytes: None,
+        message: "正在获取 Lightpanda 版本信息...".to_string(),
+    });
+
+    let client = reqwest::Client::builder()
+        .user_agent("a3s-search")
+        .build()
+        .map_err(|e| SearchError::Browser(format!("Failed to create HTTP client: {}", e)))?;
+
+    let resp = client
+        .get(LIGHTPANDA_RELEASES_API)
+        .send()
+        .await
+        .map_err(|e| {
+            SearchError::Browser(format!("Failed to fetch Lightpanda release info: {}", e))
+        })?;
+
+    let body: serde_json::Value = resp.json().await.map_err(|e| {
+        SearchError::Browser(format!("Failed to parse Lightpanda release JSON: {}", e))
+    })?;
+
+    let tag = body
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| SearchError::Browser("No tag_name in Lightpanda release".to_string()))?;
+
+    let assets = body
+        .get("assets")
+        .and_then(|a| a.as_array())
+        .ok_or_else(|| SearchError::Browser("No assets in Lightpanda release".to_string()))?;
+
+    let download_url = assets
+        .iter()
+        .find(|a| a.get("name").and_then(|n| n.as_str()) == Some(asset_name.as_str()))
+        .and_then(|a| a.get("browser_download_url"))
+        .and_then(|u| u.as_str())
+        .ok_or_else(|| {
+            SearchError::Browser(format!(
+                "No Lightpanda binary for platform '{}' in release '{}'",
+                platform, tag
+            ))
+        })?
+        .to_string();
+
+    // Prepare cache directory
+    let version_dir = cache_dir()?.join(tag);
+    std::fs::create_dir_all(&version_dir).map_err(|e| {
+        SearchError::Browser(format!(
+            "Failed to create Lightpanda cache directory {}: {}",
+            version_dir.display(),
+            e
+        ))
+    })?;
+
+    // Download binary with progress
+    progress_callback(DownloadProgress {
+        phase: DownloadPhase::Downloading,
+        downloaded_bytes: 0,
+        total_bytes: None,
+        message: format!("开始下载 Lightpanda {} ({})...", tag, platform),
+    });
+
+    let resp = client
+        .get(&download_url)
+        .send()
+        .await
+        .map_err(|e| SearchError::Browser(format!("Failed to download Lightpanda: {}", e)))?;
+
+    let total_bytes = resp.content_length();
+    let mut downloaded_bytes = 0u64;
+    let mut all_bytes = Vec::new();
+
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| {
+            SearchError::Browser(format!("Failed to read Lightpanda download chunk: {}", e))
+        })?;
+        downloaded_bytes += chunk.len() as u64;
+        all_bytes.extend_from_slice(&chunk);
+
+        let percent = total_bytes.map(|total| (downloaded_bytes as f64 / total as f64) * 100.0);
+
+        progress_callback(DownloadProgress {
+            phase: DownloadPhase::Downloading,
+            downloaded_bytes,
+            total_bytes,
+            message: format!(
+                "下载中... {:.1} MB / {:.1} MB ({:.1}%)",
+                downloaded_bytes as f64 / 1_048_576.0,
+                total_bytes.map(|t| t as f64 / 1_048_576.0).unwrap_or(0.0),
+                percent.unwrap_or(0.0)
+            ),
+        });
+    }
+
+    progress_callback(DownloadProgress {
+        phase: DownloadPhase::Extracting,
+        downloaded_bytes,
+        total_bytes: Some(downloaded_bytes),
+        message: "正在安装...".to_string(),
+    });
+
+    let exe_path = version_dir.join("lightpanda");
+    std::fs::write(&exe_path, &all_bytes)
+        .map_err(|e| SearchError::Browser(format!("Failed to write Lightpanda binary: {}", e)))?;
+
+    // Make executable on Unix
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&exe_path, std::fs::Permissions::from_mode(0o755)).map_err(
+            |e| SearchError::Browser(format!("Failed to set Lightpanda permissions: {}", e)),
+        )?;
+    }
+
+    progress_callback(DownloadProgress {
+        phase: DownloadPhase::Completed,
+        downloaded_bytes,
+        total_bytes: Some(downloaded_bytes),
+        message: format!("Lightpanda {} 安装成功!", tag),
+    });
+
+    info!("Lightpanda installed at: {}", exe_path.display());
+
+    Ok(exe_path)
 }
 
 /// Download the latest Lightpanda binary from GitHub releases.

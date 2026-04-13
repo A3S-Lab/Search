@@ -7,10 +7,33 @@
 //! Downloaded binaries are cached in `~/.a3s/chromium/<version>/`.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use tracing::{debug, info, warn};
 
 use crate::{Result, SearchError};
+
+/// Progress phase during browser download.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DownloadPhase {
+    FetchingVersionInfo,
+    Downloading,
+    Extracting,
+    Completed,
+    Failed,
+}
+
+/// Progress information for browser download.
+#[derive(Clone, Debug)]
+pub struct DownloadProgress {
+    pub phase: DownloadPhase,
+    pub downloaded_bytes: u64,
+    pub total_bytes: Option<u64>,
+    pub message: String,
+}
+
+/// Callback type for progress updates.
+pub type DownloadProgressCallback = Arc<dyn Fn(DownloadProgress) + Send + Sync + 'static>;
 
 /// JSON API endpoint for Chrome for Testing stable versions.
 const CHROME_VERSIONS_URL: &str =
@@ -185,6 +208,45 @@ pub async fn ensure_chrome() -> Result<PathBuf> {
     download_chrome().await
 }
 
+/// Ensure Chrome is available with progress reporting.
+///
+/// 1. If Chrome is already installed on the system, returns its path.
+/// 2. If a cached download exists in `~/.a3s/chromium/`, returns that path.
+/// 3. Otherwise, downloads Chrome for Testing and calls progress_callback at each stage.
+///
+/// Returns the path to the Chrome executable.
+pub async fn ensure_chrome_with_progress(
+    progress_callback: DownloadProgressCallback,
+) -> Result<PathBuf> {
+    // 1. Check system installation
+    if let Some(path) = detect_chrome() {
+        info!("Using system Chrome: {}", path.display());
+        progress_callback(DownloadProgress {
+            phase: DownloadPhase::Completed,
+            downloaded_bytes: 0,
+            total_bytes: None,
+            message: format!("使用系统 Chrome: {}", path.display()),
+        });
+        return Ok(path);
+    }
+
+    // 2. Check cached download
+    if let Ok(path) = find_cached_chrome() {
+        info!("Using cached Chrome: {}", path.display());
+        progress_callback(DownloadProgress {
+            phase: DownloadPhase::Completed,
+            downloaded_bytes: 0,
+            total_bytes: None,
+            message: format!("使用已缓存的 Chrome: {}", path.display()),
+        });
+        return Ok(path);
+    }
+
+    // 3. Download Chrome for Testing
+    info!("No Chrome installation found, downloading Chrome for Testing...");
+    download_chrome_with_progress(progress_callback).await
+}
+
 /// Look for a previously downloaded Chrome in the cache directory.
 fn find_cached_chrome() -> Result<PathBuf> {
     let base = cache_dir()?;
@@ -211,6 +273,184 @@ fn find_cached_chrome() -> Result<PathBuf> {
     }
 
     Err(SearchError::Browser("No cached Chrome found".to_string()))
+}
+
+/// Download Chrome for Testing from Google's official CDN with progress reporting.
+///
+/// Downloads the stable version for the current platform and extracts it
+/// to `~/.a3s/chromium/<version>/`. Calls progress_callback at each stage.
+async fn download_chrome_with_progress(
+    progress_callback: DownloadProgressCallback,
+) -> Result<PathBuf> {
+    use futures::StreamExt;
+
+    let platform = platform_id()?;
+
+    // Fetch version metadata
+    progress_callback(DownloadProgress {
+        phase: DownloadPhase::FetchingVersionInfo,
+        downloaded_bytes: 0,
+        total_bytes: None,
+        message: "正在获取 Chrome for Testing 版本信息...".to_string(),
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(CHROME_VERSIONS_URL)
+        .send()
+        .await
+        .map_err(|e| SearchError::Browser(format!("Failed to fetch Chrome versions: {}", e)))?;
+
+    let body: serde_json::Value = resp.json().await.map_err(|e| {
+        SearchError::Browser(format!("Failed to parse Chrome versions JSON: {}", e))
+    })?;
+
+    // Extract stable channel info
+    let stable = body
+        .get("channels")
+        .and_then(|c| c.get("Stable"))
+        .ok_or_else(|| SearchError::Browser("No Stable channel in Chrome versions".to_string()))?;
+
+    let version = stable
+        .get("version")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| SearchError::Browser("No version in Stable channel".to_string()))?;
+
+    // Find download URL for our platform
+    let downloads = stable
+        .get("downloads")
+        .and_then(|d| d.get("chrome"))
+        .and_then(|c| c.as_array())
+        .ok_or_else(|| SearchError::Browser("No chrome downloads in Stable channel".to_string()))?;
+
+    let download_url = downloads
+        .iter()
+        .find(|d| d.get("platform").and_then(|p| p.as_str()) == Some(platform))
+        .and_then(|d| d.get("url"))
+        .and_then(|u| u.as_str())
+        .ok_or_else(|| {
+            SearchError::Browser(format!(
+                "No Chrome download available for platform '{}'",
+                platform
+            ))
+        })?;
+
+    // Prepare cache directory
+    let version_dir = cache_dir()?.join(version);
+    std::fs::create_dir_all(&version_dir).map_err(|e| {
+        SearchError::Browser(format!(
+            "Failed to create cache directory {}: {}",
+            version_dir.display(),
+            e
+        ))
+    })?;
+
+    // Download the zip with progress
+    progress_callback(DownloadProgress {
+        phase: DownloadPhase::Downloading,
+        downloaded_bytes: 0,
+        total_bytes: None,
+        message: format!("开始下载 Chrome for Testing v{} ({})...", version, platform),
+    });
+
+    let resp = client
+        .get(download_url)
+        .send()
+        .await
+        .map_err(|e| SearchError::Browser(format!("Failed to download Chrome: {}", e)))?;
+
+    let total_bytes = resp.content_length();
+    let mut downloaded_bytes = 0u64;
+    let mut zip_bytes = Vec::new();
+
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| {
+            SearchError::Browser(format!("Failed to read Chrome download chunk: {}", e))
+        })?;
+        downloaded_bytes += chunk.len() as u64;
+        zip_bytes.extend_from_slice(&chunk);
+
+        let percent = total_bytes.map(|total| (downloaded_bytes as f64 / total as f64) * 100.0);
+
+        progress_callback(DownloadProgress {
+            phase: DownloadPhase::Downloading,
+            downloaded_bytes,
+            total_bytes,
+            message: format!(
+                "下载中... {:.1} MB / {:.1} MB ({:.1}%)",
+                downloaded_bytes as f64 / 1_048_576.0,
+                total_bytes.map(|t| t as f64 / 1_048_576.0).unwrap_or(0.0),
+                percent.unwrap_or(0.0)
+            ),
+        });
+    }
+
+    progress_callback(DownloadProgress {
+        phase: DownloadPhase::Extracting,
+        downloaded_bytes,
+        total_bytes: Some(downloaded_bytes),
+        message: "正在解压安装...".to_string(),
+    });
+
+    // Extract the zip
+    extract_zip(&zip_bytes, &version_dir)?;
+
+    // Find the executable
+    let exe_path = version_dir.join(chrome_executable_in_zip(platform));
+
+    // Make executable on Unix
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if exe_path.exists() {
+            let mut perms = std::fs::metadata(&exe_path)
+                .map_err(|e| {
+                    SearchError::Browser(format!("Failed to read Chrome permissions: {}", e))
+                })?
+                .permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&exe_path, perms).map_err(|e| {
+                SearchError::Browser(format!("Failed to set Chrome permissions: {}", e))
+            })?;
+        }
+    }
+
+    if !exe_path.exists() {
+        // List what was actually extracted for debugging
+        let contents: Vec<_> = std::fs::read_dir(&version_dir)
+            .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path()).collect())
+            .unwrap_or_default();
+        warn!(
+            "Expected Chrome at {} but not found. Extracted contents: {:?}",
+            exe_path.display(),
+            contents
+        );
+        progress_callback(DownloadProgress {
+            phase: DownloadPhase::Failed,
+            downloaded_bytes,
+            total_bytes: Some(downloaded_bytes),
+            message: format!(
+                "Chrome executable not found after extraction at {}",
+                exe_path.display()
+            ),
+        });
+        return Err(SearchError::Browser(format!(
+            "Chrome executable not found after extraction at {}",
+            exe_path.display()
+        )));
+    }
+
+    progress_callback(DownloadProgress {
+        phase: DownloadPhase::Completed,
+        downloaded_bytes,
+        total_bytes: Some(downloaded_bytes),
+        message: format!("Chrome for Testing v{} 安装成功!", version),
+    });
+
+    info!("Chrome installed at: {}", exe_path.display());
+
+    Ok(exe_path)
 }
 
 /// Download Chrome for Testing from Google's official CDN.
