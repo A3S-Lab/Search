@@ -204,7 +204,7 @@ impl CdpClient {
                     _ => {}
                 }
             }
-            let _ = writer_handle.abort();
+            writer_handle.abort();
         });
 
         Ok(Self {
@@ -252,8 +252,7 @@ impl CdpClient {
             .map_err(|e| SearchError::Browser(format!("CDP request {} dropped: {}", id, e)))?
             .map_err(|e| SearchError::Browser(format!("CDP error: {}", e)))?;
 
-        if resp.error.is_some() {
-            let err = resp.error.unwrap();
+        if let Some(err) = resp.error {
             return Err(SearchError::Browser(format!(
                 "CDP error {}: {}",
                 err.code, err.message
@@ -526,20 +525,20 @@ impl ObscuraFetcher {
         }
 
         // Enable required domains
-        let _: serde_json::Value = send_session_cmd(&*client, session_id, "Page.enable", None)
+        let _: serde_json::Value = send_session_cmd(&client, session_id, "Page.enable", None)
             .await
             .map_err(|e| SearchError::Browser(format!("Page.enable failed: {}", e)))?;
-        let _: serde_json::Value = send_session_cmd(&*client, session_id, "Runtime.enable", None)
+        let _: serde_json::Value = send_session_cmd(&client, session_id, "Runtime.enable", None)
             .await
             .map_err(|e| SearchError::Browser(format!("Runtime.enable failed: {}", e)))?;
-        let _: serde_json::Value = send_session_cmd(&*client, session_id, "Network.enable", None)
+        let _: serde_json::Value = send_session_cmd(&client, session_id, "Network.enable", None)
             .await
             .map_err(|e| SearchError::Browser(format!("Network.enable failed: {}", e)))?;
 
         // Set user agent if configured
         if let Some(ref ua) = self.user_agent {
             let _: serde_json::Value = send_session_cmd(
-                &*client,
+                &client,
                 session_id,
                 "Network.setUserAgentOverride",
                 Some(serde_json::json!({ "userAgent": ua })),
@@ -574,7 +573,7 @@ impl ObscuraFetcher {
 
         // Navigate to the target URL
         let _: NavigateResult = send_session_cmd(
-            &*client,
+            &client,
             session_id,
             "Page.navigate",
             Some(serde_json::json!({ "url": url })),
@@ -599,14 +598,14 @@ impl ObscuraFetcher {
                 let mut found = false;
                 while tokio::time::Instant::now() < deadline {
                     let doc: GetDocumentResult =
-                        send_session_cmd(&*client, session_id, "DOM.getDocument", None)
+                        send_session_cmd(&client, session_id, "DOM.getDocument", None)
                             .await
                             .map_err(|e| {
                                 SearchError::Browser(format!("DOM.getDocument failed: {}", e))
                             })?;
 
                     let selector_result: Option<QuerySelectorResult> = send_session_cmd(
-                        &*client,
+                        &client,
                         session_id,
                         "DOM.querySelector",
                         Some(serde_json::json!({
@@ -637,11 +636,11 @@ impl ObscuraFetcher {
         }
 
         // Stop the events handler
-        let _ = events_handler.abort();
+        events_handler.abort();
 
         // Extract HTML via Runtime.evaluate with document.documentElement.outerHTML
         let eval_result: EvaluateResult = send_session_cmd(
-            &*client,
+            &client,
             session_id,
             "Runtime.evaluate",
             Some(serde_json::json!({
