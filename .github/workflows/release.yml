@@ -295,17 +295,17 @@ jobs:
   # ───────────────────────────────────────────────
   # Build and publish Node SDK to npm (7 platforms)
   # ───────────────────────────────────────────────
-  publish-node:
-    name: Node SDK
-    needs: ci
-    uses: ./.github/workflows/publish-node.yml
-    secrets: inherit
+  # publish-node:
+  #   name: Node SDK
+  #   needs: ci
+  #   uses: ./.github/workflows/publish-node.yml
+  #   secrets: inherit
 
   # ───────────────────────────────────────────────
   # Build and publish Python SDK to PyPI (7 platforms)
   # ───────────────────────────────────────────────
-  publish-python:
-    name: Python SDK
-    needs: ci
-    uses: ./.github/workflows/publish-python.yml
-    secrets: inherit
+  # publish-python:
+  #   name: Python SDK
+  #   needs: ci
+  #   uses: ./.github/workflows/publish-python.yml
+  #   secrets: inherit

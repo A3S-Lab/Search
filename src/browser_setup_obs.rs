@@ -1,8 +1,7 @@
-//! Automatic Lightpanda detection and installation.
+//! Automatic obscura detection and installation.
 //!
-//! Only available when the `lightpanda` Cargo feature is enabled.
-//! Lightpanda binaries are downloaded as plain executables from GitHub releases
-//! (no zip extraction needed, unlike Chrome for Testing).
+//! Obscura binaries are downloaded as plain executables from GitHub releases
+//! (no zip extraction needed).
 //!
 //! Supported platforms:
 //! - Linux x86_64
@@ -10,7 +9,7 @@
 //! - macOS x86_64
 //! - macOS aarch64
 //!
-//! Downloaded binaries are cached in `~/.a3s/lightpanda/<tag>/lightpanda`.
+//! Downloaded binaries are cached in `~/.a3s/obscura/<tag>/obscura`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -41,14 +40,14 @@ pub struct DownloadProgress {
 /// Callback type for progress updates.
 pub type DownloadProgressCallback = Arc<dyn Fn(DownloadProgress) + Send + Sync + 'static>;
 
-/// GitHub API endpoint for the latest Lightpanda release.
-const LIGHTPANDA_RELEASES_API: &str =
-    "https://api.github.com/repos/lightpanda-io/browser/releases/latest";
+/// GitHub API endpoint for the latest obscura release.
+const OBSCURA_RELEASES_API: &str =
+    "https://api.github.com/repos/h4ckf0r0day/obscura/releases/latest";
 
-/// Returns the platform suffix used in Lightpanda release asset names.
+/// Returns the platform suffix used in obscura release asset names.
 ///
-/// Asset names follow the pattern `lightpanda-<platform>`, e.g.
-/// `lightpanda-x86_64-linux` or `lightpanda-aarch64-macos`.
+/// Asset names follow the pattern `obscura-<platform>`, e.g.
+/// `obscura-x86_64-linux` or `obscura-aarch64-macos`.
 fn platform_id() -> Result<&'static str> {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     return Ok("x86_64-linux");
@@ -69,54 +68,52 @@ fn platform_id() -> Result<&'static str> {
         all(target_os = "macos", target_arch = "aarch64"),
     )))]
     Err(SearchError::Browser(
-        "Lightpanda does not provide binaries for this platform. \
+        "Obscura does not provide binaries for this platform. \
          Supported platforms: Linux x86_64/aarch64, macOS x86_64/aarch64."
             .to_string(),
     ))
 }
 
-/// Base directory for cached Lightpanda downloads.
+/// Base directory for cached obscura downloads.
 fn cache_dir() -> Result<PathBuf> {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .map(PathBuf::from)
         .map_err(|_| SearchError::Browser("Cannot determine home directory".to_string()))?;
-    Ok(home.join(".a3s").join("lightpanda"))
+    Ok(home.join(".a3s").join("obscura"))
 }
 
-/// Detect an existing Lightpanda installation.
+/// Detect an existing obscura installation.
 ///
 /// Checks:
-/// 1. `LIGHTPANDA` environment variable
-/// 2. `lightpanda` command in PATH
+/// 1. `OBSCURA` environment variable
+/// 2. `obscura` command in PATH
 ///
 /// Returns `Some(path)` if found, `None` otherwise.
-pub fn detect_lightpanda() -> Option<PathBuf> {
-    // 1. Check LIGHTPANDA env var
-    if let Ok(path) = std::env::var("LIGHTPANDA") {
+pub fn detect_obscura() -> Option<PathBuf> {
+    // 1. Check OBSCURA env var
+    if let Ok(path) = std::env::var("OBSCURA") {
         let p = PathBuf::from(&path);
         if p.exists() {
-            debug!("Lightpanda found via LIGHTPANDA env var: {}", path);
+            debug!("Obscura found via OBSCURA env var: {}", path);
             return Some(p);
         }
     }
 
     // 2. Check PATH
-    if let Ok(path) = which::which("lightpanda") {
-        debug!("Lightpanda found in PATH: {}", path.display());
+    if let Ok(path) = which::which("obscura") {
+        debug!("Obscura found in PATH: {}", path.display());
         return Some(path);
     }
 
     None
 }
 
-/// Look for a previously downloaded Lightpanda in the cache directory.
-fn find_cached_lightpanda() -> Result<PathBuf> {
+/// Look for a previously downloaded obscura in the cache directory.
+fn find_cached_obscura() -> Result<PathBuf> {
     let base = cache_dir()?;
     if !base.exists() {
-        return Err(SearchError::Browser(
-            "No cached Lightpanda found".to_string(),
-        ));
+        return Err(SearchError::Browser("No cached Obscura found".to_string()));
     }
 
     // Collect version directories, newest first
@@ -129,86 +126,80 @@ fn find_cached_lightpanda() -> Result<PathBuf> {
     versions.sort_by_key(|b| std::cmp::Reverse(b.file_name()));
 
     for version_dir in versions {
-        let exe_path = version_dir.path().join("lightpanda");
+        let exe_path = version_dir.path().join("obscura");
         if exe_path.exists() {
             return Ok(exe_path);
         }
     }
 
-    Err(SearchError::Browser(
-        "No cached Lightpanda found".to_string(),
-    ))
+    Err(SearchError::Browser("No cached Obscura found".to_string()))
 }
 
-/// Ensure Lightpanda is available, downloading it if necessary.
+/// Ensure obscura is available, downloading it if necessary.
 ///
-/// 1. If Lightpanda is found via `LIGHTPANDA` env var or PATH, returns that path.
-/// 2. If a cached download exists in `~/.a3s/lightpanda/`, returns that path.
+/// 1. If obscura is found via `OBSCURA` env var or PATH, returns that path.
+/// 2. If a cached download exists in `~/.a3s/obscura/`, returns that path.
 /// 3. Otherwise, downloads the latest release from GitHub and caches it.
-pub async fn ensure_lightpanda() -> Result<PathBuf> {
-    if let Some(path) = detect_lightpanda() {
-        info!("Using system Lightpanda: {}", path.display());
+pub async fn ensure_obscura() -> Result<PathBuf> {
+    if let Some(path) = detect_obscura() {
+        info!("Using system Obscura: {}", path.display());
         return Ok(path);
     }
 
-    if let Ok(path) = find_cached_lightpanda() {
-        info!("Using cached Lightpanda: {}", path.display());
+    if let Ok(path) = find_cached_obscura() {
+        info!("Using cached Obscura: {}", path.display());
         return Ok(path);
     }
 
-    info!("Lightpanda not found, downloading latest release...");
-    download_lightpanda().await
+    info!("Obscura not found, downloading latest release...");
+    download_obscura().await
 }
 
-/// Ensure Lightpanda is available with progress reporting.
-///
-/// 1. If Lightpanda is found via `LIGHTPANDA` env var or PATH, returns that path.
-/// 2. If a cached download exists in `~/.a3s/lightpanda/`, returns that path.
-/// 3. Otherwise, downloads the latest release and calls progress_callback at each stage.
-pub async fn ensure_lightpanda_with_progress(
+/// Ensure obscura is available with progress reporting.
+pub async fn ensure_obscura_with_progress(
     progress_callback: DownloadProgressCallback,
 ) -> Result<PathBuf> {
-    if let Some(path) = detect_lightpanda() {
-        info!("Using system Lightpanda: {}", path.display());
+    if let Some(path) = detect_obscura() {
+        info!("Using system Obscura: {}", path.display());
         progress_callback(DownloadProgress {
             phase: DownloadPhase::Completed,
             downloaded_bytes: 0,
             total_bytes: None,
-            message: format!("使用系统 Lightpanda: {}", path.display()),
+            message: format!("Using system Obscura: {}", path.display()),
         });
         return Ok(path);
     }
 
-    if let Ok(path) = find_cached_lightpanda() {
-        info!("Using cached Lightpanda: {}", path.display());
+    if let Ok(path) = find_cached_obscura() {
+        info!("Using cached Obscura: {}", path.display());
         progress_callback(DownloadProgress {
             phase: DownloadPhase::Completed,
             downloaded_bytes: 0,
             total_bytes: None,
-            message: format!("使用已缓存的 Lightpanda: {}", path.display()),
+            message: format!("Using cached Obscura: {}", path.display()),
         });
         return Ok(path);
     }
 
-    info!("Lightpanda not found, downloading latest release...");
-    download_lightpanda_with_progress(progress_callback).await
+    info!("Obscura not found, downloading latest release...");
+    download_obscura_with_progress(progress_callback).await
 }
 
-/// Download the latest Lightpanda binary from GitHub releases with progress reporting.
-async fn download_lightpanda_with_progress(
+/// Download the latest obscura binary from GitHub releases with progress reporting.
+async fn download_obscura_with_progress(
     progress_callback: DownloadProgressCallback,
 ) -> Result<PathBuf> {
     use futures::StreamExt;
 
     let platform = platform_id()?;
-    let asset_name = format!("lightpanda-{}", platform);
+    let asset_name = format!("obscura-{}", platform);
 
     // Fetch latest release metadata
     progress_callback(DownloadProgress {
         phase: DownloadPhase::FetchingVersionInfo,
         downloaded_bytes: 0,
         total_bytes: None,
-        message: "正在获取 Lightpanda 版本信息...".to_string(),
+        message: "Fetching Obscura release info...".to_string(),
     });
 
     let client = reqwest::Client::builder()
@@ -216,27 +207,23 @@ async fn download_lightpanda_with_progress(
         .build()
         .map_err(|e| SearchError::Browser(format!("Failed to create HTTP client: {}", e)))?;
 
-    let resp = client
-        .get(LIGHTPANDA_RELEASES_API)
-        .send()
-        .await
-        .map_err(|e| {
-            SearchError::Browser(format!("Failed to fetch Lightpanda release info: {}", e))
-        })?;
+    let resp = client.get(OBSCURA_RELEASES_API).send().await.map_err(|e| {
+        SearchError::Browser(format!("Failed to fetch Obscura release info: {}", e))
+    })?;
 
     let body: serde_json::Value = resp.json().await.map_err(|e| {
-        SearchError::Browser(format!("Failed to parse Lightpanda release JSON: {}", e))
+        SearchError::Browser(format!("Failed to parse Obscura release JSON: {}", e))
     })?;
 
     let tag = body
         .get("tag_name")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| SearchError::Browser("No tag_name in Lightpanda release".to_string()))?;
+        .ok_or_else(|| SearchError::Browser("No tag_name in Obscura release".to_string()))?;
 
     let assets = body
         .get("assets")
         .and_then(|a| a.as_array())
-        .ok_or_else(|| SearchError::Browser("No assets in Lightpanda release".to_string()))?;
+        .ok_or_else(|| SearchError::Browser("No assets in Obscura release".to_string()))?;
 
     let download_url = assets
         .iter()
@@ -245,7 +232,7 @@ async fn download_lightpanda_with_progress(
         .and_then(|u| u.as_str())
         .ok_or_else(|| {
             SearchError::Browser(format!(
-                "No Lightpanda binary for platform '{}' in release '{}'",
+                "No Obscura binary for platform '{}' in release '{}'",
                 platform, tag
             ))
         })?
@@ -255,7 +242,7 @@ async fn download_lightpanda_with_progress(
     let version_dir = cache_dir()?.join(tag);
     std::fs::create_dir_all(&version_dir).map_err(|e| {
         SearchError::Browser(format!(
-            "Failed to create Lightpanda cache directory {}: {}",
+            "Failed to create Obscura cache directory {}: {}",
             version_dir.display(),
             e
         ))
@@ -266,14 +253,14 @@ async fn download_lightpanda_with_progress(
         phase: DownloadPhase::Downloading,
         downloaded_bytes: 0,
         total_bytes: None,
-        message: format!("开始下载 Lightpanda {} ({})...", tag, platform),
+        message: format!("Downloading Obscura {} ({})...", tag, platform),
     });
 
     let resp = client
         .get(&download_url)
         .send()
         .await
-        .map_err(|e| SearchError::Browser(format!("Failed to download Lightpanda: {}", e)))?;
+        .map_err(|e| SearchError::Browser(format!("Failed to download Obscura: {}", e)))?;
 
     let total_bytes = resp.content_length();
     let mut downloaded_bytes = 0u64;
@@ -282,7 +269,7 @@ async fn download_lightpanda_with_progress(
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| {
-            SearchError::Browser(format!("Failed to read Lightpanda download chunk: {}", e))
+            SearchError::Browser(format!("Failed to read Obscura download chunk: {}", e))
         })?;
         downloaded_bytes += chunk.len() as u64;
         all_bytes.extend_from_slice(&chunk);
@@ -294,7 +281,7 @@ async fn download_lightpanda_with_progress(
             downloaded_bytes,
             total_bytes,
             message: format!(
-                "下载中... {:.1} MB / {:.1} MB ({:.1}%)",
+                "Downloading... {:.1} MB / {:.1} MB ({:.1}%)",
                 downloaded_bytes as f64 / 1_048_576.0,
                 total_bytes.map(|t| t as f64 / 1_048_576.0).unwrap_or(0.0),
                 percent.unwrap_or(0.0)
@@ -306,19 +293,19 @@ async fn download_lightpanda_with_progress(
         phase: DownloadPhase::Extracting,
         downloaded_bytes,
         total_bytes: Some(downloaded_bytes),
-        message: "正在安装...".to_string(),
+        message: "Installing...".to_string(),
     });
 
-    let exe_path = version_dir.join("lightpanda");
+    let exe_path = version_dir.join("obscura");
     std::fs::write(&exe_path, &all_bytes)
-        .map_err(|e| SearchError::Browser(format!("Failed to write Lightpanda binary: {}", e)))?;
+        .map_err(|e| SearchError::Browser(format!("Failed to write Obscura binary: {}", e)))?;
 
     // Make executable on Unix
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&exe_path, std::fs::Permissions::from_mode(0o755)).map_err(
-            |e| SearchError::Browser(format!("Failed to set Lightpanda permissions: {}", e)),
+            |e| SearchError::Browser(format!("Failed to set Obscura permissions: {}", e)),
         )?;
     }
 
@@ -326,47 +313,43 @@ async fn download_lightpanda_with_progress(
         phase: DownloadPhase::Completed,
         downloaded_bytes,
         total_bytes: Some(downloaded_bytes),
-        message: format!("Lightpanda {} 安装成功!", tag),
+        message: format!("Obscura {} installed!", tag),
     });
 
-    info!("Lightpanda installed at: {}", exe_path.display());
+    info!("Obscura installed at: {}", exe_path.display());
 
     Ok(exe_path)
 }
 
-/// Download the latest Lightpanda binary from GitHub releases.
-async fn download_lightpanda() -> Result<PathBuf> {
+/// Download the latest obscura binary from GitHub releases.
+async fn download_obscura() -> Result<PathBuf> {
     let platform = platform_id()?;
-    let asset_name = format!("lightpanda-{}", platform);
+    let asset_name = format!("obscura-{}", platform);
 
     // Fetch latest release metadata
-    eprintln!("Fetching Lightpanda release info...");
+    eprintln!("Fetching Obscura release info...");
     let client = reqwest::Client::builder()
         .user_agent("a3s-search")
         .build()
         .map_err(|e| SearchError::Browser(format!("Failed to create HTTP client: {}", e)))?;
 
-    let resp = client
-        .get(LIGHTPANDA_RELEASES_API)
-        .send()
-        .await
-        .map_err(|e| {
-            SearchError::Browser(format!("Failed to fetch Lightpanda release info: {}", e))
-        })?;
+    let resp = client.get(OBSCURA_RELEASES_API).send().await.map_err(|e| {
+        SearchError::Browser(format!("Failed to fetch Obscura release info: {}", e))
+    })?;
 
     let body: serde_json::Value = resp.json().await.map_err(|e| {
-        SearchError::Browser(format!("Failed to parse Lightpanda release JSON: {}", e))
+        SearchError::Browser(format!("Failed to parse Obscura release JSON: {}", e))
     })?;
 
     let tag = body
         .get("tag_name")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| SearchError::Browser("No tag_name in Lightpanda release".to_string()))?;
+        .ok_or_else(|| SearchError::Browser("No tag_name in Obscura release".to_string()))?;
 
     let assets = body
         .get("assets")
         .and_then(|a| a.as_array())
-        .ok_or_else(|| SearchError::Browser("No assets in Lightpanda release".to_string()))?;
+        .ok_or_else(|| SearchError::Browser("No assets in Obscura release".to_string()))?;
 
     let download_url = assets
         .iter()
@@ -375,7 +358,7 @@ async fn download_lightpanda() -> Result<PathBuf> {
         .and_then(|u| u.as_str())
         .ok_or_else(|| {
             SearchError::Browser(format!(
-                "No Lightpanda binary for platform '{}' in release '{}'",
+                "No Obscura binary for platform '{}' in release '{}'",
                 platform, tag
             ))
         })?
@@ -385,43 +368,43 @@ async fn download_lightpanda() -> Result<PathBuf> {
     let version_dir = cache_dir()?.join(tag);
     std::fs::create_dir_all(&version_dir).map_err(|e| {
         SearchError::Browser(format!(
-            "Failed to create Lightpanda cache directory {}: {}",
+            "Failed to create Obscura cache directory {}: {}",
             version_dir.display(),
             e
         ))
     })?;
 
     // Download binary
-    eprintln!("Downloading Lightpanda {} ({})...", tag, platform);
+    eprintln!("Downloading Obscura {} ({})...", tag, platform);
     let bytes = client
         .get(&download_url)
         .send()
         .await
-        .map_err(|e| SearchError::Browser(format!("Failed to download Lightpanda: {}", e)))?
+        .map_err(|e| SearchError::Browser(format!("Failed to download Obscura: {}", e)))?
         .bytes()
         .await
-        .map_err(|e| SearchError::Browser(format!("Failed to read Lightpanda download: {}", e)))?;
+        .map_err(|e| SearchError::Browser(format!("Failed to read Obscura download: {}", e)))?;
 
     eprintln!(
         "Downloaded {:.1} MB, installing...",
         bytes.len() as f64 / 1_048_576.0
     );
 
-    let exe_path = version_dir.join("lightpanda");
+    let exe_path = version_dir.join("obscura");
     std::fs::write(&exe_path, &bytes)
-        .map_err(|e| SearchError::Browser(format!("Failed to write Lightpanda binary: {}", e)))?;
+        .map_err(|e| SearchError::Browser(format!("Failed to write Obscura binary: {}", e)))?;
 
     // Make executable on Unix
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&exe_path, std::fs::Permissions::from_mode(0o755)).map_err(
-            |e| SearchError::Browser(format!("Failed to set Lightpanda permissions: {}", e)),
+            |e| SearchError::Browser(format!("Failed to set Obscura permissions: {}", e)),
         )?;
     }
 
-    eprintln!("Lightpanda {} installed at {}", tag, exe_path.display());
-    info!("Lightpanda installed at: {}", exe_path.display());
+    eprintln!("Obscura {} installed at {}", tag, exe_path.display());
+    info!("Obscura installed at: {}", exe_path.display());
 
     Ok(exe_path)
 }
@@ -448,7 +431,7 @@ mod tests {
                     "x86_64-linux",
                     "aarch64-linux",
                     "x86_64-macos",
-                    "aarch64-macos"
+                    "aarch64-macos",
                 ]
                 .contains(&id),
                 "Unexpected platform id: {}",
@@ -468,58 +451,46 @@ mod tests {
 
     #[test]
     fn test_asset_name_format() {
-        // Verify asset name construction matches GitHub release naming
         let platform = "x86_64-linux";
-        let asset_name = format!("lightpanda-{}", platform);
-        assert_eq!(asset_name, "lightpanda-x86_64-linux");
+        let asset_name = format!("obscura-{}", platform);
+        assert_eq!(asset_name, "obscura-x86_64-linux");
     }
 
     #[test]
     fn test_cache_dir_structure() {
         let original_home = std::env::var("HOME").ok();
-        std::env::set_var("HOME", "/tmp/test_lp_cache_home");
+        std::env::set_var("HOME", "/tmp/test_obs_cache_home");
         let dir = cache_dir().unwrap();
-        assert_eq!(
-            dir,
-            PathBuf::from("/tmp/test_lp_cache_home/.a3s/lightpanda")
-        );
+        assert_eq!(dir, PathBuf::from("/tmp/test_obs_cache_home/.a3s/obscura"));
         if let Some(home) = original_home {
             std::env::set_var("HOME", home);
         }
     }
 
     #[test]
-    fn test_find_cached_lightpanda_no_cache() {
-        std::env::set_var("HOME", "/tmp/a3s_lp_nonexistent_home_xyz");
-        let result = find_cached_lightpanda();
+    fn test_find_cached_obscura_no_cache() {
+        std::env::set_var("HOME", "/tmp/a3s_obs_nonexistent_home_xyz");
+        let result = find_cached_obscura();
         assert!(result.is_err());
         std::env::remove_var("HOME");
     }
 
     #[test]
-    fn test_detect_lightpanda_nonexistent_env_path() {
-        // Set LIGHTPANDA to a non-existent path — should not return it
-        std::env::set_var("LIGHTPANDA", "/nonexistent/lightpanda/binary");
-        let result = detect_lightpanda();
-        if let Some(ref path) = result {
-            assert_ne!(
-                path,
-                &PathBuf::from("/nonexistent/lightpanda/binary"),
-                "Should not return non-existent LIGHTPANDA env path"
-            );
-        }
-        std::env::remove_var("LIGHTPANDA");
+    fn test_detect_obscura_nonexistent_env_path() {
+        std::env::set_var("OBSCURA", "/nonexistent/obscura/binary");
+        let result = detect_obscura();
+        assert!(result.is_none());
+        std::env::remove_var("OBSCURA");
     }
 
     #[test]
-    fn test_find_cached_lightpanda_empty_dir() {
-        let tmp = std::env::temp_dir().join("a3s_lp_test_empty_cache");
-        let cache = tmp.join(".a3s").join("lightpanda");
-        std::fs::create_dir_all(&cache).ok();
+    fn test_find_cached_obscura_empty_dir() {
+        let tmp = std::env::temp_dir().join("a3s_obs_test_empty_cache");
+        std::fs::create_dir_all(&tmp).ok();
 
         let original_home = std::env::var("HOME").ok();
         std::env::set_var("HOME", tmp.to_str().unwrap());
-        let result = find_cached_lightpanda();
+        let result = find_cached_obscura();
         assert!(result.is_err());
 
         if let Some(home) = original_home {
@@ -529,41 +500,17 @@ mod tests {
     }
 
     #[test]
-    fn test_find_cached_lightpanda_version_dir_no_binary() {
-        let tmp = std::env::temp_dir().join("a3s_lp_test_no_binary");
-        let version_dir = tmp
-            .join(".a3s")
-            .join("lightpanda")
-            .join("nightly-2024-01-01");
+    fn test_find_cached_obscura_with_binary() {
+        let tmp = std::env::temp_dir().join("a3s_obs_test_with_binary");
+        let version_dir = tmp.join(".a3s").join("obscura").join("v0.1.0");
         std::fs::create_dir_all(&version_dir).ok();
 
-        let original_home = std::env::var("HOME").ok();
-        std::env::set_var("HOME", tmp.to_str().unwrap());
-        let result = find_cached_lightpanda();
-        assert!(result.is_err());
-
-        if let Some(home) = original_home {
-            std::env::set_var("HOME", home);
-        }
-        std::fs::remove_dir_all(&tmp).ok();
-    }
-
-    #[test]
-    fn test_find_cached_lightpanda_with_binary() {
-        let tmp = std::env::temp_dir().join("a3s_lp_test_with_binary");
-        let version_dir = tmp
-            .join(".a3s")
-            .join("lightpanda")
-            .join("nightly-2024-01-01");
-        std::fs::create_dir_all(&version_dir).ok();
-
-        // Create a fake binary
-        let fake_binary = version_dir.join("lightpanda");
+        let fake_binary = version_dir.join("obscura");
         std::fs::write(&fake_binary, b"fake").ok();
 
         let original_home = std::env::var("HOME").ok();
         std::env::set_var("HOME", tmp.to_str().unwrap());
-        let result = find_cached_lightpanda();
+        let result = find_cached_obscura();
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), fake_binary);
 
@@ -575,7 +522,7 @@ mod tests {
 
     #[test]
     fn test_releases_api_url_is_valid() {
-        assert!(LIGHTPANDA_RELEASES_API.starts_with("https://"));
-        assert!(LIGHTPANDA_RELEASES_API.contains("lightpanda-io/browser"));
+        assert!(OBSCURA_RELEASES_API.starts_with("https://"));
+        assert!(OBSCURA_RELEASES_API.contains("h4ckf0r0day/obscura"));
     }
 }

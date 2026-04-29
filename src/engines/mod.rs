@@ -11,11 +11,11 @@ mod so360;
 mod sogou;
 
 // Headless browser engines (require JavaScript rendering)
-#[cfg(feature = "headless")]
+#[cfg(feature = "obscura")]
 mod baidu;
-#[cfg(feature = "headless")]
+#[cfg(feature = "obscura")]
 mod bing_china;
-#[cfg(feature = "headless")]
+#[cfg(feature = "obscura")]
 mod google;
 
 pub use bing::{Bing, BingParser};
@@ -26,9 +26,9 @@ pub use wikipedia::Wikipedia;
 pub use so360::{So360, So360Parser};
 pub use sogou::{Sogou, SogouParser};
 
-#[cfg(feature = "headless")]
+#[cfg(feature = "obscura")]
 pub use baidu::{Baidu, BaiduParser};
-#[cfg(feature = "headless")]
+#[cfg(feature = "obscura")]
 pub use bing_china::{BingChina, BingChinaParser};
-#[cfg(feature = "headless")]
+#[cfg(feature = "obscura")]
 pub use google::{Google, GoogleParser};

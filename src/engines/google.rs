@@ -1,6 +1,6 @@
 //! Google search engine implementation using headless browser.
 //!
-//! This engine requires the `headless` feature because Google's search results
+//! This engine requires the `obscura` feature because Google's search results
 //! page relies on JavaScript rendering that plain HTTP requests cannot handle.
 
 use crate::html_engine::{selector, HtmlEngine, HtmlParser};
@@ -17,6 +17,16 @@ impl Google {
     /// Creates a new Google engine with the given page fetcher.
     pub fn new(fetcher: std::sync::Arc<dyn crate::PageFetcher>) -> Self {
         HtmlEngine::with_fetcher(GoogleParser, fetcher)
+    }
+
+    /// Creates a new Google engine with an [`ObscuraPool`](crate::ObscuraPool).
+    ///
+    /// This is a convenience constructor that creates an [`ObscuraFetcher`](crate::ObscuraFetcher)
+    /// internally and manages the pool lifecycle.
+    #[cfg(feature = "obscura")]
+    pub fn with_obscura(pool: std::sync::Arc<crate::ObscuraPool>) -> Self {
+        let fetcher = crate::ObscuraFetcher::new(pool);
+        HtmlEngine::with_fetcher(GoogleParser, std::sync::Arc::new(fetcher))
     }
 }
 

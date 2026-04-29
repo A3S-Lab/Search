@@ -56,7 +56,7 @@ fn maybe_record_search_metrics(record: SearchHttpMetricsRecord) {
 /// A page fetcher that uses plain HTTP requests via reqwest.
 ///
 /// Suitable for engines that return server-rendered HTML. For engines
-/// that require JavaScript rendering, use `BrowserFetcher` instead.
+/// that require JavaScript rendering, use [`crate::ObscuraFetcher`] instead.
 pub struct HttpFetcher {
     client: Client,
 }

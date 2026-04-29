@@ -11,7 +11,7 @@
 <p align="center">
   <a href="#features">Features</a> •
   <a href="#quick-start">Quick Start</a> •
-  <a href="#sdks">SDKs</a> •
+  <a href="#headless-browser">Headless Browser</a> •
   <a href="#architecture">Architecture</a> •
   <a href="#api-reference">API Reference</a> •
   <a href="#development">Development</a>
@@ -22,28 +22,6 @@
 ## Overview
 
 **A3S Search** is an embeddable meta search engine library. It aggregates results from multiple search engines, deduplicates them, and ranks them using a consensus-based scoring algorithm.
-
-### Basic Usage
-
-```rust
-use a3s_search::{Search, SearchQuery, engines::{DuckDuckGo, Wikipedia}};
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let mut search = Search::new();
-    search.add_engine(DuckDuckGo::new());
-    search.add_engine(Wikipedia::new());
-
-    let query = SearchQuery::new("rust programming");
-    let results = search.search(query).await?;
-
-    for result in results.items().iter().take(10) {
-        println!("{}: {}", result.title, result.url);
-    }
-
-    Ok(())
-}
-```
 
 ## Features
 
@@ -57,9 +35,8 @@ async fn main() -> anyhow::Result<()> {
 - **Dynamic Proxy Pool**: IP rotation with pluggable `ProxyProvider` trait
 - **Health Monitor**: Automatic engine suspension after repeated failures
 - **HCL Configuration**: Load settings from `.hcl` config files
-- **Headless Browser**: Chrome and Lightpanda backends for JS-rendered engines
-- **Auto-Download**: Automatically detects or downloads browsers
-- **Native SDKs**: TypeScript (NAPI) and Python (PyO3) bindings
+- **Headless Browser**: Obscura backend for JS-rendered engines (Google, Baidu, Bing China)
+- **Auto-Download**: Automatically detects or downloads obscura binary
 
 ## Quick Start
 
@@ -67,31 +44,8 @@ async fn main() -> anyhow::Result<()> {
 
 ```toml
 [dependencies]
-a3s-search = "0.9"
+a3s-search = "1.1"
 tokio = { version = "1", features = ["full"] }
-```
-
-### Feature Flags
-
-| Feature | Description |
-|---------|-------------|
-| `chromiumoxide` | Shared CDP client (required by chromium/lightpanda) |
-| `chromium` | Chrome/Chromium headless backend |
-| `lightpanda` | Lightpanda headless backend (Linux/macOS) |
-| `all-headless` | Enable both chromium and lightpanda |
-
-```toml
-# Default (no headless engines)
-a3s-search = "0.9"
-
-# With Chrome/Chromium backend
-a3s-search = { version = "0.9", features = ["chromium"] }
-
-# With Lightpanda backend
-a3s-search = { version = "0.9", features = ["lightpanda"] }
-
-# With both backends
-a3s-search = { version = "0.9", features = ["all-headless"] }
 ```
 
 ### Basic Search
@@ -107,62 +61,66 @@ let results = search.search(query).await?;
 println!("Found {} results", results.count);
 ```
 
-### Headless Browser Mode
-
-Enable headless browser for JS-rendered engines (Google, Baidu, Bing China):
+### Using Proxy
 
 ```rust
-use a3s_search::{Search, SearchQuery};
-use a3s_search::browser::{BrowserBackend, BrowserPool, BrowserPoolConfig};
-use a3s_search::engines::{Google, DuckDuckGo};
+use a3s_search::{Search, SearchQuery, PooledHttpFetcher, ProxyPool};
 use std::sync::Arc;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    // Enable headless mode with Chrome backend
-    let mut search = Search::new();
-    let pool = search.enable_headless(BrowserBackend::Chrome).await?;
-
-    // Add engines
-    search.add_engine(DuckDuckGo::new());
-    search.add_engine(Google::new(pool.acquire_browser().await?));
-
-    let results = search.search(SearchQuery::new("rust programming")).await?;
-    println!("Found {} results", results.count);
-
-    Ok(())
-}
+let pool = Arc::new(ProxyPool::new());
+let fetcher = Arc::new(PooledHttpFetcher::new(Arc::clone(&pool)));
+let mut search = Search::new();
+search.add_engine(DuckDuckGo::with_fetcher(DuckDuckGoParser, fetcher));
 ```
 
-## CLI Usage
+## Headless Browser
 
-### Installation
+JavaScript-rendered engines (Google, Baidu, Bing China) require a headless browser. This library uses **obscura**, a lightweight Rust-native headless browser.
 
-**Homebrew (macOS):**
-```bash
-brew tap a3s-lab/tap https://github.com/A3S-Lab/homebrew-tap
-brew install a3s-search
+### Feature Flags
+
+| Feature | Description |
+|---------|-------------|
+| `obscura` (default) | Obscura headless backend (Linux/macOS, x86_64/aarch64) |
+
+### Setup
+
+Obscura binary is auto-detected in order:
+1. `OBSCURA` environment variable
+2. `obscura` in PATH
+3. Cached download in `~/.a3s/obscura/`
+4. Downloaded from GitHub releases
+
+### Usage with Obscura
+
+```rust
+use a3s_search::{Search, SearchQuery, ObscuraPool, ObscuraPoolConfig, ObscuraFetcher};
+use a3s_search::engines::{Google, Baidu, BingChina};
+use std::sync::Arc;
+
+let pool_config = ObscuraPoolConfig::default();
+let pool = Arc::new(ObscuraPool::new(pool_config));
+
+// Google with selector wait strategy
+let fetcher = ObscuraFetcher::new(Arc::clone(&pool))
+    .with_wait(WaitStrategy::Selector {
+        css: "div.g".to_string(),
+        timeout_ms: 5000,
+    });
+let google = Google::new(Arc::new(fetcher));
+
+let mut search = Search::new();
+search.add_engine(google);
 ```
 
-**Cargo:**
-```bash
-cargo install a3s-search
-```
-
-### Commands
+### CLI Usage
 
 ```bash
-# Basic search
-a3s-search "rust programming"
-
-# With specific engines
+# Basic search (HTTP engines)
 a3s-search "rust programming" -e ddg,wiki
 
-# Limit results
-a3s-search "rust programming" -l 5
-
-# JSON output
-a3s-search "rust programming" -f json
+# With headless engines (auto-installs obscura)
+a3s-search "rust programming" -e g,baidu
 
 # Use proxy
 a3s-search "rust programming" -p http://127.0.0.1:8080
@@ -173,111 +131,17 @@ a3s-search engines
 
 ### Available Engines
 
-| Shortcut | Engine | Type |
-|----------|--------|------|
-| `ddg` | DuckDuckGo | HTTP |
-| `brave` | Brave Search | HTTP |
-| `bing` | Bing International | HTTP |
-| `wiki` | Wikipedia | HTTP |
-| `sogou` | 搜狗搜索 | HTTP |
-| `360` | 360搜索 | HTTP |
-| `g` | Google Search | Headless |
-| `baidu` | 百度搜索 | Headless |
-| `bing_cn` | 必应中国 | Headless |
-
-## SDKs
-
-Native bindings for TypeScript and Python, powered by NAPI-RS and PyO3.
-
-### TypeScript (Node.js)
-
-```bash
-npm install @a3s-lab/search
-```
-
-```typescript
-import { A3SSearch } from '@a3s-lab/search';
-
-const search = new A3SSearch();
-
-// Simple search
-const response = await search.search('rust programming');
-
-// With options
-const response = await search.search('rust programming', {
-  engines: ['ddg', 'wiki', 'brave', 'bing'],
-  limit: 5,
-  timeout: 15,
-  proxy: 'http://127.0.0.1:8080',
-});
-
-for (const r of response.results) {
-  console.log(`${r.title}: ${r.url}`);
-}
-```
-
-### Python
-
-```bash
-pip install a3s-search
-```
-
-```python
-from a3s_search import A3SSearch
-
-search = A3SSearch()
-
-# Simple search
-response = search.search("rust programming")
-
-# With options
-response = search.search("rust programming",
-    engines=["ddg", "wiki", "brave", "bing"],
-    limit=5,
-    timeout=15,
-    proxy="http://127.0.0.1:8080",
-)
-
-for r in response.results:
-    print(f"{r.title}: {r.url}")
-```
-
-### SDK Types
-
-Both SDKs expose headless browser configuration types:
-
-**TypeScript:**
-```typescript
-type BrowserBackend = "Chrome" | "Lightpanda"
-
-interface HeadlessConfig {
-  backend: BrowserBackend
-  browserPath?: string
-  maxTabs?: number
-  launchArgs?: string[]
-}
-
-interface SearchConfig {
-  timeout: number
-  engines: Record<string, EngineConfig>
-  headless?: HeadlessConfig
-}
-```
-
-**Python:**
-```python
-class BrowserBackend:
-    Chrome
-    Lightpanda
-
-class HeadlessConfig:
-    def __init__(self, backend: BrowserBackend, browser_path: str = None,
-                 max_tabs: int = None, launch_args: list = None)
-
-class SearchConfig:
-    def __init__(self, timeout: int, engines: dict = None,
-                 headless: HeadlessConfig = None)
-```
+| Shortcut | Engine | Type | Notes |
+|----------|--------|------|-------|
+| `ddg` | DuckDuckGo | HTTP | |
+| `brave` | Brave Search | HTTP | |
+| `bing` | Bing International | HTTP | |
+| `wiki` | Wikipedia | HTTP | |
+| `sogou` | 搜狗搜索 | HTTP | |
+| `360` | 360搜索 | HTTP | |
+| `g` | Google Search | Headless | Requires obscura |
+| `baidu` | 百度搜索 | Headless | Requires obscura |
+| `bing_cn` | 必应中国 | Headless | Requires obscura |
 
 ## Architecture
 
@@ -287,12 +151,6 @@ class SearchConfig:
 ┌─────────────────────────────────────────────────────┐
 │                      A3S Search                      │
 ├─────────────────────────────────────────────────────┤
-│  ┌─────────┐    ┌─────────┐    ┌─────────┐        │
-│  │ Rust    │    │ Python  │    │ Node.js │        │
-│  │ Core    │◄───┤ SDK     │    │ SDK     │        │
-│  └────┬────┘    └─────────┘    └─────────┘        │
-│       │                                             │
-│       ▼                                             │
 │  ┌─────────────────────────────────────────────┐   │
 │  │              Search Orchestrator              │   │
 │  │  • Parallel execution (tokio::join_all)      │   │
@@ -310,7 +168,7 @@ class SearchConfig:
 │       ▼                                             │
 │  ┌─────────────────────────────────────────────┐   │
 │  │               PageFetcher Layer               │   │
-│  │  HttpFetcher │ PooledHttpFetcher │ Browser    │   │
+│  │  HttpFetcher │ PooledHttpFetcher │ Obscura    │   │
 │  └─────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────┘
 ```
@@ -323,8 +181,9 @@ class SearchConfig:
 | `Engine` trait | Abstract interface for search engines |
 | `PageFetcher` trait | Abstract interface for page fetching |
 | `Aggregator` | URL deduplication and consensus ranking |
-| `BrowserPool` | Shared headless browser process management |
+| `ObscuraPool` | Shared obscura subprocess with tab concurrency |
 | `ProxyPool` | Proxy rotation with auto-refresh |
+| `HealthMonitor` | Tracks engine failures and suspensions |
 
 ## API Reference
 
@@ -334,70 +193,49 @@ class SearchConfig:
 pub struct Search { /* ... */ }
 
 impl Search {
-    /// Create a new search instance
     pub fn new() -> Self;
-
-    /// Create with health monitoring
     pub fn with_health_config(config: HealthConfig) -> Self;
-
-    /// Add a search engine
     pub fn add_engine<E: Engine + 'static>(&mut self, engine: E);
-
-    /// Set default search timeout
     pub fn set_timeout(&mut self, timeout: Duration);
-
-    /// Enable headless browser mode
-    pub async fn enable_headless(&mut self, backend: BrowserBackend) -> Result<Arc<BrowserPool>>;
-
-    /// Perform a search
     pub async fn search(&self, query: SearchQuery) -> Result<SearchResults>;
 }
 ```
 
-### BrowserBackend
+### ObscuraPoolConfig
 
 ```rust
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BrowserBackend {
-    /// Chrome/Chromium headless
-    Chrome,
-    /// Lightpanda headless browser (Linux/macOS only)
-    Lightpanda,
+pub struct ObscuraPoolConfig {
+    /// Maximum number of concurrent browser tabs (default: 4)
+    pub max_tabs: usize,
+    /// Path to obscura executable (auto-detected if None)
+    pub obscura_path: Option<String>,
+    /// Proxy URL for the browser (optional)
+    pub proxy_url: Option<String>,
 }
 
-impl Default for BrowserBackend {
+impl Default for ObscuraPoolConfig {
     fn default() -> Self {
-        #[cfg(feature = "lightpanda")]
-        { Self::Lightpanda }
-        #[cfg(not(feature = "lightpanda"))]
-        { Self::Chrome }
+        Self {
+            max_tabs: 4,
+            obscura_path: None,
+            proxy_url: None,
+        }
     }
 }
 ```
 
-### HeadlessConfig
+### WaitStrategy
 
 ```rust
-pub struct HeadlessConfig {
-    /// Which headless backend to use
-    pub backend: BrowserBackend,
-    /// Path to browser executable (auto-detected if None)
-    pub browser_path: Option<String>,
-    /// Maximum concurrent tabs (default: 4)
-    pub max_tabs: usize,
-    /// Additional launch arguments
-    pub launch_args: Vec<String>,
-}
-
-impl Default for HeadlessConfig {
-    fn default() -> Self {
-        Self {
-            backend: BrowserBackend::default(),
-            browser_path: None,
-            max_tabs: 4,
-            launch_args: Vec::new(),
-        }
-    }
+pub enum WaitStrategy {
+    /// Wait for page load event (default)
+    Load,
+    /// Wait for load + idle milliseconds
+    NetworkIdle { idle_ms: u64 },
+    /// Wait for CSS selector to appear
+    Selector { css: String, timeout_ms: u64 },
+    /// Wait for load + fixed delay
+    Delay { ms: u64 },
 }
 ```
 
@@ -411,19 +249,12 @@ health {
   suspend_seconds = 120
 }
 
-headless {
-  backend     = "Chrome"  # or "Lightpanda"
-  browser_path = null     # auto-detect
-  max_tabs    = 4
-  launch_args = []
-}
-
 engine "ddg" {
   enabled = true
   weight  = 1.0
 }
 
-engine "google" {
+engine "g" {
   enabled = true
   weight  = 1.0
 }
@@ -444,11 +275,8 @@ pub trait Engine: Send + Sync {
 ### Build Commands
 
 ```bash
-# Build default (all features)
+# Build
 cargo build -p a3s-search
-
-# Build without headless
-cargo build -p a3s-search --no-default-features
 
 # Run tests
 cargo test -p a3s-search --lib
@@ -462,15 +290,17 @@ cargo clippy -p a3s-search --no-default-features -- -D warnings
 
 ### Release
 
-Releases are published to GitHub Releases with:
-- CLI binaries (darwin-arm64, darwin-x86_64, linux-arm64, linux-x86_64)
-- Python wheels (Python 3.9-3.13, many platforms)
-- Node.js bindings (.node for multiple platforms)
+Releases are published to GitHub Releases with CLI binaries:
+- darwin-arm64
+- darwin-x86_64
+- linux-arm64
+- linux-x86_64
+
+Create and push a tag to trigger release:
 
 ```bash
-# Create and push tag to trigger release
-git tag v0.9.0
-git push origin v0.9.0
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
 ## A3S Ecosystem

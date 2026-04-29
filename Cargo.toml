@@ -19,7 +19,7 @@ tokio-test = "0.4"
 
 [package]
 name = "a3s-search"
-version = "1.0.0"
+version = "1.1.0"
 edition.workspace = true
 license.workspace = true
 repository = "https://github.com/A3S-Lab/Search"
@@ -31,16 +31,10 @@ name = "a3s-search"
 path = "src/main.rs"
 
 [features]
-default = []
-# Shared CDP client (required by chromium/lightpanda)
-chromiumoxide = ["dep:chromiumoxide", "dep:which", "dep:zip"]
-# Chrome/Chromium headless backend
-chromium = ["chromiumoxide"]
-# Lightpanda headless backend (Linux/macOS only; Windows unsupported by Lightpanda).
-# Depends on chromiumoxide because it reuses chromiumoxide as the CDP client.
-lightpanda = ["chromiumoxide"]
-# Enable both chromium and lightpanda
-all-headless = ["chromium", "lightpanda"]
+default = ["obscura"]
+# Obscura headless backend (standalone Rust-native browser).
+# Supports Linux (x86_64/aarch64) and macOS (x86_64/aarch64).
+obscura = []
 
 [dependencies]
 # Async runtime
@@ -74,12 +68,10 @@ urlencoding = "2"
 # Configuration file parsing
 hcl-rs = "0.19"
 
-# Headless browser (optional, for JS-rendered engines)
-chromiumoxide = { version = "0.7", features = ["tokio-runtime"], optional = true }
-
-# Browser detection and auto-install (optional, for headless feature)
-which = { version = "7", optional = true }
-zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
+# Obscura headless backend: raw WebSocket CDP client
+tokio-tungstenite = "0.26"
+futures-util = "0.3"
+which = "7"
 
 # Self-update
 a3s-updater = { version = "0.2", path = "../updater" }
@@ -96,7 +88,7 @@ tokio-test.workspace = true
 # =============================================================================
 # Release Profile — optimized for binary size
 # =============================================================================
-# a3s-search is a CLI/library with optional headless browser (chromiumoxide).
+# a3s-search uses obscura as the headless browser backend.
 # I/O-bound workload — optimize for size over speed.
 #
 [profile.release]

@@ -108,14 +108,11 @@ mod search;
 
 pub mod engines;
 
-#[cfg(feature = "chromium")]
-pub mod browser;
+#[cfg(feature = "obscura")]
+pub mod browser_obscura;
 
-#[cfg(feature = "chromium")]
-pub mod browser_setup;
-
-#[cfg(feature = "lightpanda")]
-pub mod browser_setup_lp;
+#[cfg(feature = "obscura")]
+pub mod browser_setup_obs;
 
 pub use aggregator::Aggregator;
 pub use config::{EngineEntry, HealthEntry, SearchConfig};
@@ -132,14 +129,8 @@ pub use query::{SafeSearch, SearchQuery, TimeRange};
 pub use result::{ResultType, SearchResult, SearchResults};
 pub use search::Search;
 
-#[cfg(feature = "chromium")]
-pub use browser::{BrowserBackend, BrowserFetcher, BrowserPool, BrowserPoolConfig};
+#[cfg(feature = "obscura")]
+pub use browser_obscura::{ObscuraFetcher, ObscuraPool, ObscuraPoolConfig};
 
-#[cfg(feature = "chromium")]
-pub use browser_setup::{DownloadPhase, DownloadProgress, DownloadProgressCallback};
-
-#[cfg(feature = "lightpanda")]
-pub use browser_setup_lp::{
-    DownloadPhase as LightpandaDownloadPhase, DownloadProgress as LightpandaDownloadProgress,
-    DownloadProgressCallback as LightpandaDownloadProgressCallback,
-};
+#[cfg(feature = "obscura")]
+pub use browser_setup_obs::{DownloadPhase, DownloadProgress, DownloadProgressCallback};

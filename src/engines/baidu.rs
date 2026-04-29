@@ -1,6 +1,6 @@
 //! Baidu search engine implementation using headless browser.
 //!
-//! This engine requires the `headless` feature because Baidu's search results
+//! This engine requires the `obscura` feature because Baidu's search results
 //! page relies on JavaScript rendering that plain HTTP requests cannot handle.
 
 use crate::html_engine::{selector, HtmlEngine, HtmlParser};
@@ -17,6 +17,13 @@ impl Baidu {
     /// Creates a new Baidu engine with the given page fetcher.
     pub fn new(fetcher: std::sync::Arc<dyn crate::PageFetcher>) -> Self {
         HtmlEngine::with_fetcher(BaiduParser, fetcher)
+    }
+
+    /// Creates a new Baidu engine with an [`ObscuraPool`](crate::ObscuraPool).
+    #[cfg(feature = "obscura")]
+    pub fn with_obscura(pool: std::sync::Arc<crate::ObscuraPool>) -> Self {
+        let fetcher = crate::ObscuraFetcher::new(pool);
+        HtmlEngine::with_fetcher(BaiduParser, std::sync::Arc::new(fetcher))
     }
 }
 

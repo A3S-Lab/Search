@@ -15,9 +15,9 @@ use a3s_search::{
     HttpFetcher, PageFetcher, Search, SearchQuery,
 };
 
-#[cfg(feature = "headless")]
+#[cfg(feature = "obscura")]
 use a3s_search::{
-    browser::{BrowserFetcher, BrowserPool, BrowserPoolConfig},
+    browser_obscura::{ObscuraFetcher, ObscuraPool, ObscuraPoolConfig},
     engines::{Baidu, BingChina, Google},
     WaitStrategy,
 };
@@ -51,7 +51,7 @@ struct Cli {
     #[arg(short, long)]
     proxy: Option<String>,
 
-    /// Use headless browser for JS-rendered engines (default: auto-detected)
+    /// (Deprecated, headless browser is always enabled with obscura)
     #[arg(long, hide = true)]
     headless: bool,
 
@@ -165,10 +165,9 @@ fn list_engines() -> Result<()> {
     println!("    sogou    - Sogou (搜狗)");
     println!("    360      - 360 Search (360搜索)");
 
-    #[cfg(feature = "headless")]
     {
         println!();
-        println!("  Headless (Chrome auto-installed if needed):");
+        println!("  Headless (Obscura auto-installed if needed):");
         println!("    g        - Google");
         println!("    baidu    - Baidu (百度)");
         println!("    bing_cn  - Bing China (必应中国)");
@@ -190,30 +189,14 @@ async fn run_search(args: SearchArgs) -> Result<()> {
         }
     }
 
-    // Warn if headless engines are requested without the feature
-    #[cfg(not(feature = "headless"))]
-    {
-        let engine_list = args.engines.as_deref().unwrap_or(&[]);
-        let headless_engines = ["g", "google", "baidu", "bing_cn"];
-        for e in engine_list {
-            if headless_engines.contains(&e.as_str()) {
-                eprintln!(
-                    "Warning: '{}' engine requires the 'headless' feature. \
-                     Rebuild with: cargo build --features headless",
-                    e
-                );
-            }
-        }
-    }
-
-    // Lazily create browser pool when headless engines are needed
-    #[cfg(feature = "headless")]
-    let browser_pool: std::sync::Arc<BrowserPool> = {
-        let pool_config = BrowserPoolConfig {
+    // Lazily create obscura pool when headless engines are needed
+    #[cfg(feature = "obscura")]
+    let obscura_pool: std::sync::Arc<ObscuraPool> = {
+        let pool_config = ObscuraPoolConfig {
             proxy_url: args.proxy.clone(),
             ..Default::default()
         };
-        std::sync::Arc::new(BrowserPool::new(pool_config))
+        std::sync::Arc::new(ObscuraPool::new(pool_config))
     };
 
     // Create shared HTTP fetcher (with proxy if provided)
@@ -264,10 +247,10 @@ async fn run_search(args: SearchArgs) -> Result<()> {
                 So360Parser,
                 std::sync::Arc::clone(&http_fetcher),
             )),
-            #[cfg(feature = "headless")]
+            #[cfg(feature = "obscura")]
             "g" | "google" => {
                 let fetcher: std::sync::Arc<dyn PageFetcher> = std::sync::Arc::new(
-                    BrowserFetcher::new(std::sync::Arc::clone(&browser_pool)).with_wait(
+                    ObscuraFetcher::new(std::sync::Arc::clone(&obscura_pool)).with_wait(
                         WaitStrategy::Selector {
                             css: "div.g".to_string(),
                             timeout_ms: 5000,
@@ -276,10 +259,10 @@ async fn run_search(args: SearchArgs) -> Result<()> {
                 );
                 search.add_engine(Google::new(fetcher));
             }
-            #[cfg(feature = "headless")]
+            #[cfg(feature = "obscura")]
             "baidu" => {
                 let fetcher: std::sync::Arc<dyn PageFetcher> = std::sync::Arc::new(
-                    BrowserFetcher::new(std::sync::Arc::clone(&browser_pool)).with_wait(
+                    ObscuraFetcher::new(std::sync::Arc::clone(&obscura_pool)).with_wait(
                         WaitStrategy::Selector {
                             css: "div.c-container".to_string(),
                             timeout_ms: 5000,
@@ -288,21 +271,13 @@ async fn run_search(args: SearchArgs) -> Result<()> {
                 );
                 search.add_engine(Baidu::new(fetcher));
             }
-            #[cfg(feature = "headless")]
+            #[cfg(feature = "obscura")]
             "bing_cn" => {
                 let fetcher: std::sync::Arc<dyn PageFetcher> = std::sync::Arc::new(
-                    BrowserFetcher::new(std::sync::Arc::clone(&browser_pool))
+                    ObscuraFetcher::new(std::sync::Arc::clone(&obscura_pool))
                         .with_wait(WaitStrategy::Delay { ms: 2000 }),
                 );
                 search.add_engine(BingChina::new(fetcher));
-            }
-            #[cfg(not(feature = "headless"))]
-            "g" | "google" | "baidu" | "bing_cn" => {
-                eprintln!(
-                    "Warning: '{}' engine requires the 'headless' feature. \
-                     Rebuild with: cargo build --features headless",
-                    shortcut
-                );
             }
             _ => {
                 eprintln!("Warning: Unknown engine '{}', skipping", shortcut);
