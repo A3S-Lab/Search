@@ -866,7 +866,10 @@ mod tests {
         let json = r#"{"result":{"type":"string","value":"<html></html>"}}"#;
         let result: EvaluateResult = serde_json::from_str(json).unwrap();
         assert_eq!(result.result.obj_type, "string");
-        assert_eq!(result.result.value.as_ref().unwrap().as_str().unwrap(), "<html></html>");
+        assert_eq!(
+            result.result.value.as_ref().unwrap().as_str().unwrap(),
+            "<html></html>"
+        );
     }
 
     #[test]
@@ -942,8 +945,7 @@ mod tests {
     #[test]
     fn test_obscura_fetcher_with_delay_strategy() {
         let pool = Arc::new(ObscuraPool::new(ObscuraPoolConfig::default()));
-        let fetcher = ObscuraFetcher::new(pool)
-            .with_wait(WaitStrategy::Delay { ms: 3000 });
+        let fetcher = ObscuraFetcher::new(pool).with_wait(WaitStrategy::Delay { ms: 3000 });
         assert!(matches!(fetcher.wait, WaitStrategy::Delay { ms: 3000 }));
     }
 
@@ -972,14 +974,17 @@ mod tests {
 
     #[test]
     fn test_find_free_port_uniqueness() {
-        let ports: Vec<u16> = (0..10)
-            .map(|_| find_free_port().unwrap())
-            .collect();
+        let ports: Vec<u16> = (0..10).map(|_| find_free_port().unwrap()).collect();
         // All ports should be unique
         let mut sorted = ports.clone();
         sorted.sort();
         sorted.dedup();
-        assert_eq!(ports.len(), sorted.len(), "Ports should be unique: {:?}", ports);
+        assert_eq!(
+            ports.len(),
+            sorted.len(),
+            "Ports should be unique: {:?}",
+            ports
+        );
     }
 
     #[test]
@@ -1001,7 +1006,11 @@ mod tests {
         let result = wait_for_cdp_ready("127.0.0.1", 1, Duration::from_millis(50)).await;
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("Timed out"), "Error should mention timeout: {}", err_msg);
+        assert!(
+            err_msg.contains("Timed out"),
+            "Error should mention timeout: {}",
+            err_msg
+        );
     }
 
     // -------------------------------------------------------------------------
