@@ -232,6 +232,7 @@ async fn download_lightpanda() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{env_lock, EnvVarGuard};
 
     #[test]
     fn test_platform_id() {
@@ -279,30 +280,28 @@ mod tests {
 
     #[test]
     fn test_cache_dir_structure() {
-        let original_home = std::env::var("HOME").ok();
-        std::env::set_var("HOME", "/tmp/test_lp_cache_home");
+        let _lock = env_lock();
+        let _home = EnvVarGuard::set("HOME", "/tmp/test_lp_cache_home");
         let dir = cache_dir().unwrap();
         assert_eq!(
             dir,
             PathBuf::from("/tmp/test_lp_cache_home/.a3s/lightpanda")
         );
-        if let Some(home) = original_home {
-            std::env::set_var("HOME", home);
-        }
     }
 
     #[test]
     fn test_find_cached_lightpanda_no_cache() {
-        std::env::set_var("HOME", "/tmp/a3s_lp_nonexistent_home_xyz");
+        let _lock = env_lock();
+        let _home = EnvVarGuard::set("HOME", "/tmp/a3s_lp_nonexistent_home_xyz");
         let result = find_cached_lightpanda();
         assert!(result.is_err());
-        std::env::remove_var("HOME");
     }
 
     #[test]
     fn test_detect_lightpanda_nonexistent_env_path() {
+        let _lock = env_lock();
         // Set LIGHTPANDA to a non-existent path — should not return it
-        std::env::set_var("LIGHTPANDA", "/nonexistent/lightpanda/binary");
+        let _lightpanda = EnvVarGuard::set("LIGHTPANDA", "/nonexistent/lightpanda/binary");
         let result = detect_lightpanda();
         if let Some(ref path) = result {
             assert_ne!(
@@ -311,28 +310,25 @@ mod tests {
                 "Should not return non-existent LIGHTPANDA env path"
             );
         }
-        std::env::remove_var("LIGHTPANDA");
     }
 
     #[test]
     fn test_find_cached_lightpanda_empty_dir() {
+        let _lock = env_lock();
         let tmp = std::env::temp_dir().join("a3s_lp_test_empty_cache");
         let cache = tmp.join(".a3s").join("lightpanda");
         std::fs::create_dir_all(&cache).ok();
 
-        let original_home = std::env::var("HOME").ok();
-        std::env::set_var("HOME", tmp.to_str().unwrap());
+        let _home = EnvVarGuard::set("HOME", tmp.as_os_str());
         let result = find_cached_lightpanda();
         assert!(result.is_err());
 
-        if let Some(home) = original_home {
-            std::env::set_var("HOME", home);
-        }
         std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]
     fn test_find_cached_lightpanda_version_dir_no_binary() {
+        let _lock = env_lock();
         let tmp = std::env::temp_dir().join("a3s_lp_test_no_binary");
         let version_dir = tmp
             .join(".a3s")
@@ -340,19 +336,16 @@ mod tests {
             .join("nightly-2024-01-01");
         std::fs::create_dir_all(&version_dir).ok();
 
-        let original_home = std::env::var("HOME").ok();
-        std::env::set_var("HOME", tmp.to_str().unwrap());
+        let _home = EnvVarGuard::set("HOME", tmp.as_os_str());
         let result = find_cached_lightpanda();
         assert!(result.is_err());
 
-        if let Some(home) = original_home {
-            std::env::set_var("HOME", home);
-        }
         std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]
     fn test_find_cached_lightpanda_with_binary() {
+        let _lock = env_lock();
         let tmp = std::env::temp_dir().join("a3s_lp_test_with_binary");
         let version_dir = tmp
             .join(".a3s")
@@ -364,15 +357,11 @@ mod tests {
         let fake_binary = version_dir.join("lightpanda");
         std::fs::write(&fake_binary, b"fake").ok();
 
-        let original_home = std::env::var("HOME").ok();
-        std::env::set_var("HOME", tmp.to_str().unwrap());
+        let _home = EnvVarGuard::set("HOME", tmp.as_os_str());
         let result = find_cached_lightpanda();
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), fake_binary);
 
-        if let Some(home) = original_home {
-            std::env::set_var("HOME", home);
-        }
         std::fs::remove_dir_all(&tmp).ok();
     }
 

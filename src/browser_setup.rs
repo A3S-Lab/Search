@@ -409,6 +409,7 @@ fn extract_zip(zip_bytes: &[u8], target_dir: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{env_lock, EnvVarGuard};
 
     #[test]
     fn test_platform_id() {
@@ -449,8 +450,9 @@ mod tests {
 
     #[test]
     fn test_detect_chrome_respects_env_var() {
+        let _lock = env_lock();
         // Set CHROME to a non-existent path — should not return it
-        std::env::set_var("CHROME", "/nonexistent/chrome/binary");
+        let _chrome = EnvVarGuard::set("CHROME", "/nonexistent/chrome/binary");
         let result = detect_chrome();
         // Should not return the non-existent path
         if let Some(ref path) = result {
@@ -460,16 +462,15 @@ mod tests {
                 "Should not return non-existent CHROME env path"
             );
         }
-        std::env::remove_var("CHROME");
     }
 
     #[test]
     fn test_find_cached_chrome_no_cache() {
+        let _lock = env_lock();
         // With no cache directory, should return error
-        std::env::set_var("HOME", "/tmp/a3s_test_nonexistent_home");
+        let _home = EnvVarGuard::set("HOME", "/tmp/a3s_test_nonexistent_home");
         let result = find_cached_chrome();
         assert!(result.is_err());
-        std::env::remove_var("HOME");
     }
 
     #[test]
@@ -492,26 +493,19 @@ mod tests {
 
     #[test]
     fn test_dirs_path_returns_home() {
-        let original_home = std::env::var("HOME").ok();
-        std::env::set_var("HOME", "/tmp/test_home_dir");
+        let _lock = env_lock();
+        let _home = EnvVarGuard::set("HOME", "/tmp/test_home_dir");
         let result = dirs_path();
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), PathBuf::from("/tmp/test_home_dir"));
-        // Restore
-        if let Some(home) = original_home {
-            std::env::set_var("HOME", home);
-        }
     }
 
     #[test]
     fn test_cache_dir_structure() {
-        let original_home = std::env::var("HOME").ok();
-        std::env::set_var("HOME", "/tmp/test_cache_home");
+        let _lock = env_lock();
+        let _home = EnvVarGuard::set("HOME", "/tmp/test_cache_home");
         let dir = cache_dir().unwrap();
         assert_eq!(dir, PathBuf::from("/tmp/test_cache_home/.a3s/chromium"));
-        if let Some(home) = original_home {
-            std::env::set_var("HOME", home);
-        }
     }
 
     #[test]
@@ -528,39 +522,33 @@ mod tests {
 
     #[test]
     fn test_find_cached_chrome_empty_cache_dir() {
+        let _lock = env_lock();
         // Create a temporary cache directory with no version subdirs
         let tmp = std::env::temp_dir().join("a3s_test_empty_cache");
         let cache = tmp.join(".a3s").join("chromium");
         std::fs::create_dir_all(&cache).ok();
 
-        let original_home = std::env::var("HOME").ok();
-        std::env::set_var("HOME", tmp.to_str().unwrap());
+        let _home = EnvVarGuard::set("HOME", tmp.as_os_str());
         let result = find_cached_chrome();
         assert!(result.is_err());
 
         // Cleanup
-        if let Some(home) = original_home {
-            std::env::set_var("HOME", home);
-        }
         std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]
     fn test_find_cached_chrome_version_dir_without_executable() {
+        let _lock = env_lock();
         // Create a cache directory with a version subdir but no executable
         let tmp = std::env::temp_dir().join("a3s_test_no_exe_cache");
         let version_dir = tmp.join(".a3s").join("chromium").join("130.0.6723.58");
         std::fs::create_dir_all(&version_dir).ok();
 
-        let original_home = std::env::var("HOME").ok();
-        std::env::set_var("HOME", tmp.to_str().unwrap());
+        let _home = EnvVarGuard::set("HOME", tmp.as_os_str());
         let result = find_cached_chrome();
         assert!(result.is_err());
 
         // Cleanup
-        if let Some(home) = original_home {
-            std::env::set_var("HOME", home);
-        }
         std::fs::remove_dir_all(&tmp).ok();
     }
 

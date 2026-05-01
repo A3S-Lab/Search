@@ -335,9 +335,11 @@ mod config_tests {
     use a3s_search::SearchConfig;
 
     #[test]
-    fn test_load_hcl_config() {
-        let hcl = r#"
-            timeout = 8
+    fn test_load_acl_config() {
+        let acl = r#"
+            timeout {
+                value = 8
+            }
 
             health {
                 max_failures    = 5
@@ -360,7 +362,7 @@ mod config_tests {
             }
         "#;
 
-        let config = SearchConfig::parse(hcl).unwrap();
+        let config = SearchConfig::parse(acl).unwrap();
         assert_eq!(config.timeout, 8);
         assert_eq!(config.engines.len(), 3);
 

@@ -16,7 +16,7 @@ use crate::{
 pub struct Search {
     engines: Vec<Arc<dyn Engine>>,
     aggregator: Aggregator,
-    default_timeout: Duration,
+    timeout_override: Option<Duration>,
     health: Mutex<HealthMonitor>,
 }
 
@@ -26,7 +26,7 @@ impl Search {
         Self {
             engines: Vec::new(),
             aggregator: Aggregator::new(),
-            default_timeout: Duration::from_secs(5),
+            timeout_override: None,
             health: Mutex::new(HealthMonitor::default()),
         }
     }
@@ -36,7 +36,7 @@ impl Search {
         Self {
             engines: Vec::new(),
             aggregator: Aggregator::new(),
-            default_timeout: Duration::from_secs(5),
+            timeout_override: None,
             health: Mutex::new(HealthMonitor::new(config)),
         }
     }
@@ -49,9 +49,9 @@ impl Search {
         self.engines.push(Arc::new(engine));
     }
 
-    /// Sets the default timeout for searches.
+    /// Overrides the timeout applied to each engine during searches.
     pub fn set_timeout(&mut self, timeout: Duration) {
-        self.default_timeout = timeout;
+        self.timeout_override = Some(timeout);
     }
 
     /// Returns the number of configured engines.
@@ -80,7 +80,9 @@ impl Search {
             .map(|engine| {
                 let engine = Arc::clone(engine);
                 let query = Arc::clone(&query);
-                let timeout_duration = Duration::from_secs(engine.config().timeout);
+                let timeout_duration = self
+                    .timeout_override
+                    .unwrap_or_else(|| Duration::from_secs(engine.config().timeout));
 
                 async move {
                     let name = engine.name().to_string();
@@ -254,6 +256,42 @@ mod tests {
         }
     }
 
+    struct SlowEngine {
+        config: EngineConfig,
+        delay: Duration,
+    }
+
+    impl SlowEngine {
+        fn new(name: &str, delay: Duration) -> Self {
+            Self {
+                config: EngineConfig {
+                    name: name.to_string(),
+                    shortcut: name.to_string(),
+                    categories: vec![EngineCategory::General],
+                    timeout: 30,
+                    ..Default::default()
+                },
+                delay,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Engine for SlowEngine {
+        fn config(&self) -> &EngineConfig {
+            &self.config
+        }
+
+        async fn search(&self, _query: &SearchQuery) -> Result<Vec<SearchResult>> {
+            tokio::time::sleep(self.delay).await;
+            Ok(vec![SearchResult::new(
+                "https://slow.example",
+                "Slow",
+                "Delayed result",
+            )])
+        }
+    }
+
     #[tokio::test]
     async fn test_search_new() {
         let search = Search::new();
@@ -286,8 +324,15 @@ mod tests {
     #[tokio::test]
     async fn test_search_set_timeout() {
         let mut search = Search::new();
-        search.set_timeout(Duration::from_secs(10));
-        assert_eq!(search.default_timeout, Duration::from_secs(10));
+        search.set_timeout(Duration::from_millis(10));
+        search.add_engine(SlowEngine::new("slow", Duration::from_millis(100)));
+
+        let results = search.search(SearchQuery::new("test")).await.unwrap();
+
+        assert!(results.items().is_empty());
+        assert_eq!(results.errors().len(), 1);
+        assert_eq!(results.errors()[0].0, "slow");
+        assert!(results.errors()[0].1.contains("timed out"));
     }
 
     #[tokio::test]
@@ -352,13 +397,12 @@ mod tests {
     #[tokio::test]
     async fn test_search_records_duration() {
         let mut search = Search::new();
-        search.add_engine(MockEngine::new("test", vec![]));
+        search.add_engine(SlowEngine::new("slow", Duration::from_millis(5)));
 
         let query = SearchQuery::new("test");
         let results = search.search(query).await.unwrap();
 
-        // Duration should be recorded (u64 is always >= 0)
-        let _ = results.duration_ms;
+        assert!(results.duration_ms > 0);
     }
 
     #[tokio::test]
