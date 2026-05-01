@@ -77,7 +77,7 @@ which = { version = "7", optional = true }
 zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
 
 # Self-update
-a3s-updater = { version = "0.2", path = "../updater" }
+a3s-updater = "0.2"
 
 # CLI
 clap = { version = "4", features = ["derive"] }

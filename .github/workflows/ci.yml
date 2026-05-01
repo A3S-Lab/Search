@@ -13,9 +13,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup workspace context
-        run: bash .github/setup-workspace.sh
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -26,16 +23,21 @@ jobs:
           workspaces: "crates/search -> target"
 
       - name: Format check
-        run: cargo fmt -p a3s-search -- --check
+        working-directory: crates/search
+        run: cargo fmt -- --check
 
       - name: Clippy (no default features)
-        run: cargo clippy -p a3s-search --no-default-features -- -D warnings
+        working-directory: crates/search
+        run: cargo clippy --no-default-features -- -D warnings
 
       - name: Clippy (all features)
-        run: cargo clippy -p a3s-search --all-features -- -D warnings
+        working-directory: crates/search
+        run: cargo clippy --all-features -- -D warnings
 
       - name: Tests (no default features)
-        run: cargo test -p a3s-search --no-default-features --lib
+        working-directory: crates/search
+        run: cargo test --no-default-features --lib
 
       - name: Tests (all features)
-        run: cargo test -p a3s-search --all-features --lib
+        working-directory: crates/search
+        run: cargo test --all-features --lib

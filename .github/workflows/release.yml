@@ -36,13 +36,16 @@ jobs:
           workspaces: "crates/search -> target"
 
       - name: Format check
-        run: cargo fmt -p a3s-search -- --check
+        working-directory: crates/search
+        run: cargo fmt -- --check
 
       - name: Clippy
-        run: cargo clippy -p a3s-search --no-default-features -- -D warnings
+        working-directory: crates/search
+        run: cargo clippy --no-default-features -- -D warnings
 
       - name: Tests
-        run: cargo test -p a3s-search --no-default-features --lib
+        working-directory: crates/search
+        run: cargo test --no-default-features --lib
 
   # ───────────────────────────────────────────────
   # Build CLI binary for 4 platforms
@@ -90,18 +93,19 @@ jobs:
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }} -p a3s-search
+        working-directory: crates/search
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Strip & Package
         shell: bash
         run: |
-          BINARY="target/${{ matrix.target }}/release/a3s-search"
+          BINARY="crates/search/target/${{ matrix.target }}/release/a3s-search"
           STRIP=${STRIP_CMD:-strip}
           $STRIP "$BINARY" 2>/dev/null || true
 
           VERSION="${GITHUB_REF_NAME#v}"
           ARCHIVE="a3s-search-${VERSION}-${{ matrix.name }}.tar.gz"
-          tar -czf "$ARCHIVE" -C "target/${{ matrix.target }}/release" a3s-search
+          tar -czf "$ARCHIVE" -C "crates/search/target/${{ matrix.target }}/release" a3s-search
           echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
 
       - name: Upload artifact
