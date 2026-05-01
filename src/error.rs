@@ -69,9 +69,7 @@ impl SearchError {
     /// Returns true if this error is likely transient and retrying might help.
     pub fn is_transient(&self) -> bool {
         match self {
-            Self::Http(e) => {
-                e.is_timeout() || e.is_connect() || e.is_decode()
-            }
+            Self::Http(e) => e.is_timeout() || e.is_connect() || e.is_decode(),
             Self::Browser(msg) => {
                 let msg = msg.to_lowercase();
                 msg.contains("timeout")
@@ -90,7 +88,10 @@ impl SearchError {
 
     /// Returns true if this error indicates a client-side issue that won't be fixed by retrying.
     pub fn is_client_error(&self) -> bool {
-        matches!(self, Self::NotFound(_) | Self::PermissionDenied(_) | Self::InvalidQuery(_))
+        matches!(
+            self,
+            Self::NotFound(_) | Self::PermissionDenied(_) | Self::InvalidQuery(_)
+        )
     }
 
     /// Returns a score from 0-100 indicating how likely retrying will help.
@@ -243,11 +244,17 @@ mod tests {
 
     #[test]
     fn test_retry_score_invalid_query() {
-        assert_eq!(SearchError::InvalidQuery("bad".to_string()).retry_score(), 0);
+        assert_eq!(
+            SearchError::InvalidQuery("bad".to_string()).retry_score(),
+            0
+        );
     }
 
     #[test]
     fn test_retry_score_rate_limited() {
-        assert_eq!(SearchError::RateLimited("too many".to_string()).retry_score(), 80);
+        assert_eq!(
+            SearchError::RateLimited("too many".to_string()).retry_score(),
+            80
+        );
     }
 }

@@ -595,11 +595,21 @@ mod tests {
     #[test]
     fn test_is_transient_error() {
         assert!(is_transient_error(&SearchError::Browser("timeout".into())));
-        assert!(is_transient_error(&SearchError::Browser("Connection reset".into())));
-        assert!(is_transient_error(&SearchError::Browser("net::err_connection_reset".into())));
-        assert!(is_transient_error(&SearchError::Browser("Channel closed".into())));
-        assert!(!is_transient_error(&SearchError::Browser("CAPTCHA detected".into())));
-        assert!(!is_transient_error(&SearchError::Browser("Failed to parse".into())));
+        assert!(is_transient_error(&SearchError::Browser(
+            "Connection reset".into()
+        )));
+        assert!(is_transient_error(&SearchError::Browser(
+            "net::err_connection_reset".into()
+        )));
+        assert!(is_transient_error(&SearchError::Browser(
+            "Channel closed".into()
+        )));
+        assert!(!is_transient_error(&SearchError::Browser(
+            "CAPTCHA detected".into()
+        )));
+        assert!(!is_transient_error(&SearchError::Browser(
+            "Failed to parse".into()
+        )));
     }
 
     #[tokio::test]
@@ -638,8 +648,8 @@ mod tests {
     #[test]
     fn test_browser_fetcher_with_network_idle_wait() {
         let pool = Arc::new(BrowserPool::new(BrowserPoolConfig::default()));
-        let fetcher = BrowserFetcher::new(pool)
-            .with_wait(WaitStrategy::NetworkIdle { idle_ms: 1000 });
+        let fetcher =
+            BrowserFetcher::new(pool).with_wait(WaitStrategy::NetworkIdle { idle_ms: 1000 });
         assert!(matches!(
             fetcher.wait,
             WaitStrategy::NetworkIdle { idle_ms: 1000 }
@@ -649,8 +659,7 @@ mod tests {
     #[test]
     fn test_browser_fetcher_with_delay_wait() {
         let pool = Arc::new(BrowserPool::new(BrowserPoolConfig::default()));
-        let fetcher = BrowserFetcher::new(pool)
-            .with_wait(WaitStrategy::Delay { ms: 500 });
+        let fetcher = BrowserFetcher::new(pool).with_wait(WaitStrategy::Delay { ms: 500 });
         assert!(matches!(fetcher.wait, WaitStrategy::Delay { ms: 500 }));
     }
 
