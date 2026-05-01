@@ -19,25 +19,18 @@ jobs:
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: "crates/search -> target"
 
       - name: Format check
-        working-directory: crates/search
         run: cargo fmt -- --check
 
       - name: Clippy (no default features)
-        working-directory: crates/search
         run: cargo clippy --no-default-features -- -D warnings
 
       - name: Clippy (all features)
-        working-directory: crates/search
         run: cargo clippy --all-features -- -D warnings
 
       - name: Tests (no default features)
-        working-directory: crates/search
         run: cargo test --no-default-features --lib
 
       - name: Tests (all features)
-        working-directory: crates/search
         run: cargo test --all-features --lib

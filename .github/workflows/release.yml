@@ -18,7 +18,7 @@ env:
 
 jobs:
   # ───────────────────────────────────────────────
-  # Gate: CI checks (runs in parallel with builds)
+  # Gate: CI checks
   # ───────────────────────────────────────────────
   ci:
     name: CI
@@ -32,19 +32,14 @@ jobs:
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: "crates/search -> target"
 
       - name: Format check
-        working-directory: crates/search
         run: cargo fmt -- --check
 
       - name: Clippy
-        working-directory: crates/search
         run: cargo clippy --no-default-features -- -D warnings
 
       - name: Tests
-        working-directory: crates/search
         run: cargo test --no-default-features --lib
 
   # ───────────────────────────────────────────────
@@ -82,8 +77,6 @@ jobs:
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: "crates/search -> target"
 
       - name: Install cross toolchain
         if: matrix.cross
@@ -93,19 +86,18 @@ jobs:
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
       - name: Build
-        working-directory: crates/search
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Strip & Package
         shell: bash
         run: |
-          BINARY="crates/search/target/${{ matrix.target }}/release/a3s-search"
+          BINARY="target/${{ matrix.target }}/release/a3s-search"
           STRIP=${STRIP_CMD:-strip}
           $STRIP "$BINARY" 2>/dev/null || true
 
           VERSION="${GITHUB_REF_NAME#v}"
           ARCHIVE="a3s-search-${VERSION}-${{ matrix.name }}.tar.gz"
-          tar -czf "$ARCHIVE" -C "crates/search/target/${{ matrix.target }}/release" a3s-search
+          tar -czf "$ARCHIVE" -C "target/${{ matrix.target }}/release" a3s-search
           echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
 
       - name: Upload artifact
@@ -128,11 +120,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: "crates/search -> target"
 
       - name: Publish
-        working-directory: crates/search
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
         run: cargo publish --allow-dirty
