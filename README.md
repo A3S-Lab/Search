@@ -11,7 +11,6 @@
 <p align="center">
   <a href="#features">Features</a> •
   <a href="#quick-start">Quick Start</a> •
-  <a href="#sdks">SDKs</a> •
   <a href="#architecture">Architecture</a> •
   <a href="#api-reference">API Reference</a> •
   <a href="#development">Development</a>
@@ -59,7 +58,6 @@ async fn main() -> anyhow::Result<()> {
 - **HCL Configuration**: Load settings from `.hcl` config files
 - **Headless Browser**: Chrome and Lightpanda backends for JS-rendered engines
 - **Auto-Download**: Automatically detects or downloads browsers
-- **Native SDKs**: TypeScript (NAPI) and Python (PyO3) bindings
 
 ## Quick Start
 
@@ -185,100 +183,6 @@ a3s-search engines
 | `baidu` | 百度搜索 | Headless |
 | `bing_cn` | 必应中国 | Headless |
 
-## SDKs
-
-Native bindings for TypeScript and Python, powered by NAPI-RS and PyO3.
-
-### TypeScript (Node.js)
-
-```bash
-npm install @a3s-lab/search
-```
-
-```typescript
-import { A3SSearch } from '@a3s-lab/search';
-
-const search = new A3SSearch();
-
-// Simple search
-const response = await search.search('rust programming');
-
-// With options
-const response = await search.search('rust programming', {
-  engines: ['ddg', 'wiki', 'brave', 'bing'],
-  limit: 5,
-  timeout: 15,
-  proxy: 'http://127.0.0.1:8080',
-});
-
-for (const r of response.results) {
-  console.log(`${r.title}: ${r.url}`);
-}
-```
-
-### Python
-
-```bash
-pip install a3s-search
-```
-
-```python
-from a3s_search import A3SSearch
-
-search = A3SSearch()
-
-# Simple search
-response = search.search("rust programming")
-
-# With options
-response = search.search("rust programming",
-    engines=["ddg", "wiki", "brave", "bing"],
-    limit=5,
-    timeout=15,
-    proxy="http://127.0.0.1:8080",
-)
-
-for r in response.results:
-    print(f"{r.title}: {r.url}")
-```
-
-### SDK Types
-
-Both SDKs expose headless browser configuration types:
-
-**TypeScript:**
-```typescript
-type BrowserBackend = "Chrome" | "Lightpanda"
-
-interface HeadlessConfig {
-  backend: BrowserBackend
-  browserPath?: string
-  maxTabs?: number
-  launchArgs?: string[]
-}
-
-interface SearchConfig {
-  timeout: number
-  engines: Record<string, EngineConfig>
-  headless?: HeadlessConfig
-}
-```
-
-**Python:**
-```python
-class BrowserBackend:
-    Chrome
-    Lightpanda
-
-class HeadlessConfig:
-    def __init__(self, backend: BrowserBackend, browser_path: str = None,
-                 max_tabs: int = None, launch_args: list = None)
-
-class SearchConfig:
-    def __init__(self, timeout: int, engines: dict = None,
-                 headless: HeadlessConfig = None)
-```
-
 ## Architecture
 
 ### System Overview
@@ -287,12 +191,6 @@ class SearchConfig:
 ┌─────────────────────────────────────────────────────┐
 │                      A3S Search                      │
 ├─────────────────────────────────────────────────────┤
-│  ┌─────────┐    ┌─────────┐    ┌─────────┐        │
-│  │ Rust    │    │ Python  │    │ Node.js │        │
-│  │ Core    │◄───┤ SDK     │    │ SDK     │        │
-│  └────┬────┘    └─────────┘    └─────────┘        │
-│       │                                             │
-│       ▼                                             │
 │  ┌─────────────────────────────────────────────┐   │
 │  │              Search Orchestrator              │   │
 │  │  • Parallel execution (tokio::join_all)      │   │
@@ -464,8 +362,6 @@ cargo clippy -p a3s-search --no-default-features -- -D warnings
 
 Releases are published to GitHub Releases with:
 - CLI binaries (darwin-arm64, darwin-x86_64, linux-arm64, linux-x86_64)
-- Python wheels (Python 3.9-3.13, many platforms)
-- Node.js bindings (.node for multiple platforms)
 
 ```bash
 # Create and push tag to trigger release

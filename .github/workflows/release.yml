@@ -5,26 +5,35 @@ on:
     tags:
       - "v*"
 
+# Prevent duplicate runs
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   # ───────────────────────────────────────────────
-  # Gate: CI checks must pass before any publishing
+  # Gate: CI checks (runs in parallel with builds)
   # ───────────────────────────────────────────────
   ci:
-    name: CI Checks
+    name: CI
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup workspace context
-        run: bash .github/setup-workspace.sh
-
-      - name: Install Rust
+      - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "crates/search -> target"
 
       - name: Format check
         run: cargo fmt -p a3s-search -- --check
@@ -39,7 +48,7 @@ jobs:
   # Build CLI binary for 4 platforms
   # ───────────────────────────────────────────────
   build-cli:
-    name: CLI / ${{ matrix.name }}
+    name: Build / ${{ matrix.name }}
     needs: ci
     strategy:
       fail-fast: false
@@ -64,15 +73,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup workspace context
-        run: bash .github/setup-workspace.sh
-
-      - name: Install Rust
+      - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install cross-compilation tools
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "crates/search -> target"
+
+      - name: Install cross toolchain
         if: matrix.cross
         run: |
           sudo apt-get update
@@ -82,19 +92,13 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target }} -p a3s-search
 
-      - name: Strip binary
+      - name: Strip & Package
         shell: bash
         run: |
           BINARY="target/${{ matrix.target }}/release/a3s-search"
-          if [ "${{ matrix.cross }}" = "true" ]; then
-            aarch64-linux-gnu-strip "$BINARY" || true
-          else
-            strip "$BINARY" || true
-          fi
+          STRIP=${STRIP_CMD:-strip}
+          $STRIP "$BINARY" 2>/dev/null || true
 
-      - name: Package
-        shell: bash
-        run: |
           VERSION="${GITHUB_REF_NAME#v}"
           ARCHIVE="a3s-search-${VERSION}-${{ matrix.name }}.tar.gz"
           tar -czf "$ARCHIVE" -C "target/${{ matrix.target }}/release" a3s-search
@@ -110,17 +114,18 @@ jobs:
   # Publish core crate to crates.io
   # ───────────────────────────────────────────────
   publish-crate:
-    name: Publish to crates.io
+    name: Publish Crate
     needs: ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup workspace context
-        run: bash .github/setup-workspace.sh
-
-      - name: Install Rust
+      - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "crates/search -> target"
 
       - name: Publish
         working-directory: crates/search
@@ -133,14 +138,16 @@ jobs:
   # ───────────────────────────────────────────────
   github-release:
     name: GitHub Release
-    needs: [ci, build-cli]
+    needs: [publish-crate, build-cli]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Download CLI artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: cli-*
@@ -168,36 +175,31 @@ jobs:
           fi
           echo "$NOTES" > /tmp/release-notes.md
 
-      - name: Create or update release
+      - name: Create release
         env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" &>/dev/null; then
-            gh release upload "$GITHUB_REF_NAME" \
-              artifacts/*.tar.gz artifacts/checksums.txt --clobber
-          else
-            gh release create "$GITHUB_REF_NAME" \
-              --title "$GITHUB_REF_NAME" \
-              --notes-file /tmp/release-notes.md \
-              artifacts/*.tar.gz artifacts/checksums.txt
-          fi
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file /tmp/release-notes.md \
+            artifacts/*.tar.gz artifacts/checksums.txt
 
   # ───────────────────────────────────────────────
-  # Update Homebrew formula in homebrew-tap
+  # Update Homebrew formula
   # ───────────────────────────────────────────────
   update-homebrew:
-    name: Update Homebrew
+    name: Homebrew
     needs: github-release
     runs-on: ubuntu-latest
     steps:
-      - name: Download CLI artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: cli-*
           path: artifacts
           merge-multiple: true
 
-      - name: Compute SHA256 hashes
+      - name: Compute checksums
         id: sha
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
@@ -208,9 +210,6 @@ jobs:
               HASH=$(sha256sum "$FILE" | awk '{print $1}')
               KEY=$(echo "$platform" | tr '-' '_')
               echo "${KEY}=$HASH" >> "$GITHUB_OUTPUT"
-              echo "$platform: $HASH"
-            else
-              echo "Warning: $FILE not found"
             fi
           done
 
@@ -229,56 +228,13 @@ jobs:
           SHA_LINUX_ARM64: ${{ steps.sha.outputs.linux_arm64 }}
           SHA_LINUX_X86_64: ${{ steps.sha.outputs.linux_x86_64 }}
         run: |
-          cat > homebrew-tap/Formula/a3s-search.rb <<'FORMULA'
-          class A3sSearch < Formula
-            desc "Embeddable meta search engine CLI with proxy pool support"
-            homepage "https://github.com/A3S-Lab/Search"
-            version "VERSION_PLACEHOLDER"
-            license "MIT"
-
-            on_macos do
-              on_arm do
-                url "https://github.com/A3S-Lab/Search/releases/download/vVERSION_PLACEHOLDER/a3s-search-VERSION_PLACEHOLDER-darwin-arm64.tar.gz"
-                sha256 "SHA_DARWIN_ARM64_PLACEHOLDER"
-              end
-              on_intel do
-                url "https://github.com/A3S-Lab/Search/releases/download/vVERSION_PLACEHOLDER/a3s-search-VERSION_PLACEHOLDER-darwin-x86_64.tar.gz"
-                sha256 "SHA_DARWIN_X86_64_PLACEHOLDER"
-              end
-            end
-
-            on_linux do
-              on_arm do
-                url "https://github.com/A3S-Lab/Search/releases/download/vVERSION_PLACEHOLDER/a3s-search-VERSION_PLACEHOLDER-linux-arm64.tar.gz"
-                sha256 "SHA_LINUX_ARM64_PLACEHOLDER"
-              end
-              on_intel do
-                url "https://github.com/A3S-Lab/Search/releases/download/vVERSION_PLACEHOLDER/a3s-search-VERSION_PLACEHOLDER-linux-x86_64.tar.gz"
-                sha256 "SHA_LINUX_X86_64_PLACEHOLDER"
-              end
-            end
-
-            def install
-              bin.install "a3s-search"
-            end
-
-            test do
-              assert_match "a3s-search", shell_output("#{bin}/a3s-search --version")
-            end
-          end
-          FORMULA
-
-          # Remove leading whitespace from heredoc
-          sed -i 's/^          //' homebrew-tap/Formula/a3s-search.rb
-
-          # Substitute placeholders
-          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/g" homebrew-tap/Formula/a3s-search.rb
-          sed -i "s/SHA_DARWIN_ARM64_PLACEHOLDER/${SHA_DARWIN_ARM64}/g" homebrew-tap/Formula/a3s-search.rb
-          sed -i "s/SHA_DARWIN_X86_64_PLACEHOLDER/${SHA_DARWIN_X86_64}/g" homebrew-tap/Formula/a3s-search.rb
-          sed -i "s/SHA_LINUX_ARM64_PLACEHOLDER/${SHA_LINUX_ARM64}/g" homebrew-tap/Formula/a3s-search.rb
-          sed -i "s/SHA_LINUX_X86_64_PLACEHOLDER/${SHA_LINUX_X86_64}/g" homebrew-tap/Formula/a3s-search.rb
-
-          cat homebrew-tap/Formula/a3s-search.rb
+          sed -e "s/@VERSION@/${VERSION}/g" \
+              -e "s/@SHA_DARWIN_ARM64@/${SHA_DARWIN_ARM64}/g" \
+              -e "s/@SHA_DARWIN_X86_64@/${SHA_DARWIN_X86_64}/g" \
+              -e "s/@SHA_LINUX_ARM64@/${SHA_LINUX_ARM64}/g" \
+              -e "s/@SHA_LINUX_X86_64@/${SHA_LINUX_X86_64}/g" \
+              homebrew-tap/Formula/a3s-search.rb.template \
+              > homebrew-tap/Formula/a3s-search.rb
 
       - name: Commit and push
         working-directory: homebrew-tap
@@ -291,21 +247,3 @@ jobs:
           git diff --cached --quiet && echo "No changes" && exit 0
           git commit -m "a3s-search: update to ${VERSION}"
           git push
-
-  # ───────────────────────────────────────────────
-  # Build and publish Node SDK to npm (7 platforms)
-  # ───────────────────────────────────────────────
-  publish-node:
-    name: Node SDK
-    needs: ci
-    uses: ./.github/workflows/publish-node.yml
-    secrets: inherit
-
-  # ───────────────────────────────────────────────
-  # Build and publish Python SDK to PyPI (7 platforms)
-  # ───────────────────────────────────────────────
-  publish-python:
-    name: Python SDK
-    needs: ci
-    uses: ./.github/workflows/publish-python.yml
-    secrets: inherit

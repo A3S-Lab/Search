@@ -14,11 +14,6 @@ echo "🚀 Releasing version $NEW_VERSION"
 # 1. 更新版本号
 echo "📝 Updating version numbers..."
 sed -i '' "s/^version = \".*\"/version = \"$NEW_VERSION\"/" Cargo.toml
-sed -i '' "s/^version = \".*\"/version = \"$NEW_VERSION\"/" sdk/python/pyproject.toml
-sed -i '' "s/\"version\": \".*\"/\"version\": \"$NEW_VERSION\"/" sdk/node/package.json
-find sdk/node/npm -name "package.json" -not -path "*/node_modules/*" \
-  -exec sed -i '' "s/\"version\": \".*\"/\"version\": \"$NEW_VERSION\"/g" {} \;
-sed -i '' "s/@a3s-lab\/search-\([^\"]*\)\": \"[^\"]*\"/@a3s-lab\/search-\1\": \"$NEW_VERSION\"/g" sdk/node/package.json
 
 # 2. 更新 Cargo.lock
 echo "🔒 Updating Cargo.lock..."
@@ -27,8 +22,6 @@ cargo update -p a3s-search
 # 3. 运行测试
 echo "🧪 Running tests..."
 cargo test --lib
-(cd sdk/node && npm test)
-(cd sdk/python && pytest)
 
 # 4. 提交
 echo "💾 Committing changes..."

@@ -1,6 +1,0 @@
-node_modules/
-dist/
-*.node
-index.js
-index.d.ts
-target/

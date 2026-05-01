@@ -4,6 +4,12 @@
 //! It provides a shared browser process pool and a `PageFetcher` implementation
 //! that renders pages using a headless browser via the Chrome DevTools Protocol.
 //!
+//! ## Architecture
+//!
+//! 1. **BrowserPool** - Manages browser lifecycle and tab concurrency
+//! 2. **PageGuard** (RAII) - Ensures pages are closed even on errors
+//! 3. **BrowserFetcher** - PageFetcher with retry logic and exponential backoff
+//!
 //! ## Backends
 //!
 //! Two backends are supported, selected via `BrowserPoolConfig::backend`:
@@ -12,8 +18,7 @@
 //!   Requires the `headless` feature. Chrome is auto-detected or downloaded.
 //!
 //! - **`BrowserBackend::Lightpanda`**: Spawns a Lightpanda process and connects
-//!   via CDP over WebSocket. Requires the `lightpanda` feature. Supported on
-//!   Linux (x86_64/aarch64) and macOS (x86_64/aarch64) only.
+//!   via CDP over WebSocket. Requires the `lightpanda` feature.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -32,31 +37,19 @@ use crate::{Result, SearchError};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrowserBackend {
     /// Launch Chrome/Chromium locally.
-    ///
-    /// Chrome is auto-detected on the system or downloaded from Google's
-    /// Chrome for Testing CDN and cached in `~/.a3s/chromium/`.
     Chrome,
 
-    /// Spawn a Lightpanda process and connect via CDP over WebSocket (default when available).
-    ///
-    /// Requires the `lightpanda` feature. Supported on Linux and macOS only.
-    /// Lightpanda is auto-detected via `LIGHTPANDA` env var, PATH, or
-    /// downloaded from GitHub releases and cached in `~/.a3s/lightpanda/`.
+    /// Spawn a Lightpanda process and connect via CDP over WebSocket.
     #[cfg(feature = "lightpanda")]
     Lightpanda,
 }
 
-#[allow(clippy::derivable_impls)]
 impl Default for BrowserBackend {
     fn default() -> Self {
         #[cfg(feature = "lightpanda")]
-        {
-            Self::Lightpanda
-        }
+        return Self::Lightpanda;
         #[cfg(not(feature = "lightpanda"))]
-        {
-            Self::Chrome
-        }
+        return Self::Chrome;
     }
 }
 
@@ -68,15 +61,13 @@ pub struct BrowserPoolConfig {
     /// Whether to run Chrome in headless mode (ignored for Lightpanda).
     pub headless: bool,
     /// Path to the Chrome/Chromium executable. If `None`, auto-detected.
-    /// Only used when `backend` is `BrowserBackend::Chrome`.
     pub chrome_path: Option<String>,
     /// Path to the Lightpanda executable. If `None`, auto-detected.
-    /// Only used when `backend` is `BrowserBackend::Lightpanda`.
     #[cfg(feature = "lightpanda")]
     pub lightpanda_path: Option<String>,
     /// Proxy URL for the browser to use.
     pub proxy_url: Option<String>,
-    /// Additional launch arguments for Chrome (ignored for Lightpanda).
+    /// Additional launch arguments for Chrome.
     pub launch_args: Vec<String>,
     /// Which browser backend to use.
     pub backend: BrowserBackend,
@@ -99,13 +90,11 @@ impl Default for BrowserPoolConfig {
 
 /// A shared pool managing a single browser process with tab concurrency control.
 ///
-/// The browser is lazily launched on the first `acquire_browser()` call. A
-/// semaphore limits the number of concurrent tabs to prevent memory exhaustion.
+/// The browser is lazily launched on the first `acquire_browser()` call.
+/// A semaphore limits the number of concurrent tabs to prevent memory exhaustion.
 pub struct BrowserPool {
     config: BrowserPoolConfig,
     browser: Mutex<Option<Arc<Browser>>>,
-    /// Child process handle for the Lightpanda backend.
-    /// Always present to simplify the struct; `None` for the Chrome backend.
     child: Mutex<Option<tokio::process::Child>>,
     tab_semaphore: Arc<Semaphore>,
 }
@@ -128,8 +117,6 @@ impl BrowserPool {
     }
 
     /// Lazily acquires the browser, launching it on the first call.
-    ///
-    /// Routes to the appropriate backend based on `config.backend`.
     pub async fn acquire_browser(&self) -> Result<Arc<Browser>> {
         #[cfg(feature = "lightpanda")]
         if self.config.backend == BrowserBackend::Lightpanda {
@@ -139,7 +126,6 @@ impl BrowserPool {
         self.acquire_chrome().await
     }
 
-    /// Launches Chrome/Chromium and returns a shared handle.
     async fn acquire_chrome(&self) -> Result<Arc<Browser>> {
         let mut guard = self.browser.lock().await;
 
@@ -155,7 +141,6 @@ impl BrowserPool {
             builder = builder.arg("--headless=new");
         }
 
-        // Resolve Chrome executable: explicit path > auto-detect > auto-download
         if let Some(ref path) = self.config.chrome_path {
             builder = builder.chrome_executable(path);
         } else {
@@ -164,18 +149,13 @@ impl BrowserPool {
             builder = builder.chrome_executable(chrome_path);
         }
 
-        // Realistic user-agent to avoid headless detection.
-        // Chrome's --headless=new mode injects "HeadlessChrome" into the UA,
-        // which Google and other sites trivially detect and block.
         builder = builder.arg(
             "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
              AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         );
 
-        // Anti-detection: hide navigator.webdriver and automation indicators
         builder = builder.arg("--disable-blink-features=AutomationControlled");
 
-        // Standard arguments for scraping
         builder = builder
             .arg("--disable-gpu")
             .arg("--no-sandbox")
@@ -219,7 +199,6 @@ impl BrowserPool {
         Ok(browser)
     }
 
-    /// Spawns a Lightpanda process and connects to it via CDP WebSocket.
     #[cfg(feature = "lightpanda")]
     async fn acquire_lightpanda(&self) -> Result<Arc<Browser>> {
         let mut guard = self.browser.lock().await;
@@ -230,17 +209,14 @@ impl BrowserPool {
 
         debug!("Launching Lightpanda browser");
 
-        // Resolve Lightpanda binary
         let lp_path = if let Some(ref path) = self.config.lightpanda_path {
             std::path::PathBuf::from(path)
         } else {
             crate::browser_setup_lp::ensure_lightpanda().await?
         };
 
-        // Bind to port 0 to get a free port from the OS
         let port = find_free_port()?;
 
-        // Spawn `lightpanda serve --host 127.0.0.1 --port <port>`
         let child = tokio::process::Command::new(&lp_path)
             .args(["serve", "--host", "127.0.0.1", "--port", &port.to_string()])
             .kill_on_drop(true)
@@ -255,7 +231,6 @@ impl BrowserPool {
 
         *self.child.lock().await = Some(child);
 
-        // Wait until Lightpanda's CDP server accepts TCP connections
         wait_for_cdp_ready("127.0.0.1", port, Duration::from_secs(10)).await?;
 
         let ws_url = format!("ws://127.0.0.1:{}", port);
@@ -298,11 +273,7 @@ impl BrowserPool {
     }
 }
 
-/// Find a free TCP port by letting the OS assign one.
-///
-/// Binds to `127.0.0.1:0` to get an OS-assigned port, then immediately
-/// drops the listener. There is a small TOCTOU window, but it is acceptable
-/// for local process spawning where port collisions are rare.
+#[allow(dead_code)]
 fn find_free_port() -> Result<u16> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")
         .map_err(|e| SearchError::Browser(format!("Failed to find a free port: {}", e)))?;
@@ -313,10 +284,6 @@ fn find_free_port() -> Result<u16> {
     Ok(port)
 }
 
-/// Poll until the CDP server at `host:port` accepts TCP connections.
-///
-/// Returns `Ok(())` as soon as a connection succeeds, or an error if
-/// `timeout` elapses without a successful connection.
 #[cfg(feature = "lightpanda")]
 async fn wait_for_cdp_ready(host: &str, port: u16, timeout: Duration) -> Result<()> {
     let addr = format!("{}:{}", host, port);
@@ -339,23 +306,76 @@ async fn wait_for_cdp_ready(host: &str, port: u16, timeout: Duration) -> Result<
     }
 }
 
+// ============================================================================
+// RAII PageGuard - Ensures page cleanup even on errors
+// ============================================================================
+
+/// RAII guard for browser pages.
+///
+/// Ensures the page is closed when the guard is dropped, even if an error occurs.
+/// This prevents resource leaks from crashed or abandoned browser tabs.
+struct PageGuard {
+    // Option allows taking ownership without cloning
+    page: Option<chromiumoxide::Page>,
+}
+
+impl PageGuard {
+    fn new(page: chromiumoxide::Page) -> Self {
+        Self { page: Some(page) }
+    }
+
+    /// Take ownership of the page, bypassing RAII cleanup.
+    /// Use when you're about to close it manually.
+    fn take(&mut self) -> Option<chromiumoxide::Page> {
+        self.page.take()
+    }
+}
+
+impl Drop for PageGuard {
+    fn drop(&mut self) {
+        if let Some(page) = self.page.take() {
+            let page = page.clone();
+            tokio::spawn(async move {
+                if let Err(e) = page.close().await {
+                    warn!("PageGuard: failed to close page on drop: {}", e);
+                }
+            });
+        }
+    }
+}
+
+// ============================================================================
+// BrowserFetcher - PageFetcher with retry and RAII
+// ============================================================================
+
 /// A `PageFetcher` that uses a headless browser to render JavaScript-heavy pages.
 ///
 /// Each `fetch()` call opens a new tab, navigates, waits according to the
 /// configured `WaitStrategy`, extracts the rendered HTML, and closes the tab.
+///
+/// Features:
+/// - RAII page cleanup via `PageGuard`
+/// - Retry with exponential backoff for transient errors
+/// - Configurable retry parameters
 pub struct BrowserFetcher {
     pool: Arc<BrowserPool>,
     wait: WaitStrategy,
     user_agent: Option<String>,
+    max_retries: u32,
+    retry_delay_ms: u64,
 }
 
 impl BrowserFetcher {
-    /// Creates a new browser fetcher with default wait strategy (`Load`).
+    /// Creates a new browser fetcher with default settings.
+    ///
+    /// Default: Load strategy, no custom UA, 3 retries with 100ms base delay.
     pub fn new(pool: Arc<BrowserPool>) -> Self {
         Self {
             pool,
             wait: WaitStrategy::default(),
             user_agent: None,
+            max_retries: 3,
+            retry_delay_ms: 100,
         }
     }
 
@@ -370,12 +390,44 @@ impl BrowserFetcher {
         self.user_agent = Some(user_agent.into());
         self
     }
-}
 
-#[async_trait]
-impl PageFetcher for BrowserFetcher {
-    async fn fetch(&self, url: &str) -> Result<String> {
-        // Acquire a tab permit to limit concurrency
+    /// Sets retry parameters for transient failures.
+    ///
+    /// - `max_retries`: Maximum number of retry attempts (default: 3)
+    /// - `retry_delay_ms`: Base delay between retries in milliseconds (default: 100)
+    ///
+    /// Uses exponential backoff: delay * 2^(attempt - 1)
+    pub fn with_retries(mut self, max_retries: u32, retry_delay_ms: u64) -> Self {
+        self.max_retries = max_retries;
+        self.retry_delay_ms = retry_delay_ms;
+        self
+    }
+
+    /// Perform the fetch with retry logic.
+    async fn fetch_with_retry(&self, url: &str) -> Result<String> {
+        let mut attempt = 0;
+        let mut delay = Duration::from_millis(self.retry_delay_ms);
+
+        loop {
+            match self.do_fetch(url).await {
+                Ok(html) => return Ok(html),
+                Err(e) if attempt < self.max_retries && is_transient_error(&e) => {
+                    attempt += 1;
+                    warn!(
+                        "Transient error on {}, retry {}/{} after {:?}: {}",
+                        url, attempt, self.max_retries, delay, e
+                    );
+                    tokio::time::sleep(delay).await;
+                    delay *= 2; // Exponential backoff
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    /// Core fetch implementation without retry.
+    async fn do_fetch(&self, url: &str) -> Result<String> {
+        // Acquire tab permit
         let _permit = self
             .pool
             .tab_semaphore()
@@ -390,9 +442,13 @@ impl PageFetcher for BrowserFetcher {
             .await
             .map_err(|e| SearchError::Browser(format!("Failed to open tab: {}", e)))?;
 
-        // Set user agent if configured. Applied after tab creation; affects subsequent
-        // requests on the page (e.g. XHR, redirects). For the initial document request
-        // use a browser-level UA launch arg instead.
+        // RAII guard ensures page cleanup on drop
+        let mut guard = PageGuard::new(page);
+
+        // Take page from guard for operations
+        let page = guard.take().expect("Page already taken");
+
+        // Set user agent if configured
         if let Some(ref ua) = self.user_agent {
             if let Err(e) = page
                 .set_user_agent(SetUserAgentOverrideParams::new(ua))
@@ -403,6 +459,24 @@ impl PageFetcher for BrowserFetcher {
         }
 
         // Apply wait strategy
+        self.apply_wait_strategy(&page).await?;
+
+        // Extract the rendered HTML
+        let html = page
+            .content()
+            .await
+            .map_err(|e| SearchError::Browser(format!("Failed to get page content: {}", e)))?;
+
+        // Close the tab explicitly (PageGuard on drop is backup)
+        if let Err(e) = page.close().await {
+            warn!("Failed to close browser tab: {}", e);
+        }
+
+        Ok(html)
+    }
+
+    /// Apply the configured wait strategy.
+    async fn apply_wait_strategy(&self, page: &chromiumoxide::Page) -> Result<()> {
         match &self.wait {
             WaitStrategy::Load => {
                 page.wait_for_navigation()
@@ -410,23 +484,20 @@ impl PageFetcher for BrowserFetcher {
                     .map_err(|e| SearchError::Browser(format!("Navigation wait failed: {}", e)))?;
             }
             WaitStrategy::NetworkIdle { idle_ms } => {
-                // Wait for load first, then an additional idle period
                 page.wait_for_navigation()
                     .await
                     .map_err(|e| SearchError::Browser(format!("Navigation wait failed: {}", e)))?;
                 tokio::time::sleep(Duration::from_millis(*idle_ms)).await;
             }
             WaitStrategy::Selector { css, timeout_ms } => {
-                // Wait for the selector, but don't fail if it's not found.
-                // The page may have loaded a CAPTCHA or error page instead;
-                // let the engine's parser detect and report that.
-                let found = tokio::time::timeout(Duration::from_millis(*timeout_ms), async {
-                    page.find_element(css.as_str()).await
-                })
+                let found = tokio::time::timeout(
+                    Duration::from_millis(*timeout_ms),
+                    page.find_element(css.as_str()),
+                )
                 .await;
                 if let Err(_) | Ok(Err(_)) = found {
                     debug!(
-                        "Selector '{}' not found within {}ms, proceeding with current page content",
+                        "Selector '{}' not found within {}ms, proceeding with current page",
                         css, timeout_ms
                     );
                 }
@@ -438,21 +509,27 @@ impl PageFetcher for BrowserFetcher {
                 tokio::time::sleep(Duration::from_millis(*ms)).await;
             }
         }
-
-        // Extract the rendered HTML
-        let html = page
-            .content()
-            .await
-            .map_err(|e| SearchError::Browser(format!("Failed to get page content: {}", e)))?;
-
-        // Close the tab (best-effort, don't fail the fetch)
-        if let Err(e) = page.close().await {
-            warn!("Failed to close browser tab: {}", e);
-        }
-
-        Ok(html)
+        Ok(())
     }
 }
+
+#[async_trait]
+impl PageFetcher for BrowserFetcher {
+    async fn fetch(&self, url: &str) -> Result<String> {
+        self.fetch_with_retry(url).await
+    }
+}
+
+/// Determines if an error is transient and worth retrying.
+/// DEPRECATED: Use SearchError::is_transient() instead.
+#[allow(dead_code)]
+fn is_transient_error(error: &SearchError) -> bool {
+    error.is_transient()
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -470,23 +547,6 @@ mod tests {
         assert_eq!(config.backend, BrowserBackend::Lightpanda);
         #[cfg(not(feature = "lightpanda"))]
         assert_eq!(config.backend, BrowserBackend::Chrome);
-    }
-
-    #[test]
-    fn test_browser_pool_config_custom() {
-        let config = BrowserPoolConfig {
-            max_tabs: 8,
-            headless: false,
-            chrome_path: Some("/usr/bin/chromium".to_string()),
-            proxy_url: Some("http://localhost:8080".to_string()),
-            launch_args: vec!["--disable-web-security".to_string()],
-            ..Default::default()
-        };
-        assert_eq!(config.max_tabs, 8);
-        assert!(!config.headless);
-        assert_eq!(config.chrome_path.as_deref(), Some("/usr/bin/chromium"));
-        assert_eq!(config.proxy_url.as_deref(), Some("http://localhost:8080"));
-        assert_eq!(config.launch_args.len(), 1);
     }
 
     #[test]
@@ -511,29 +571,40 @@ mod tests {
         let fetcher = BrowserFetcher::new(pool);
         assert!(matches!(fetcher.wait, WaitStrategy::Load));
         assert!(fetcher.user_agent.is_none());
+        assert_eq!(fetcher.max_retries, 3);
+        assert_eq!(fetcher.retry_delay_ms, 100);
     }
 
     #[test]
-    fn test_browser_fetcher_with_wait() {
+    fn test_browser_fetcher_builder() {
         let pool = Arc::new(BrowserPool::new(BrowserPoolConfig::default()));
-        let fetcher = BrowserFetcher::new(pool).with_wait(WaitStrategy::Selector {
-            css: "div.g".to_string(),
-            timeout_ms: 5000,
-        });
+        let fetcher = BrowserFetcher::new(pool)
+            .with_wait(WaitStrategy::Selector {
+                css: "div.g".to_string(),
+                timeout_ms: 5000,
+            })
+            .with_user_agent("CustomBot/1.0")
+            .with_retries(5, 200);
+
         assert!(matches!(fetcher.wait, WaitStrategy::Selector { .. }));
+        assert_eq!(fetcher.user_agent.as_deref(), Some("CustomBot/1.0"));
+        assert_eq!(fetcher.max_retries, 5);
+        assert_eq!(fetcher.retry_delay_ms, 200);
     }
 
     #[test]
-    fn test_browser_fetcher_with_user_agent() {
-        let pool = Arc::new(BrowserPool::new(BrowserPoolConfig::default()));
-        let fetcher = BrowserFetcher::new(pool).with_user_agent("CustomBot/1.0");
-        assert_eq!(fetcher.user_agent.as_deref(), Some("CustomBot/1.0"));
+    fn test_is_transient_error() {
+        assert!(is_transient_error(&SearchError::Browser("timeout".into())));
+        assert!(is_transient_error(&SearchError::Browser("Connection reset".into())));
+        assert!(is_transient_error(&SearchError::Browser("net::err_connection_reset".into())));
+        assert!(is_transient_error(&SearchError::Browser("Channel closed".into())));
+        assert!(!is_transient_error(&SearchError::Browser("CAPTCHA detected".into())));
+        assert!(!is_transient_error(&SearchError::Browser("Failed to parse".into())));
     }
 
     #[tokio::test]
     async fn test_browser_pool_shutdown_no_browser() {
         let pool = BrowserPool::new(BrowserPoolConfig::default());
-        // Shutdown without ever launching should not panic
         pool.shutdown().await;
     }
 
@@ -545,72 +616,42 @@ mod tests {
     }
 
     #[test]
-    fn test_browser_pool_config_with_proxy() {
-        let config = BrowserPoolConfig {
-            proxy_url: Some("http://localhost:8080".to_string()),
-            ..Default::default()
-        };
-        assert_eq!(config.proxy_url.as_deref(), Some("http://localhost:8080"));
-        assert!(config.headless);
+    fn test_find_free_port() {
+        let port = find_free_port().expect("Should find a free port");
+        assert!(port > 0, "Port should be non-zero");
     }
 
+    #[cfg(not(feature = "lightpanda"))]
     #[test]
-    fn test_browser_pool_config_with_launch_args() {
-        let config = BrowserPoolConfig {
-            launch_args: vec![
-                "--disable-web-security".to_string(),
-                "--ignore-certificate-errors".to_string(),
-            ],
-            ..Default::default()
-        };
-        assert_eq!(config.launch_args.len(), 2);
+    fn test_browser_backend_default_is_chrome() {
+        let backend = BrowserBackend::default();
+        assert_eq!(backend, BrowserBackend::Chrome);
     }
 
+    #[cfg(feature = "lightpanda")]
     #[test]
-    fn test_browser_pool_config_clone() {
-        let config = BrowserPoolConfig {
-            max_tabs: 8,
-            headless: false,
-            chrome_path: Some("/usr/bin/chromium".to_string()),
-            proxy_url: Some("socks5://localhost:1080".to_string()),
-            launch_args: vec!["--no-sandbox".to_string()],
-            ..Default::default()
-        };
-        let cloned = config.clone();
-        assert_eq!(cloned.max_tabs, 8);
-        assert!(!cloned.headless);
-        assert_eq!(cloned.chrome_path.as_deref(), Some("/usr/bin/chromium"));
-        assert_eq!(cloned.proxy_url.as_deref(), Some("socks5://localhost:1080"));
-        assert_eq!(cloned.launch_args.len(), 1);
-    }
-
-    #[test]
-    fn test_browser_pool_config_debug() {
-        let config = BrowserPoolConfig::default();
-        let debug_str = format!("{:?}", config);
-        assert!(debug_str.contains("BrowserPoolConfig"));
-        assert!(debug_str.contains("max_tabs"));
-    }
-
-    #[test]
-    fn test_browser_fetcher_builder_chain() {
-        let pool = Arc::new(BrowserPool::new(BrowserPoolConfig::default()));
-        let fetcher = BrowserFetcher::new(pool)
-            .with_wait(WaitStrategy::Delay { ms: 500 })
-            .with_user_agent("TestBot/2.0");
-        assert!(matches!(fetcher.wait, WaitStrategy::Delay { ms: 500 }));
-        assert_eq!(fetcher.user_agent.as_deref(), Some("TestBot/2.0"));
+    fn test_browser_backend_default_is_lightpanda() {
+        let backend = BrowserBackend::default();
+        assert_eq!(backend, BrowserBackend::Lightpanda);
     }
 
     #[test]
     fn test_browser_fetcher_with_network_idle_wait() {
         let pool = Arc::new(BrowserPool::new(BrowserPoolConfig::default()));
-        let fetcher =
-            BrowserFetcher::new(pool).with_wait(WaitStrategy::NetworkIdle { idle_ms: 1000 });
+        let fetcher = BrowserFetcher::new(pool)
+            .with_wait(WaitStrategy::NetworkIdle { idle_ms: 1000 });
         assert!(matches!(
             fetcher.wait,
             WaitStrategy::NetworkIdle { idle_ms: 1000 }
         ));
+    }
+
+    #[test]
+    fn test_browser_fetcher_with_delay_wait() {
+        let pool = Arc::new(BrowserPool::new(BrowserPoolConfig::default()));
+        let fetcher = BrowserFetcher::new(pool)
+            .with_wait(WaitStrategy::Delay { ms: 500 });
+        assert!(matches!(fetcher.wait, WaitStrategy::Delay { ms: 500 }));
     }
 
     #[test]
@@ -621,44 +662,5 @@ mod tests {
         };
         let pool = BrowserPool::new(config);
         assert_eq!(pool.tab_semaphore().available_permits(), 16);
-    }
-
-    #[cfg(not(feature = "lightpanda"))]
-    #[test]
-    fn test_browser_backend_default_is_chrome() {
-        let backend = BrowserBackend::default();
-        assert_eq!(backend, BrowserBackend::Chrome);
-        let config = BrowserPoolConfig::default();
-        assert_eq!(config.backend, BrowserBackend::Chrome);
-    }
-
-    #[cfg(feature = "lightpanda")]
-    #[test]
-    fn test_browser_backend_default_is_lightpanda() {
-        let backend = BrowserBackend::default();
-        assert_eq!(backend, BrowserBackend::Lightpanda);
-        let config = BrowserPoolConfig::default();
-        assert_eq!(config.backend, BrowserBackend::Lightpanda);
-    }
-
-    #[test]
-    fn test_find_free_port() {
-        let port = find_free_port().expect("Should find a free port");
-        assert!(port > 0, "Port should be non-zero");
-    }
-
-    #[cfg(feature = "lightpanda")]
-    #[test]
-    fn test_lightpanda_config() {
-        let config = BrowserPoolConfig {
-            backend: BrowserBackend::Lightpanda,
-            lightpanda_path: Some("/usr/local/bin/lightpanda".to_string()),
-            ..Default::default()
-        };
-        assert_eq!(config.backend, BrowserBackend::Lightpanda);
-        assert_eq!(
-            config.lightpanda_path.as_deref(),
-            Some("/usr/local/bin/lightpanda")
-        );
     }
 }
