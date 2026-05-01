@@ -26,6 +26,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate release tag and package version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PACKAGE_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "$PACKAGE_VERSION" != "$VERSION" ]; then
+            echo "Tag version ($VERSION) does not match Cargo.toml version ($PACKAGE_VERSION)" >&2
+            exit 1
+          fi
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -124,7 +133,13 @@ jobs:
       - name: Publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
-        run: cargo publish --allow-dirty
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if cargo search a3s-search --limit 1 | grep -q "a3s-search = \"${VERSION}\""; then
+            echo "a3s-search ${VERSION} is already published on crates.io; skipping cargo publish."
+            exit 0
+          fi
+          cargo publish --allow-dirty
 
   # ───────────────────────────────────────────────
   # Create GitHub Release with CLI binaries
@@ -172,10 +187,23 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
-            --notes-file /tmp/release-notes.md \
-            artifacts/*.tar.gz artifacts/checksums.txt
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --notes-file /tmp/release-notes.md \
+              --draft=false \
+              --prerelease=false \
+              --verify-tag
+            gh release upload "$GITHUB_REF_NAME" \
+              artifacts/*.tar.gz artifacts/checksums.txt \
+              --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --notes-file /tmp/release-notes.md \
+              --verify-tag \
+              artifacts/*.tar.gz artifacts/checksums.txt
+          fi
 
   # ───────────────────────────────────────────────
   # Update Homebrew formula
@@ -222,43 +250,43 @@ jobs:
           SHA_LINUX_X86_64="${{ steps.sha.outputs.linux_x86_64 }}"
 
           cat > homebrew-tap/Formula/a3s-search.rb << EOF
-class A3sSearch < Formula
-  desc "Embeddable meta search engine CLI with proxy pool support"
-  homepage "https://github.com/A3S-Lab/Search"
-  version "${VERSION}"
-  license "MIT"
+          class A3sSearch < Formula
+            desc "Embeddable meta search engine CLI with proxy pool support"
+            homepage "https://github.com/A3S-Lab/Search"
+            version "${VERSION}"
+            license "MIT"
 
-  on_macos do
-    on_arm do
-      url "https://github.com/A3S-Lab/Search/releases/download/v${VERSION}/a3s-search-${VERSION}-darwin-arm64.tar.gz"
-      sha256 "${SHA_DARWIN_ARM64}"
-    end
-    on_intel do
-      url "https://github.com/A3S-Lab/Search/releases/download/v${VERSION}/a3s-search-${VERSION}-darwin-x86_64.tar.gz"
-      sha256 "${SHA_DARWIN_X86_64}"
-    end
-  end
+            on_macos do
+              on_arm do
+                url "https://github.com/A3S-Lab/Search/releases/download/v${VERSION}/a3s-search-${VERSION}-darwin-arm64.tar.gz"
+                sha256 "${SHA_DARWIN_ARM64}"
+              end
+              on_intel do
+                url "https://github.com/A3S-Lab/Search/releases/download/v${VERSION}/a3s-search-${VERSION}-darwin-x86_64.tar.gz"
+                sha256 "${SHA_DARWIN_X86_64}"
+              end
+            end
 
-  on_linux do
-    on_arm do
-      url "https://github.com/A3S-Lab/Search/releases/download/v${VERSION}/a3s-search-${VERSION}-linux-arm64.tar.gz"
-      sha256 "${SHA_LINUX_ARM64}"
-    end
-    on_intel do
-      url "https://github.com/A3S-Lab/Search/releases/download/v${VERSION}/a3s-search-${VERSION}-linux-x86_64.tar.gz"
-      sha256 "${SHA_LINUX_X86_64}"
-    end
-  end
+            on_linux do
+              on_arm do
+                url "https://github.com/A3S-Lab/Search/releases/download/v${VERSION}/a3s-search-${VERSION}-linux-arm64.tar.gz"
+                sha256 "${SHA_LINUX_ARM64}"
+              end
+              on_intel do
+                url "https://github.com/A3S-Lab/Search/releases/download/v${VERSION}/a3s-search-${VERSION}-linux-x86_64.tar.gz"
+                sha256 "${SHA_LINUX_X86_64}"
+              end
+            end
 
-  def install
-    bin.install "a3s-search"
-  end
+            def install
+              bin.install "a3s-search"
+            end
 
-  test do
-    assert_match "a3s-search", shell_output("#{bin}/a3s-search --version")
-  end
-end
-EOF
+            test do
+              assert_match "a3s-search", shell_output("#{bin}/a3s-search --version")
+            end
+          end
+          EOF
 
       - name: Commit and push
         working-directory: homebrew-tap
