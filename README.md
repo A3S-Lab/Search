@@ -55,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
 - **Extensible**: Add custom engines via the `Engine` trait
 - **Dynamic Proxy Pool**: IP rotation with pluggable `ProxyProvider` trait
 - **Health Monitor**: Automatic engine suspension after repeated failures
-- **HCL Configuration**: Load settings from `.hcl` config files
+- **ACL Configuration**: Load settings from `.acl` config files
 - **Headless Browser**: Chrome and Lightpanda backends for JS-rendered engines
 - **Auto-Download**: Automatically detects or downloads browsers
 
@@ -299,21 +299,16 @@ impl Default for HeadlessConfig {
 }
 ```
 
-### SearchConfig (HCL)
+### SearchConfig (ACL)
 
-```hcl
-timeout = 10
+```acl
+timeout {
+  value = 10
+}
 
 health {
   max_failures    = 5
   suspend_seconds = 120
-}
-
-headless {
-  backend     = "Chrome"  # or "Lightpanda"
-  browser_path = null     # auto-detect
-  max_tabs    = 4
-  launch_args = []
 }
 
 engine "ddg" {

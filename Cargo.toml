@@ -67,7 +67,7 @@ url = "2"
 urlencoding = "2"
 
 # Configuration file parsing
-hcl-rs = "0.19"
+a3s-acl = "0.2"
 
 # Headless browser (optional, for JS-rendered engines)
 chromiumoxide = { version = "0.7", features = ["tokio-runtime"], optional = true }

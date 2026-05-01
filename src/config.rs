@@ -1,11 +1,13 @@
 //! Configuration file loading for search engine setup.
 //!
-//! Uses HCL (HashiCorp Configuration Language) as the configuration format.
+//! Uses ACL (Agent Configuration Language) as the configuration format.
 //!
-//! ## Example HCL
+//! ## Example ACL
 //!
-//! ```hcl
-//! timeout = 10
+//! ```acl
+//! timeout {
+//!   value = 10
+//! }
 //!
 //! health {
 //!   max_failures    = 3
@@ -27,75 +29,49 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
-use serde::Deserialize;
+use a3s_acl::ast::{Document, Value};
+use a3s_acl::parse;
 
 use crate::{HealthConfig, SearchError};
 
 /// Top-level search configuration.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchConfig {
     /// Default timeout in seconds for all engines.
-    #[serde(default = "default_timeout")]
     pub timeout: u64,
 
     /// Health monitor configuration.
-    #[serde(default)]
     pub health: Option<HealthEntry>,
 
     /// Engine configurations keyed by shortcut.
-    #[serde(default, rename = "engine")]
     pub engines: HashMap<String, EngineEntry>,
 }
 
 /// Health monitor configuration entry.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HealthEntry {
     /// Number of consecutive failures before suspending.
-    #[serde(default = "default_max_failures")]
     pub max_failures: u32,
 
     /// Suspension duration in seconds.
-    #[serde(default = "default_suspend_seconds")]
     pub suspend_seconds: u64,
 }
 
 /// Per-engine configuration entry.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EngineEntry {
     /// Whether the engine is enabled.
-    #[serde(default = "default_enabled")]
     pub enabled: bool,
 
     /// Weight for ranking (higher = more influence).
-    #[serde(default = "default_weight")]
     pub weight: f64,
 
     /// Per-engine timeout override in seconds.
     pub timeout: Option<u64>,
 }
 
-fn default_timeout() -> u64 {
-    10
-}
-
-fn default_max_failures() -> u32 {
-    3
-}
-
-fn default_suspend_seconds() -> u64 {
-    60
-}
-
-fn default_enabled() -> bool {
-    true
-}
-
-fn default_weight() -> f64 {
-    1.0
-}
-
 impl SearchConfig {
-    /// Loads a configuration from an HCL file.
+    /// Loads a configuration from an ACL file.
     pub fn load(path: impl AsRef<Path>) -> crate::Result<Self> {
         let path = path.as_ref();
         let content = std::fs::read_to_string(path).map_err(|e| {
@@ -109,10 +85,73 @@ impl SearchConfig {
         Self::parse(&content)
     }
 
-    /// Parses configuration from an HCL string.
+    /// Parses configuration from an ACL string.
     pub fn parse(content: &str) -> crate::Result<Self> {
-        hcl::from_str(content)
-            .map_err(|e| SearchError::Parse(format!("Failed to parse HCL config: {}", e)))
+        let doc = parse(content)
+            .map_err(|e| SearchError::Parse(format!("Failed to parse ACL config: {}", e)))?;
+
+        Self::from_document(&doc)
+    }
+
+    /// Converts an ACL Document to SearchConfig.
+    fn from_document(doc: &Document) -> crate::Result<Self> {
+        let mut timeout = 10u64;
+        let mut health = None;
+        let mut engines: HashMap<String, EngineEntry> = HashMap::new();
+
+        for block in &doc.blocks {
+            match block.name.as_str() {
+                "timeout" => {
+                    if let Some(v) = block.attributes.get("value") {
+                        timeout = value_as_u64(v).unwrap_or(10);
+                    }
+                }
+                "health" => {
+                    health = Some(HealthEntry {
+                        max_failures: block
+                            .attributes
+                            .get("max_failures")
+                            .and_then(value_as_u32)
+                            .unwrap_or(3),
+                        suspend_seconds: block
+                            .attributes
+                            .get("suspend_seconds")
+                            .and_then(value_as_u64)
+                            .unwrap_or(60),
+                    });
+                }
+                "engine" => {
+                    // Engine blocks have the engine shortcut as a label
+                    if let Some(shortcut) = block.labels.first() {
+                        engines.insert(
+                            shortcut.clone(),
+                            EngineEntry {
+                                enabled: block
+                                    .attributes
+                                    .get("enabled")
+                                    .and_then(value_as_bool)
+                                    .unwrap_or(true),
+                                weight: block
+                                    .attributes
+                                    .get("weight")
+                                    .and_then(value_as_f64)
+                                    .unwrap_or(1.0),
+                                timeout: block.attributes.get("timeout").and_then(value_as_u64),
+                            },
+                        );
+                    }
+                }
+                _ => {
+                    // Ignore unknown blocks
+                }
+            }
+        }
+
+        Ok(Self {
+            timeout,
+            health,
+            engines,
+        })
     }
 
     /// Converts the health entry to a `HealthConfig`.
@@ -136,17 +175,51 @@ impl SearchConfig {
     }
 }
 
+/// Extract a u64 from a Value.
+fn value_as_u64(v: &Value) -> Option<u64> {
+    match v {
+        Value::Number(n) => Some(*n as u64),
+        _ => None,
+    }
+}
+
+/// Extract a u32 from a Value.
+fn value_as_u32(v: &Value) -> Option<u32> {
+    match v {
+        Value::Number(n) => Some(*n as u32),
+        _ => None,
+    }
+}
+
+/// Extract a f64 from a Value.
+fn value_as_f64(v: &Value) -> Option<f64> {
+    match v {
+        Value::Number(n) => Some(*n),
+        _ => None,
+    }
+}
+
+/// Extract a bool from a Value.
+fn value_as_bool(v: &Value) -> Option<bool> {
+    match v {
+        Value::Bool(b) => Some(*b),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_hcl_basic() {
-        let hcl = r#"
-            timeout = 10
+    fn test_parse_acl_basic() {
+        let acl = r#"
+            timeout {
+                value = 10
+            }
 
             health {
-                max_failures    = 5
+                max_failures = 5
                 suspend_seconds = 120
             }
 
@@ -161,7 +234,7 @@ mod tests {
             }
         "#;
 
-        let config = SearchConfig::parse(hcl).unwrap();
+        let config = SearchConfig::parse(acl).unwrap();
         assert_eq!(config.timeout, 10);
 
         let health = config.health.unwrap();
@@ -176,14 +249,14 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_hcl_minimal() {
-        let hcl = r#"
+    fn test_parse_acl_minimal() {
+        let acl = r#"
             engine "ddg" {
                 enabled = true
             }
         "#;
 
-        let config = SearchConfig::parse(hcl).unwrap();
+        let config = SearchConfig::parse(acl).unwrap();
         assert_eq!(config.timeout, 10); // default
         assert!(config.health.is_none());
         assert_eq!(config.engines.len(), 1);
@@ -192,23 +265,25 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_hcl_disabled_engine() {
-        let hcl = r#"
+    fn test_parse_acl_disabled_engine() {
+        let acl = r#"
             engine "ddg" {
                 enabled = false
                 weight  = 0.5
             }
         "#;
 
-        let config = SearchConfig::parse(hcl).unwrap();
+        let config = SearchConfig::parse(acl).unwrap();
         assert!(!config.engines["ddg"].enabled);
         assert_eq!(config.engines["ddg"].weight, 0.5);
     }
 
     #[test]
-    fn test_parse_hcl_engine_timeout_override() {
-        let hcl = r#"
-            timeout = 5
+    fn test_parse_acl_engine_timeout_override() {
+        let acl = r#"
+            timeout {
+                value = 5
+            }
 
             engine "wiki" {
                 enabled = true
@@ -216,16 +291,16 @@ mod tests {
             }
         "#;
 
-        let config = SearchConfig::parse(hcl).unwrap();
+        let config = SearchConfig::parse(acl).unwrap();
         assert_eq!(config.timeout, 5);
         assert_eq!(config.engines["wiki"].timeout, Some(15));
     }
 
     #[test]
     fn test_health_config_conversion() {
-        let hcl = r#"
+        let acl = r#"
             health {
-                max_failures    = 5
+                max_failures = 5
                 suspend_seconds = 120
             }
 
@@ -234,7 +309,7 @@ mod tests {
             }
         "#;
 
-        let config = SearchConfig::parse(hcl).unwrap();
+        let config = SearchConfig::parse(acl).unwrap();
         let health_config = config.health_config();
         assert_eq!(health_config.max_failures, 5);
         assert_eq!(health_config.suspend_duration, Duration::from_secs(120));
@@ -242,13 +317,13 @@ mod tests {
 
     #[test]
     fn test_health_config_default_when_missing() {
-        let hcl = r#"
+        let acl = r#"
             engine "ddg" {
                 enabled = true
             }
         "#;
 
-        let config = SearchConfig::parse(hcl).unwrap();
+        let config = SearchConfig::parse(acl).unwrap();
         let health_config = config.health_config();
         assert_eq!(health_config.max_failures, 3);
         assert_eq!(health_config.suspend_duration, Duration::from_secs(60));
@@ -256,7 +331,7 @@ mod tests {
 
     #[test]
     fn test_enabled_engines() {
-        let hcl = r#"
+        let acl = r#"
             engine "ddg" {
                 enabled = true
             }
@@ -270,7 +345,7 @@ mod tests {
             }
         "#;
 
-        let config = SearchConfig::parse(hcl).unwrap();
+        let config = SearchConfig::parse(acl).unwrap();
         let enabled = config.enabled_engines();
         assert_eq!(enabled.len(), 2);
         assert!(enabled.contains(&"ddg"));
@@ -279,15 +354,17 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_hcl() {
+    fn test_invalid_acl() {
         let result = SearchConfig::parse("{{{{invalid");
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_parse_hcl_all_engines() {
-        let hcl = r#"
-            timeout = 8
+    fn test_parse_acl_all_engines() {
+        let acl = r#"
+            timeout {
+                value = 8
+            }
 
             engine "ddg" {
                 enabled = true
@@ -318,18 +395,18 @@ mod tests {
             }
         "#;
 
-        let config = SearchConfig::parse(hcl).unwrap();
+        let config = SearchConfig::parse(acl).unwrap();
         assert_eq!(config.engines.len(), 6);
         assert_eq!(config.enabled_engines().len(), 4);
     }
 
     #[test]
     fn test_engine_entry_defaults() {
-        let hcl = r#"
+        let acl = r#"
             engine "ddg" {}
         "#;
 
-        let config = SearchConfig::parse(hcl).unwrap();
+        let config = SearchConfig::parse(acl).unwrap();
         let entry = &config.engines["ddg"];
         assert!(entry.enabled); // default true
         assert_eq!(entry.weight, 1.0); // default 1.0
@@ -338,7 +415,7 @@ mod tests {
 
     #[test]
     fn test_load_nonexistent_file() {
-        let result = SearchConfig::load("/nonexistent/path/config.hcl");
+        let result = SearchConfig::load("/nonexistent/path/config.acl");
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("Failed to read config file"));
