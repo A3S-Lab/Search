@@ -214,20 +214,51 @@ jobs:
           path: homebrew-tap
 
       - name: Update formula
-        env:
-          VERSION: ${{ steps.sha.outputs.version }}
-          SHA_DARWIN_ARM64: ${{ steps.sha.outputs.darwin_arm64 }}
-          SHA_DARWIN_X86_64: ${{ steps.sha.outputs.darwin_x86_64 }}
-          SHA_LINUX_ARM64: ${{ steps.sha.outputs.linux_arm64 }}
-          SHA_LINUX_X86_64: ${{ steps.sha.outputs.linux_x86_64 }}
         run: |
-          sed -e "s/@VERSION@/${VERSION}/g" \
-              -e "s/@SHA_DARWIN_ARM64@/${SHA_DARWIN_ARM64}/g" \
-              -e "s/@SHA_DARWIN_X86_64@/${SHA_DARWIN_X86_64}/g" \
-              -e "s/@SHA_LINUX_ARM64@/${SHA_LINUX_ARM64}/g" \
-              -e "s/@SHA_LINUX_X86_64@/${SHA_LINUX_X86_64}/g" \
-              homebrew-tap/Formula/a3s-search.rb.template \
-              > homebrew-tap/Formula/a3s-search.rb
+          VERSION="${{ steps.sha.outputs.version }}"
+          SHA_DARWIN_ARM64="${{ steps.sha.outputs.darwin_arm64 }}"
+          SHA_DARWIN_X86_64="${{ steps.sha.outputs.darwin_x86_64 }}"
+          SHA_LINUX_ARM64="${{ steps.sha.outputs.linux_arm64 }}"
+          SHA_LINUX_X86_64="${{ steps.sha.outputs.linux_x86_64 }}"
+
+          cat > homebrew-tap/Formula/a3s-search.rb << EOF
+class A3sSearch < Formula
+  desc "Embeddable meta search engine CLI with proxy pool support"
+  homepage "https://github.com/A3S-Lab/Search"
+  version "${VERSION}"
+  license "MIT"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/A3S-Lab/Search/releases/download/v${VERSION}/a3s-search-${VERSION}-darwin-arm64.tar.gz"
+      sha256 "${SHA_DARWIN_ARM64}"
+    end
+    on_intel do
+      url "https://github.com/A3S-Lab/Search/releases/download/v${VERSION}/a3s-search-${VERSION}-darwin-x86_64.tar.gz"
+      sha256 "${SHA_DARWIN_X86_64}"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/A3S-Lab/Search/releases/download/v${VERSION}/a3s-search-${VERSION}-linux-arm64.tar.gz"
+      sha256 "${SHA_LINUX_ARM64}"
+    end
+    on_intel do
+      url "https://github.com/A3S-Lab/Search/releases/download/v${VERSION}/a3s-search-${VERSION}-linux-x86_64.tar.gz"
+      sha256 "${SHA_LINUX_X86_64}"
+    end
+  end
+
+  def install
+    bin.install "a3s-search"
+  end
+
+  test do
+    assert_match "a3s-search", shell_output("#{bin}/a3s-search --version")
+  end
+end
+EOF
 
       - name: Commit and push
         working-directory: homebrew-tap
