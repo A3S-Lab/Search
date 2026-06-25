@@ -134,8 +134,28 @@ for r in results.items() {
 }
 ```
 
-Pass a `BrowserFetcher` (the `headless` feature) instead of `HttpFetcher` for
-JavaScript-rendered pages. Extraction is CPU-bound and runs on a blocking thread pool.
+### JavaScript-rendered pages (headless)
+
+Some pages build their article body with client-side JavaScript, which a plain HTTP
+fetch never sees. Enable the `headless` feature and swap in a `BrowserFetcher` — it
+implements the same `PageFetcher`, so `enrich_full_text` is unchanged. Chrome is
+auto-detected or downloaded on first use.
+
+```rust
+use std::sync::Arc;
+use std::time::Duration;
+use a3s_search::browser::{BrowserFetcher, BrowserPool, BrowserPoolConfig};
+use a3s_search::{enrich_full_text, PageFetcher};
+
+// Reuse one browser pool across fetches; each fetch opens a tab.
+let pool = Arc::new(BrowserPool::new(BrowserPoolConfig::default()));
+let fetcher: Arc<dyn PageFetcher> = Arc::new(BrowserFetcher::new(pool));
+
+// Lower concurrency than plain HTTP — each tab is heavier.
+enrich_full_text(&mut results, fetcher, 3, Duration::from_secs(30)).await;
+```
+
+Extraction is CPU-bound and runs on a blocking thread pool regardless of the fetcher used.
 
 ## Configuration
 
