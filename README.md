@@ -61,6 +61,7 @@ async fn main() -> anyhow::Result<()> {
 - **Headless Browser**: Chrome and Lightpanda backends for JS-rendered engines
 - **Auto-Download**: Automatically detects or downloads browsers
 - **Metrics Collection**: Built-in metrics for observability
+- **Full-Text Extraction**: Fetch result pages and extract the main article content (Readability algorithm), dropping nav/ads/boilerplate
 
 ## Quick Start
 
@@ -68,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
 
 ```toml
 [dependencies]
-a3s-search = "1.2"
+a3s-search = "1.3"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -81,13 +82,13 @@ tokio = { version = "1", features = ["full"] }
 
 ```toml
 # Default (no headless engines)
-a3s-search = "1.2"
+a3s-search = "1.3"
 
 # With headless browsers
-a3s-search = { version = "1.2", features = ["headless"] }
+a3s-search = { version = "1.3", features = ["headless"] }
 
 # With Lightpanda (Linux/macOS only)
-a3s-search = { version = "1.2", features = ["lightpanda"] }
+a3s-search = { version = "1.3", features = ["lightpanda"] }
 ```
 
 ### Basic Search
@@ -102,6 +103,39 @@ let query = SearchQuery::new("rust async");
 let results = search.search(query).await?;
 println!("Found {} results", results.count);
 ```
+
+## Full-Text Extraction
+
+Search engines return only snippets. `enrich_full_text` fetches each result's page —
+through the same `PageFetcher` you already use, so it reuses the proxy pool, headless
+browser, and health machinery — and fills `SearchResult::full_text` with the extracted
+main article content. Fetch errors and timeouts are skipped, so a result always keeps
+its snippet; the pass only ever *adds* information.
+
+```rust
+use std::sync::Arc;
+use std::time::Duration;
+use a3s_search::{Search, SearchQuery, HttpFetcher, PageFetcher, enrich_full_text};
+use a3s_search::engines::DuckDuckGo;
+
+let mut search = Search::new();
+search.add_engine(DuckDuckGo::new());
+let mut results = search.search(SearchQuery::new("rust async")).await?;
+
+// 8 concurrent fetches, 10s timeout each.
+let fetcher: Arc<dyn PageFetcher> = Arc::new(HttpFetcher::new());
+enrich_full_text(&mut results, fetcher, 8, Duration::from_secs(10)).await;
+
+for r in results.items() {
+    match &r.full_text {
+        Some(text) => println!("{} — {} chars of body", r.title, text.len()),
+        None => println!("{} — snippet only: {}", r.title, r.content),
+    }
+}
+```
+
+Pass a `BrowserFetcher` (the `headless` feature) instead of `HttpFetcher` for
+JavaScript-rendered pages. Extraction is CPU-bound and runs on a blocking thread pool.
 
 ## Configuration
 

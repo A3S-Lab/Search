@@ -47,6 +47,77 @@ async fn test_engine<E: Engine>(engine: E, query: &str) -> Vec<SearchResult> {
     }
 }
 
+/// Shared localhost HTTP fixture server for integration tests.
+///
+/// Returns a fixed HTML body to every request. Accepts non-blocking so `Drop` can stop
+/// and join the thread without leaking the socket; the accepted socket is set back to
+/// blocking so the request is fully drained before reply (avoids RST-on-close resets).
+mod fixture_server {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    pub(crate) struct FixtureServer {
+        pub(crate) url: String,
+        stop: Arc<AtomicBool>,
+        handle: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl FixtureServer {
+        pub(crate) fn start(body: &'static str) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+            listener.set_nonblocking(true).expect("set nonblocking");
+            let url = format!("http://{}/", listener.local_addr().unwrap());
+            let stop = Arc::new(AtomicBool::new(false));
+            let stop_thread = Arc::clone(&stop);
+            let handle = std::thread::spawn(move || {
+                while !stop_thread.load(Ordering::Relaxed) {
+                    match listener.accept() {
+                        Ok((mut stream, _)) => {
+                            // The accepted socket inherits the listener's non-blocking flag on
+                            // macOS; make it blocking (with a timeout) so we fully drain the
+                            // request before replying. Closing with unread inbound bytes makes
+                            // the kernel send RST, which intermittently resets the client.
+                            let _ = stream.set_nonblocking(false);
+                            let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+                            let mut buf = [0u8; 2048];
+                            let _ = stream.read(&mut buf); // best-effort drain of the request
+                            let resp = format!(
+                                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\
+                                 Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                                body.len(),
+                                body
+                            );
+                            let _ = stream.write_all(resp.as_bytes());
+                            let _ = stream.flush();
+                        }
+                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+            FixtureServer {
+                url,
+                stop,
+                handle: Some(handle),
+            }
+        }
+    }
+
+    impl Drop for FixtureServer {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Relaxed);
+            if let Some(h) = self.handle.take() {
+                let _ = h.join();
+            }
+        }
+    }
+}
+
 mod duckduckgo_tests {
     use super::*;
     use a3s_search::engines::DuckDuckGo;
@@ -1170,5 +1241,322 @@ mod proxy_pool_tests {
         let fetcher = PooledHttpFetcher::new(pool).with_timeout(Duration::from_secs(15));
         // Should not panic
         drop(fetcher);
+    }
+}
+
+/// Full-text enrichment integration tests.
+///
+/// The happy-path test serves a fixture page from a localhost ephemeral port and runs
+/// the real `HttpFetcher` -> Readability extraction path end to end. The server thread
+/// is stopped and joined on drop, so no socket or thread is leaked. These tests need no
+/// internet — they only talk to `127.0.0.1`.
+mod full_text_tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use a3s_search::{enrich_full_text, HttpFetcher, PageFetcher, SearchResult, SearchResults};
+
+    use super::fixture_server::FixtureServer;
+
+    const ARTICLE_HTML: &str = r#"<html><head><title>Fixture</title></head><body>
+        <nav>home about UNIQUE_NAV login signup</nav>
+        <article>
+          <h1>Fixture Article</h1>
+          <p>UNIQUE_BODY This is the principal article body that Readability should
+          keep. It contains several full sentences so the algorithm scores it as the
+          main content rather than discarding it as page noise.</p>
+          <p>A second substantial paragraph adds more textual weight to the article
+          node, ensuring the extractor selects this block over the surrounding nav,
+          sidebar, and footer chrome present on the page.</p>
+          <p>A third paragraph keeps the text density high and the link ratio low,
+          which is what the scoring heuristic rewards when choosing the dominant
+          content container of an HTML document.</p>
+        </article>
+        <footer>UNIQUE_FOOTER copyright 2026</footer>
+    </body></html>"#;
+
+    #[tokio::test]
+    async fn enrich_extracts_main_text_over_real_http() {
+        let server = FixtureServer::start(ARTICLE_HTML);
+
+        let mut results = SearchResults::new();
+        results.add_result(SearchResult::new(
+            server.url.clone(),
+            "Fixture",
+            "the snippet",
+        ));
+
+        let fetcher: Arc<dyn PageFetcher> = Arc::new(HttpFetcher::new());
+        enrich_full_text(&mut results, fetcher, 4, Duration::from_secs(5)).await;
+
+        let item = &results.items()[0];
+        let body = item
+            .full_text
+            .as_deref()
+            .expect("full_text should be populated from the fixture page");
+        assert!(body.contains("UNIQUE_BODY"), "kept the article body");
+        assert!(!body.contains("UNIQUE_NAV"), "dropped the nav");
+        assert!(!body.contains("UNIQUE_FOOTER"), "dropped the footer");
+        assert_eq!(item.content, "the snippet", "snippet must be preserved");
+    }
+
+    #[tokio::test]
+    async fn enrich_skips_unreachable_host_and_keeps_snippet() {
+        // Port 1 on loopback refuses immediately -> the fetch errors, no internet needed.
+        let mut results = SearchResults::new();
+        results.add_result(SearchResult::new(
+            "http://127.0.0.1:1/",
+            "Dead",
+            "snippet stays",
+        ));
+
+        let fetcher: Arc<dyn PageFetcher> = Arc::new(HttpFetcher::new());
+        enrich_full_text(&mut results, fetcher, 4, Duration::from_millis(800)).await;
+
+        let item = &results.items()[0];
+        assert!(
+            item.full_text.is_none(),
+            "failed fetch leaves full_text None"
+        );
+        assert_eq!(item.content, "snippet stays");
+    }
+}
+
+/// Real-network full-text enrichment tests.
+///
+/// These hit the live internet, so they are guarded by `require_network!` and skip
+/// gracefully when offline. They exercise the real `HttpFetcher` -> Readability path
+/// against stable, content-rich pages.
+mod full_text_real_tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use a3s_search::{
+        engines::Wikipedia, enrich_full_text, HttpFetcher, PageFetcher, Search, SearchQuery,
+        SearchResult, SearchResults,
+    };
+
+    /// Real fetch + extraction against a stable, content-rich page (no search engine involved).
+    /// Wikipedia serves server-rendered HTML to a normal User-Agent, so this is reliable.
+    #[tokio::test]
+    async fn real_enrich_extracts_wikipedia_article() {
+        require_network!();
+
+        let mut results = SearchResults::new();
+        results.add_result(SearchResult::new(
+            "https://en.wikipedia.org/wiki/Rust_(programming_language)",
+            "Rust",
+            "the snippet",
+        ));
+
+        let fetcher: Arc<dyn PageFetcher> = Arc::new(HttpFetcher::new());
+        enrich_full_text(&mut results, fetcher, 4, Duration::from_secs(20)).await;
+
+        let item = &results.items()[0];
+        match item.full_text.as_deref() {
+            Some(text) => {
+                println!("  extracted {} chars of article body", text.len());
+                assert!(
+                    text.len() > 1000,
+                    "a Wikipedia article body should be substantial, got {} chars",
+                    text.len()
+                );
+                assert!(
+                    text.contains("Rust"),
+                    "extracted text should mention the subject"
+                );
+                assert!(
+                    !text.contains("Jump to navigation"),
+                    "Readability should have dropped the nav chrome"
+                );
+                assert_eq!(item.content, "the snippet", "snippet must be preserved");
+            }
+            None => {
+                // A transient network / anti-bot hiccup must not hard-fail the suite.
+                println!("  full_text not populated (transient fetch failure) — skipping asserts");
+            }
+        }
+    }
+
+    /// Full pipeline: real meta-search -> enrich the real result URLs -> extract main text.
+    #[tokio::test]
+    async fn real_search_then_enrich_pipeline() {
+        require_network!();
+
+        let mut search = Search::new();
+        search.add_engine(Wikipedia::new());
+        let mut results = search
+            .search(SearchQuery::new("rust programming language"))
+            .await
+            .expect("search should not error when online");
+
+        println!("  search returned {} results", results.items().len());
+        if results.items().is_empty() {
+            println!("  no search results (transient) — skipping enrich");
+            return;
+        }
+
+        let fetcher: Arc<dyn PageFetcher> = Arc::new(HttpFetcher::new());
+        enrich_full_text(&mut results, fetcher, 3, Duration::from_secs(20)).await;
+
+        let enriched = results
+            .items()
+            .iter()
+            .filter(|r| r.full_text.is_some())
+            .count();
+        println!(
+            "  enriched {}/{} results with extracted full text",
+            enriched,
+            results.items().len()
+        );
+        for r in results.items().iter().take(3) {
+            let chars = r.full_text.as_deref().map(str::len).unwrap_or(0);
+            println!("    {} -> {} chars  [{}]", r.title, chars, r.url);
+        }
+
+        // Every result keeps a snippet or gains full text — enrichment never destroys data.
+        for r in results.items() {
+            assert!(!r.content.is_empty() || r.full_text.is_some());
+        }
+        // Wikipedia article pages are reliably fetchable and extractable.
+        assert!(
+            enriched >= 1,
+            "at least one real result should yield extracted full text"
+        );
+    }
+}
+
+/// Headless-browser full-text enrichment tests (`--features headless`).
+///
+/// The A/B test is the key proof: a page whose article body is injected by JavaScript is
+/// invisible to a plain HTTP fetch but rendered and extracted by the headless browser.
+/// Both are guarded by `require_network!` and skip gracefully if Chrome cannot launch.
+#[cfg(feature = "headless")]
+mod full_text_headless_tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use a3s_search::{
+        browser::{BrowserFetcher, BrowserPool, BrowserPoolConfig},
+        enrich_full_text, HttpFetcher, PageFetcher, SearchResult, SearchResults, WaitStrategy,
+    };
+
+    use super::fixture_server::FixtureServer;
+
+    /// The `<article>` body is written by JavaScript at runtime, so only a JS-executing
+    /// browser can see it; a plain HTTP fetch receives an empty `<div id="app">`.
+    const JS_PAGE_HTML: &str = r#"<!DOCTYPE html><html><head><title>JS Fixture</title></head><body>
+        <nav>UNIQUE_NAV home about contact</nav>
+        <div id="app"></div>
+        <script>
+          document.getElementById('app').innerHTML =
+            '<article><h1>JS Rendered</h1>' +
+            '<p>JS_BODY_MARKER This article body is injected by JavaScript at runtime, so a ' +
+            'plain HTTP fetch never sees it; only a headless browser that executes scripts can ' +
+            'render and extract it. Several sentences ensure Readability keeps it as the main ' +
+            'content rather than discarding it as noise.</p>' +
+            '<p>A second paragraph adds textual weight so the article node wins over the nav.</p>' +
+            '<p>A third paragraph keeps the density high and the link ratio low for the scorer.</p>' +
+            '</article>';
+        </script>
+    </body></html>"#;
+
+    /// Returns a warmed browser pool, or `None` (with a printed skip) if Chrome cannot launch.
+    async fn browser_pool_or_skip() -> Option<Arc<BrowserPool>> {
+        let pool = Arc::new(BrowserPool::new(BrowserPoolConfig::default()));
+        match pool.acquire_browser().await {
+            Ok(_) => Some(pool),
+            Err(e) => {
+                println!("  SKIP: headless browser unavailable: {e}");
+                None
+            }
+        }
+    }
+
+    /// Core proof that headless rendering matters: JS-injected content that plain HTTP
+    /// cannot see is rendered and extracted by the headless browser.
+    #[tokio::test]
+    async fn headless_renders_js_body_that_http_misses() {
+        require_network!();
+        let Some(pool) = browser_pool_or_skip().await else {
+            return;
+        };
+
+        let server = FixtureServer::start(JS_PAGE_HTML);
+
+        // (a) Plain HTTP runs no JavaScript -> never sees the injected article.
+        let mut http_results = SearchResults::new();
+        http_results.add_result(SearchResult::new(server.url.clone(), "JS", "snippet"));
+        let http: Arc<dyn PageFetcher> = Arc::new(HttpFetcher::new());
+        enrich_full_text(&mut http_results, http, 2, Duration::from_secs(10)).await;
+        let http_text = http_results.items()[0].full_text.as_deref().unwrap_or("");
+        assert!(
+            !http_text.contains("JS_BODY_MARKER"),
+            "plain HTTP must not see JS-injected content, got: {http_text:?}"
+        );
+
+        // (b) The headless browser executes the script, so the article IS extracted.
+        let mut hl_results = SearchResults::new();
+        hl_results.add_result(SearchResult::new(server.url.clone(), "JS", "snippet"));
+        let headless: Arc<dyn PageFetcher> = Arc::new(
+            BrowserFetcher::new(Arc::clone(&pool)).with_wait(WaitStrategy::Delay { ms: 300 }),
+        );
+        enrich_full_text(&mut hl_results, headless, 2, Duration::from_secs(30)).await;
+
+        let hl_text = hl_results.items()[0]
+            .full_text
+            .as_deref()
+            .expect("headless should extract the JS-rendered article");
+        println!(
+            "  headless extracted {} chars from the JS-rendered page",
+            hl_text.len()
+        );
+        assert!(
+            hl_text.contains("JS_BODY_MARKER"),
+            "headless must render the JS-injected body"
+        );
+        assert!(!hl_text.contains("UNIQUE_NAV"), "nav chrome still dropped");
+        assert_eq!(
+            hl_results.items()[0].content,
+            "snippet",
+            "snippet preserved"
+        );
+
+        pool.shutdown().await;
+    }
+
+    /// Headless path against the real web: render a live article and extract its main text.
+    #[tokio::test]
+    async fn headless_enrich_extracts_real_article() {
+        require_network!();
+        let Some(pool) = browser_pool_or_skip().await else {
+            return;
+        };
+
+        let mut results = SearchResults::new();
+        results.add_result(SearchResult::new(
+            "https://en.wikipedia.org/wiki/Rust_(programming_language)",
+            "Rust",
+            "the snippet",
+        ));
+        let fetcher: Arc<dyn PageFetcher> =
+            Arc::new(BrowserFetcher::new(Arc::clone(&pool)).with_wait(WaitStrategy::Load));
+        enrich_full_text(&mut results, fetcher, 2, Duration::from_secs(40)).await;
+
+        match results.items()[0].full_text.as_deref() {
+            Some(text) => {
+                println!("  headless extracted {} chars from Wikipedia", text.len());
+                assert!(text.len() > 1000, "real article body should be substantial");
+                assert!(text.contains("Rust"));
+                assert_eq!(results.items()[0].content, "the snippet");
+            }
+            None => {
+                println!(
+                    "  full_text not populated (transient headless failure) — skipping asserts"
+                )
+            }
+        }
+
+        pool.shutdown().await;
     }
 }

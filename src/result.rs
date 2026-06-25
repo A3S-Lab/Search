@@ -49,6 +49,10 @@ pub struct SearchResult {
     pub thumbnail: Option<String>,
     /// Published date (for news).
     pub published_date: Option<String>,
+    /// Extracted main article text, filled by [`enrich_full_text`](crate::enrich_full_text).
+    /// `None` until a reader pass fetches and extracts the page.
+    #[serde(default)]
+    pub full_text: Option<String>,
 }
 
 impl SearchResult {
@@ -68,6 +72,7 @@ impl SearchResult {
             score: 0.0,
             thumbnail: None,
             published_date: None,
+            full_text: None,
         }
     }
 
@@ -384,5 +389,33 @@ mod tests {
         results.add_error("Google", "failed");
         assert_eq!(results.count, 1);
         assert_eq!(results.errors().len(), 1);
+    }
+
+    #[test]
+    fn test_search_result_deserialize_without_full_text() {
+        // Older persisted JSON lacking `full_text` must still load thanks to #[serde(default)].
+        let json = r#"{
+            "url": "https://example.com",
+            "title": "T",
+            "content": "snippet",
+            "result_type": "web",
+            "engines": [],
+            "positions": [],
+            "score": 1.0,
+            "thumbnail": null,
+            "published_date": null
+        }"#;
+        let r: SearchResult = serde_json::from_str(json).unwrap();
+        assert!(r.full_text.is_none());
+        assert_eq!(r.url, "https://example.com");
+    }
+
+    #[test]
+    fn test_search_result_full_text_roundtrip() {
+        let mut r = SearchResult::new("https://example.com", "T", "snippet");
+        r.full_text = Some("正文 body".to_string());
+        let json = serde_json::to_string(&r).unwrap();
+        let back: SearchResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.full_text.as_deref(), Some("正文 body"));
     }
 }
