@@ -66,6 +66,29 @@ pub enum SearchError {
 }
 
 impl SearchError {
+    /// Returns a stable, low-cardinality name for metrics and logging.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Http(e) if e.is_timeout() => "http_timeout",
+            Self::Http(e) if e.is_connect() => "http_connect",
+            Self::Http(e) if e.is_decode() => "http_decode",
+            Self::Http(_) => "http",
+            Self::Parse(_) => "parse",
+            Self::EngineSuspended(_, _) => "engine_suspended",
+            Self::Timeout => "timeout",
+            Self::NoEngines => "no_engines",
+            Self::InvalidQuery(_) => "invalid_query",
+            Self::UrlParse(_) => "url_parse",
+            Self::Browser(_) => "browser",
+            Self::Proxy(_) => "proxy",
+            Self::Network(_) => "network",
+            Self::PermissionDenied(_) => "permission_denied",
+            Self::NotFound(_) => "not_found",
+            Self::RateLimited(_) => "rate_limited",
+            Self::Other(_) => "other",
+        }
+    }
+
     /// Returns true if this error is likely transient and retrying might help.
     pub fn is_transient(&self) -> bool {
         match self {

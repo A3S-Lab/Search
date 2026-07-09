@@ -1,5 +1,6 @@
 //! A3S Search CLI - Meta search engine command line interface.
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -12,7 +13,8 @@ use a3s_search::{
         Bing, BingParser, Brave, BraveParser, DuckDuckGo, DuckDuckGoParser, So360, So360Parser,
         Sogou, SogouParser, Wikipedia,
     },
-    HttpFetcher, PageFetcher, Search, SearchQuery,
+    Engine, EngineConfig, HttpFetcher, PageFetcher, SafeSearch, Search, SearchConfig, SearchQuery,
+    TimeRange,
 };
 
 #[cfg(feature = "headless")]
@@ -39,9 +41,25 @@ struct Cli {
     #[arg(short, long, default_value = "10")]
     limit: usize,
 
-    /// Search timeout in seconds
-    #[arg(short, long, default_value = "10")]
-    timeout: u64,
+    /// Search timeout in seconds (overrides config/default)
+    #[arg(short, long)]
+    timeout: Option<u64>,
+
+    /// Result page to fetch (1-indexed)
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+    page: u32,
+
+    /// Search language/locale, such as en, en-US, or zh
+    #[arg(long)]
+    language: Option<String>,
+
+    /// Safe search level
+    #[arg(long)]
+    safesearch: Option<SafeSearchArg>,
+
+    /// Time range filter
+    #[arg(long)]
+    time_range: Option<TimeRangeArg>,
 
     /// Output format
     #[arg(short, long, default_value = "text")]
@@ -50,6 +68,10 @@ struct Cli {
     /// Proxy URL (e.g., http://127.0.0.1:8080 or socks5://127.0.0.1:1080)
     #[arg(short, long)]
     proxy: Option<String>,
+
+    /// ACL configuration file
+    #[arg(short = 'c', long)]
+    config: Option<PathBuf>,
 
     /// Use headless browser for JS-rendered engines (default: auto-detected)
     #[arg(long, hide = true)]
@@ -79,6 +101,42 @@ enum OutputFormat {
     Json,
     /// Compact single-line output
     Compact,
+}
+
+#[derive(Clone, Copy, ValueEnum, Debug)]
+enum SafeSearchArg {
+    Off,
+    Moderate,
+    Strict,
+}
+
+impl From<SafeSearchArg> for SafeSearch {
+    fn from(value: SafeSearchArg) -> Self {
+        match value {
+            SafeSearchArg::Off => SafeSearch::Off,
+            SafeSearchArg::Moderate => SafeSearch::Moderate,
+            SafeSearchArg::Strict => SafeSearch::Strict,
+        }
+    }
+}
+
+#[derive(Clone, Copy, ValueEnum, Debug)]
+enum TimeRangeArg {
+    Day,
+    Week,
+    Month,
+    Year,
+}
+
+impl From<TimeRangeArg> for TimeRange {
+    fn from(value: TimeRangeArg) -> Self {
+        match value {
+            TimeRangeArg::Day => TimeRange::Day,
+            TimeRangeArg::Week => TimeRange::Week,
+            TimeRangeArg::Month => TimeRange::Month,
+            TimeRangeArg::Year => TimeRange::Year,
+        }
+    }
 }
 
 #[tokio::main]
@@ -112,8 +170,13 @@ async fn main() -> Result<()> {
                     engines: cli.engines,
                     limit: cli.limit,
                     timeout: cli.timeout,
+                    page: cli.page,
+                    language: cli.language,
+                    safesearch: cli.safesearch,
+                    time_range: cli.time_range,
                     format: cli.format,
                     proxy: cli.proxy,
+                    config: cli.config,
                 })
                 .await
             } else {
@@ -131,9 +194,14 @@ async fn main() -> Result<()> {
                     "  -e, --engines <ENGINES>  Engines: ddg,brave,bing,wiki,sogou,360,g,baidu,bing_cn"
                 );
                 println!("  -l, --limit <N>          Max results (default: 10)");
-                println!("  -t, --timeout <SECS>     Timeout in seconds (default: 10)");
+                println!("  -t, --timeout <SECS>     Timeout in seconds");
+                println!("      --page <N>           Result page (default: 1)");
+                println!("      --language <LOCALE>  Search language/locale");
+                println!("      --safesearch <LEVEL> off, moderate, strict");
+                println!("      --time-range <RANGE> day, week, month, year");
                 println!("  -f, --format <FORMAT>    Output: text, json, compact");
                 println!("  -p, --proxy <URL>        Proxy URL (http/https/socks5)");
+                println!("  -c, --config <PATH>      ACL configuration file");
                 println!("  -v, --verbose            Enable debug logging");
                 println!("  -h, --help               Show help");
                 println!("  -V, --version            Show version\n");
@@ -148,9 +216,14 @@ struct SearchArgs {
     query: String,
     engines: Option<Vec<String>>,
     limit: usize,
-    timeout: u64,
+    timeout: Option<u64>,
+    page: u32,
+    language: Option<String>,
+    safesearch: Option<SafeSearchArg>,
+    time_range: Option<TimeRangeArg>,
     format: OutputFormat,
     proxy: Option<String>,
+    config: Option<PathBuf>,
 }
 
 fn list_engines() -> Result<()> {
@@ -179,9 +252,64 @@ fn list_engines() -> Result<()> {
     Ok(())
 }
 
+fn selected_engine_shortcuts(args: &SearchArgs, config: Option<&SearchConfig>) -> Vec<String> {
+    if let Some(engines) = &args.engines {
+        return engines.clone();
+    }
+
+    if let Some(config) = config {
+        if !config.engines.is_empty() {
+            return config
+                .enabled_engines()
+                .into_iter()
+                .map(str::to_string)
+                .collect();
+        }
+    }
+
+    vec!["ddg".to_string(), "wiki".to_string()]
+}
+
+fn is_config_enabled(config: Option<&SearchConfig>, shortcut: &str) -> bool {
+    config
+        .and_then(|config| config.engine_entry(shortcut))
+        .map(|entry| entry.enabled)
+        .unwrap_or(true)
+}
+
+fn configured_engine_config(
+    config: Option<&SearchConfig>,
+    engine_config: EngineConfig,
+) -> EngineConfig {
+    if let Some(config) = config {
+        config.apply_engine_config(engine_config)
+    } else {
+        engine_config
+    }
+}
+
 async fn run_search(args: SearchArgs) -> Result<()> {
-    let mut search = Search::new();
-    search.set_timeout(Duration::from_secs(args.timeout));
+    let config = match &args.config {
+        Some(path) => Some(
+            SearchConfig::load(path)
+                .map_err(|e| anyhow::anyhow!("Failed to load config {}: {}", path.display(), e))?,
+        ),
+        None => None,
+    };
+
+    let mut search = if let Some(config) = config.as_ref() {
+        Search::with_health_config(config.health_config())
+    } else {
+        Search::new()
+    };
+
+    if let Some(timeout) = args.timeout {
+        search.set_timeout(Duration::from_secs(timeout));
+    } else if config.is_none() {
+        search.set_timeout(Duration::from_secs(10));
+    }
+
+    let engine_shortcuts = selected_engine_shortcuts(&args, config.as_ref());
 
     // Log proxy usage
     if let Some(proxy_url) = &args.proxy {
@@ -193,9 +321,8 @@ async fn run_search(args: SearchArgs) -> Result<()> {
     // Warn if headless engines are requested without the feature
     #[cfg(not(feature = "headless"))]
     {
-        let engine_list = args.engines.as_deref().unwrap_or(&[]);
         let headless_engines = ["g", "google", "baidu", "bing_cn"];
-        for e in engine_list {
+        for e in &engine_shortcuts {
             if headless_engines.contains(&e.as_str()) {
                 eprintln!(
                     "Warning: '{}' engine requires the 'headless' feature. \
@@ -226,25 +353,39 @@ async fn run_search(args: SearchArgs) -> Result<()> {
         std::sync::Arc::new(HttpFetcher::new())
     };
 
-    // Add engines based on selection
-    let engine_shortcuts: Vec<String> = args
-        .engines
-        .unwrap_or_else(|| vec!["ddg".to_string(), "wiki".to_string()]);
-
     for shortcut in &engine_shortcuts {
+        if !is_config_enabled(config.as_ref(), shortcut) {
+            if args.engines.is_some() {
+                eprintln!(
+                    "Warning: '{}' engine is disabled by config, skipping",
+                    shortcut
+                );
+            }
+            continue;
+        }
+
         match shortcut.as_str() {
-            "ddg" | "duckduckgo" => search.add_engine(DuckDuckGo::with_fetcher(
-                DuckDuckGoParser,
-                std::sync::Arc::clone(&http_fetcher),
-            )),
-            "brave" => search.add_engine(Brave::with_fetcher(
-                BraveParser,
-                std::sync::Arc::clone(&http_fetcher),
-            )),
-            "bing" => search.add_engine(Bing::with_fetcher(
-                BingParser,
-                std::sync::Arc::clone(&http_fetcher),
-            )),
+            "ddg" | "duckduckgo" => {
+                let engine = DuckDuckGo::with_fetcher(
+                    DuckDuckGoParser,
+                    std::sync::Arc::clone(&http_fetcher),
+                );
+                let engine_config =
+                    configured_engine_config(config.as_ref(), engine.config().clone());
+                search.add_engine(engine.with_config(engine_config));
+            }
+            "brave" => {
+                let engine = Brave::with_fetcher(BraveParser, std::sync::Arc::clone(&http_fetcher));
+                let engine_config =
+                    configured_engine_config(config.as_ref(), engine.config().clone());
+                search.add_engine(engine.with_config(engine_config));
+            }
+            "bing" => {
+                let engine = Bing::with_fetcher(BingParser, std::sync::Arc::clone(&http_fetcher));
+                let engine_config =
+                    configured_engine_config(config.as_ref(), engine.config().clone());
+                search.add_engine(engine.with_config(engine_config));
+            }
             "wiki" | "wikipedia" => {
                 // Wikipedia needs its own fetcher since it uses JSON API, not HTML
                 let fetcher = if let Some(proxy_url) = &args.proxy {
@@ -254,16 +395,23 @@ async fn run_search(args: SearchArgs) -> Result<()> {
                 } else {
                     HttpFetcher::new()
                 };
-                search.add_engine(Wikipedia::with_http_fetcher(fetcher))
+                let engine = Wikipedia::with_http_fetcher(fetcher);
+                let engine_config =
+                    configured_engine_config(config.as_ref(), engine.config().clone());
+                search.add_engine(engine.with_config(engine_config));
             }
-            "sogou" => search.add_engine(Sogou::with_fetcher(
-                SogouParser,
-                std::sync::Arc::clone(&http_fetcher),
-            )),
-            "360" | "so360" => search.add_engine(So360::with_fetcher(
-                So360Parser,
-                std::sync::Arc::clone(&http_fetcher),
-            )),
+            "sogou" => {
+                let engine = Sogou::with_fetcher(SogouParser, std::sync::Arc::clone(&http_fetcher));
+                let engine_config =
+                    configured_engine_config(config.as_ref(), engine.config().clone());
+                search.add_engine(engine.with_config(engine_config));
+            }
+            "360" | "so360" => {
+                let engine = So360::with_fetcher(So360Parser, std::sync::Arc::clone(&http_fetcher));
+                let engine_config =
+                    configured_engine_config(config.as_ref(), engine.config().clone());
+                search.add_engine(engine.with_config(engine_config));
+            }
             #[cfg(feature = "headless")]
             "g" | "google" => {
                 let fetcher: std::sync::Arc<dyn PageFetcher> = std::sync::Arc::new(
@@ -274,7 +422,10 @@ async fn run_search(args: SearchArgs) -> Result<()> {
                         },
                     ),
                 );
-                search.add_engine(Google::new(fetcher));
+                let engine = Google::new(fetcher);
+                let engine_config =
+                    configured_engine_config(config.as_ref(), engine.config().clone());
+                search.add_engine(engine.with_config(engine_config));
             }
             #[cfg(feature = "headless")]
             "baidu" => {
@@ -286,7 +437,10 @@ async fn run_search(args: SearchArgs) -> Result<()> {
                         },
                     ),
                 );
-                search.add_engine(Baidu::new(fetcher));
+                let engine = Baidu::new(fetcher);
+                let engine_config =
+                    configured_engine_config(config.as_ref(), engine.config().clone());
+                search.add_engine(engine.with_config(engine_config));
             }
             #[cfg(feature = "headless")]
             "bing_cn" => {
@@ -294,7 +448,10 @@ async fn run_search(args: SearchArgs) -> Result<()> {
                     BrowserFetcher::new(std::sync::Arc::clone(&browser_pool))
                         .with_wait(WaitStrategy::Delay { ms: 2000 }),
                 );
-                search.add_engine(BingChina::new(fetcher));
+                let engine = BingChina::new(fetcher);
+                let engine_config =
+                    configured_engine_config(config.as_ref(), engine.config().clone());
+                search.add_engine(engine.with_config(engine_config));
             }
             #[cfg(not(feature = "headless"))]
             "g" | "google" | "baidu" | "bing_cn" => {
@@ -315,7 +472,16 @@ async fn run_search(args: SearchArgs) -> Result<()> {
     }
 
     // Perform search
-    let query = SearchQuery::new(&args.query);
+    let mut query = SearchQuery::new(&args.query).with_page(args.page);
+    if let Some(language) = &args.language {
+        query = query.with_language(language);
+    }
+    if let Some(safesearch) = args.safesearch {
+        query = query.with_safesearch(safesearch.into());
+    }
+    if let Some(time_range) = args.time_range {
+        query = query.with_time_range(time_range.into());
+    }
     let results = search.search(query).await?;
 
     // Show engine errors to the user
@@ -347,7 +513,14 @@ async fn run_search(args: SearchArgs) -> Result<()> {
         }
         OutputFormat::Json => {
             let output: Vec<_> = results.items().iter().take(args.limit).collect();
-            println!("{}", serde_json::to_string_pretty(&output)?);
+            let payload = serde_json::json!({
+                "results": output,
+                "errors": results.errors(),
+                "count": output.len(),
+                "total_count": results.count,
+                "duration_ms": results.duration_ms,
+            });
+            println!("{}", serde_json::to_string_pretty(&payload)?);
         }
         OutputFormat::Compact => {
             for result in results.items().iter().take(args.limit) {
@@ -487,8 +660,13 @@ mod tests {
         assert_eq!(cli.query, Some("test query".to_string()));
         assert!(cli.engines.is_none());
         assert_eq!(cli.limit, 10);
-        assert_eq!(cli.timeout, 10);
+        assert_eq!(cli.timeout, None);
+        assert_eq!(cli.page, 1);
+        assert!(cli.language.is_none());
+        assert!(cli.safesearch.is_none());
+        assert!(cli.time_range.is_none());
         assert!(cli.proxy.is_none());
+        assert!(cli.config.is_none());
         assert!(!cli.verbose);
     }
 
@@ -510,7 +688,34 @@ mod tests {
     #[test]
     fn test_cli_with_timeout() {
         let cli = Cli::parse_from(["a3s-search", "query", "-t", "30"]);
-        assert_eq!(cli.timeout, 30);
+        assert_eq!(cli.timeout, Some(30));
+    }
+
+    #[test]
+    fn test_cli_with_config() {
+        let cli = Cli::parse_from(["a3s-search", "query", "-c", "search.acl"]);
+        assert_eq!(cli.config, Some(PathBuf::from("search.acl")));
+    }
+
+    #[test]
+    fn test_cli_with_query_filters() {
+        let cli = Cli::parse_from([
+            "a3s-search",
+            "query",
+            "--page",
+            "3",
+            "--language",
+            "zh-CN",
+            "--safesearch",
+            "strict",
+            "--time-range",
+            "week",
+        ]);
+
+        assert_eq!(cli.page, 3);
+        assert_eq!(cli.language, Some("zh-CN".to_string()));
+        assert!(matches!(cli.safesearch, Some(SafeSearchArg::Strict)));
+        assert!(matches!(cli.time_range, Some(TimeRangeArg::Week)));
     }
 
     #[test]
@@ -552,6 +757,16 @@ mod tests {
             "json",
             "-p",
             "socks5://localhost:1080",
+            "-c",
+            "search.acl",
+            "--page",
+            "2",
+            "--language",
+            "en-US",
+            "--safesearch",
+            "moderate",
+            "--time-range",
+            "month",
             "-v",
         ]);
         assert_eq!(cli.query, Some("rust programming".to_string()));
@@ -564,9 +779,14 @@ mod tests {
             ])
         );
         assert_eq!(cli.limit, 20);
-        assert_eq!(cli.timeout, 15);
+        assert_eq!(cli.timeout, Some(15));
+        assert_eq!(cli.page, 2);
+        assert_eq!(cli.language, Some("en-US".to_string()));
+        assert!(matches!(cli.safesearch, Some(SafeSearchArg::Moderate)));
+        assert!(matches!(cli.time_range, Some(TimeRangeArg::Month)));
         assert!(matches!(cli.format, OutputFormat::Json));
         assert_eq!(cli.proxy, Some("socks5://localhost:1080".to_string()));
+        assert_eq!(cli.config, Some(PathBuf::from("search.acl")));
         assert!(cli.verbose);
     }
 
@@ -600,6 +820,88 @@ mod tests {
         let cli = Cli::parse_from(["a3s-search", "query", "-e", "g,ddg", "--headless"]);
         assert!(cli.headless);
         assert_eq!(cli.engines, Some(vec!["g".to_string(), "ddg".to_string()]));
+    }
+
+    #[test]
+    fn test_selected_engine_shortcuts_default() {
+        let args = SearchArgs {
+            query: "query".to_string(),
+            engines: None,
+            limit: 10,
+            timeout: None,
+            page: 1,
+            language: None,
+            safesearch: None,
+            time_range: None,
+            format: OutputFormat::Text,
+            proxy: None,
+            config: None,
+        };
+
+        assert_eq!(selected_engine_shortcuts(&args, None), vec!["ddg", "wiki"]);
+    }
+
+    #[test]
+    fn test_selected_engine_shortcuts_from_config() {
+        let args = SearchArgs {
+            query: "query".to_string(),
+            engines: None,
+            limit: 10,
+            timeout: None,
+            page: 1,
+            language: None,
+            safesearch: None,
+            time_range: None,
+            format: OutputFormat::Text,
+            proxy: None,
+            config: None,
+        };
+        let config = SearchConfig::parse(
+            r#"
+            engine "ddg" { enabled = true }
+            engine "brave" { enabled = false }
+            engine "wiki" { enabled = true }
+            "#,
+        )
+        .unwrap();
+
+        let selected = selected_engine_shortcuts(&args, Some(&config));
+        assert_eq!(selected.len(), 2);
+        assert!(selected.contains(&"ddg".to_string()));
+        assert!(selected.contains(&"wiki".to_string()));
+        assert!(!selected.contains(&"brave".to_string()));
+    }
+
+    #[test]
+    fn test_selected_engine_shortcuts_cli_overrides_config_selection() {
+        let args = SearchArgs {
+            query: "query".to_string(),
+            engines: Some(vec!["bing".to_string()]),
+            limit: 10,
+            timeout: None,
+            page: 1,
+            language: None,
+            safesearch: None,
+            time_range: None,
+            format: OutputFormat::Text,
+            proxy: None,
+            config: None,
+        };
+        let config = SearchConfig::parse(r#"engine "ddg" { enabled = true }"#).unwrap();
+
+        assert_eq!(
+            selected_engine_shortcuts(&args, Some(&config)),
+            vec!["bing"]
+        );
+    }
+
+    #[test]
+    fn test_is_config_enabled_respects_aliases() {
+        let config = SearchConfig::parse(r#"engine "google" { enabled = false }"#).unwrap();
+
+        assert!(!is_config_enabled(Some(&config), "g"));
+        assert!(!is_config_enabled(Some(&config), "google"));
+        assert!(is_config_enabled(Some(&config), "ddg"));
     }
 
     #[test]

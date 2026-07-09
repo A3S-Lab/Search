@@ -13,16 +13,16 @@
 //!
 //! let metrics = Arc::new(Metrics::new());
 //! metrics.record_success(std::time::Duration::from_millis(150));
-//! metrics.record_failure("timeout");
-//! println!("{:#?}", metrics.snapshot());
+//! metrics.record_failure("timeout", true);
+//! # async fn example(metrics: Arc<Metrics>) {
+//! println!("{:#?}", metrics.snapshot().await);
+//! # }
 //! ```
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
-
-use tokio::sync::RwLock;
 
 /// In-memory metrics registry.
 #[derive(Debug, Clone)]
@@ -41,9 +41,9 @@ struct InnerMetrics {
     /// Total non-transient failures (permanent errors).
     permanent_failures: AtomicU64,
     /// Error type counters.
-    error_counts: RwLock<HashMap<String, AtomicU64>>,
+    error_counts: Mutex<HashMap<String, u64>>,
     /// Latency tracker.
-    latency_tracker: RwLock<LatencyTracker>,
+    latency_tracker: Mutex<LatencyTracker>,
 }
 
 #[derive(Debug, Default)]
@@ -63,8 +63,8 @@ impl Metrics {
                 failures: AtomicU64::new(0),
                 transient_failures: AtomicU64::new(0),
                 permanent_failures: AtomicU64::new(0),
-                error_counts: RwLock::new(HashMap::new()),
-                latency_tracker: RwLock::new(LatencyTracker {
+                error_counts: Mutex::new(HashMap::new()),
+                latency_tracker: Mutex::new(LatencyTracker {
                     window: Vec::with_capacity(1000),
                     max_size: 1000,
                 }),
@@ -85,27 +85,23 @@ impl Metrics {
         self.inner.failures.fetch_add(1, Ordering::Relaxed);
 
         if is_transient {
-            self.inner.transient_failures.fetch_add(1, Ordering::Relaxed);
+            self.inner
+                .transient_failures
+                .fetch_add(1, Ordering::Relaxed);
         } else {
-            self.inner.permanent_failures.fetch_add(1, Ordering::Relaxed);
+            self.inner
+                .permanent_failures
+                .fetch_add(1, Ordering::Relaxed);
         }
 
-        // Record error type
-        let error_counts = self.inner.error_counts.read().await;
-        if let Some(counter) = error_counts.get(error_type) {
-            counter.fetch_add(1, Ordering::Relaxed);
-        } else {
-            drop(error_counts);
-            let mut error_counts = self.inner.error_counts.write().await;
-            let counter = AtomicU64::new(1);
-            error_counts.insert(error_type.to_string(), counter);
-        }
+        let mut error_counts = lock_recover(&self.inner.error_counts);
+        *error_counts.entry(error_type.to_string()).or_insert(0) += 1;
     }
 
     /// Records latency for percentile calculation.
     fn record_latency(&self, latency: Duration) {
         let latency_ms = latency.as_millis() as u64;
-        let mut tracker = self.inner.latency_tracker.write().await;
+        let mut tracker = lock_recover(&self.inner.latency_tracker);
 
         if tracker.window.len() >= tracker.max_size {
             // Remove oldest 10%
@@ -118,13 +114,10 @@ impl Metrics {
 
     /// Returns a snapshot of current metrics.
     pub async fn snapshot(&self) -> MetricsSnapshot {
-        let error_counts = self.inner.error_counts.read().await;
-        let error_map: HashMap<String, u64> = error_counts
-            .iter()
-            .map(|(k, v)| (k.clone(), v.load(Ordering::Relaxed)))
-            .collect();
+        let error_counts = lock_recover(&self.inner.error_counts);
+        let error_map = error_counts.clone();
 
-        let latency_tracker = self.inner.latency_tracker.read().await;
+        let latency_tracker = lock_recover(&self.inner.latency_tracker);
         let (p50, p95, p99) = calculate_percentiles(&latency_tracker.window);
 
         MetricsSnapshot {
@@ -160,14 +153,21 @@ impl Metrics {
         self.inner.failures.store(0, Ordering::Relaxed);
         self.inner.transient_failures.store(0, Ordering::Relaxed);
         self.inner.permanent_failures.store(0, Ordering::Relaxed);
-        self.inner.error_counts.write().await.clear();
-        self.inner.latency_tracker.write().await.window.clear();
+        lock_recover(&self.inner.error_counts).clear();
+        lock_recover(&self.inner.latency_tracker).window.clear();
     }
 }
 
 impl Default for Metrics {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
     }
 }
 
@@ -231,7 +231,7 @@ fn calculate_percentiles(values: &[u64]) -> (u64, u64, u64) {
         if sorted.is_empty() {
             return 0;
         }
-        let idx = ((len as f64 * p) - 1.0).max(0.0) as usize;
+        let idx = ((len as f64 * p).ceil() as usize).saturating_sub(1);
         let idx = idx.min(len - 1);
         sorted[idx]
     }
@@ -359,8 +359,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_metrics_timing_guard_success() {
-        let metrics = Metrics::new();
-        let guard = TimingGuard::new(Some(metrics.clone()));
+        let metrics = Arc::new(Metrics::new());
+        let guard = TimingGuard::new(Some(Arc::clone(&metrics)));
 
         std::thread::sleep(Duration::from_millis(10));
         let elapsed = guard.success();

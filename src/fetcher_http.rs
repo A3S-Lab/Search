@@ -1,15 +1,16 @@
 //! HTTP-based page fetcher using reqwest.
 
-use std::sync::Arc;
-use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use reqwest::Client;
 use tracing::debug;
 
 use crate::fetcher::PageFetcher;
-use crate::proxy::ProxyPool;
-use crate::Result;
+use crate::proxy::{ProxyConfig, ProxyPool};
+use crate::{Metrics, Result, SearchError};
 
 /// Default user agent for HTTP requests.
 const DEFAULT_USER_AGENT: &str =
@@ -22,6 +23,7 @@ const DEFAULT_USER_AGENT: &str =
 /// that require JavaScript rendering, use `BrowserFetcher` instead.
 pub struct HttpFetcher {
     client: Client,
+    metrics: Option<Arc<Metrics>>,
 }
 
 impl HttpFetcher {
@@ -32,6 +34,7 @@ impl HttpFetcher {
                 .user_agent(DEFAULT_USER_AGENT)
                 .build()
                 .expect("Failed to create HTTP client"),
+            metrics: None,
         }
     }
 
@@ -46,12 +49,24 @@ impl HttpFetcher {
             .map_err(|e| {
                 crate::SearchError::Other(format!("Failed to create HTTP client: {}", e))
             })?;
-        Ok(Self { client })
+        Ok(Self {
+            client,
+            metrics: None,
+        })
     }
 
     /// Creates an `HttpFetcher` with a custom reqwest client.
     pub fn with_client(client: Client) -> Self {
-        Self { client }
+        Self {
+            client,
+            metrics: None,
+        }
+    }
+
+    /// Attaches a metrics registry used to record fetch attempts.
+    pub fn with_metrics(mut self, metrics: Arc<Metrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 
     /// Returns a reference to the underlying reqwest client.
@@ -72,9 +87,15 @@ impl Default for HttpFetcher {
 #[async_trait]
 impl PageFetcher for HttpFetcher {
     async fn fetch(&self, url: &str) -> Result<String> {
-        let response = self.client.get(url).send().await?;
-        let html = response.text().await?;
-        Ok(html)
+        let start = Instant::now();
+        let result = async {
+            let response = self.client.get(url).send().await?.error_for_status()?;
+            let html = response.text().await?;
+            Ok(html)
+        }
+        .await;
+        record_fetch_metrics(&self.metrics, start, &result);
+        result
     }
 }
 
@@ -104,6 +125,8 @@ impl PageFetcher for HttpFetcher {
 pub struct PooledHttpFetcher {
     pool: Arc<ProxyPool>,
     timeout: Duration,
+    client_cache: Mutex<HashMap<String, Client>>,
+    metrics: Option<Arc<Metrics>>,
 }
 
 impl PooledHttpFetcher {
@@ -112,47 +135,90 @@ impl PooledHttpFetcher {
         Self {
             pool,
             timeout: Duration::from_secs(30),
+            client_cache: Mutex::new(HashMap::new()),
+            metrics: None,
         }
     }
 
     /// Sets the request timeout.
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        lock_recover(&self.client_cache).clear();
         self
+    }
+
+    /// Attaches a metrics registry used to record fetch attempts.
+    pub fn with_metrics(mut self, metrics: Arc<Metrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
+    fn client_for(&self, proxy_config: Option<&ProxyConfig>) -> Result<Client> {
+        let key = proxy_config
+            .map(ProxyConfig::url)
+            .unwrap_or_else(|| "direct://".to_string());
+
+        let mut cache = lock_recover(&self.client_cache);
+        if let Some(client) = cache.get(&key) {
+            return Ok(client.clone());
+        }
+
+        let mut builder = Client::builder()
+            .user_agent(DEFAULT_USER_AGENT)
+            .timeout(self.timeout);
+
+        if proxy_config.is_some() {
+            let proxy = reqwest::Proxy::all(&key)
+                .map_err(|e| SearchError::Other(format!("Failed to create proxy: {}", e)))?;
+            builder = builder.proxy(proxy);
+        }
+
+        let client = builder
+            .build()
+            .map_err(|e| SearchError::Other(format!("Failed to create HTTP client: {}", e)))?;
+        cache.insert(key, client.clone());
+        Ok(client)
     }
 }
 
 #[async_trait]
 impl PageFetcher for PooledHttpFetcher {
     async fn fetch(&self, url: &str) -> Result<String> {
-        let client = if let Some(proxy_config) = self.pool.get_proxy().await {
+        let start = Instant::now();
+        let proxy_config = self.pool.get_proxy().await;
+
+        if let Some(proxy_config) = proxy_config.as_ref() {
             debug!(
                 "PooledHttpFetcher using proxy {}:{}",
                 proxy_config.host, proxy_config.port
             );
-            let proxy = reqwest::Proxy::all(proxy_config.url())
-                .map_err(|e| crate::SearchError::Other(format!("Failed to create proxy: {}", e)))?;
-            Client::builder()
-                .user_agent(DEFAULT_USER_AGENT)
-                .timeout(self.timeout)
-                .proxy(proxy)
-                .build()
-                .map_err(|e| {
-                    crate::SearchError::Other(format!("Failed to create HTTP client: {}", e))
-                })?
-        } else {
-            Client::builder()
-                .user_agent(DEFAULT_USER_AGENT)
-                .timeout(self.timeout)
-                .build()
-                .map_err(|e| {
-                    crate::SearchError::Other(format!("Failed to create HTTP client: {}", e))
-                })?
-        };
+        }
 
-        let response = client.get(url).send().await?;
-        let html = response.text().await?;
-        Ok(html)
+        let result = async {
+            let client = self.client_for(proxy_config.as_ref())?;
+            let response = client.get(url).send().await?.error_for_status()?;
+            let html = response.text().await?;
+            Ok(html)
+        }
+        .await;
+        record_fetch_metrics(&self.metrics, start, &result);
+        result
+    }
+}
+
+fn record_fetch_metrics<T>(metrics: &Option<Arc<Metrics>>, start: Instant, result: &Result<T>) {
+    if let Some(metrics) = metrics.as_ref() {
+        match result {
+            Ok(_) => metrics.record_success(start.elapsed()),
+            Err(error) => metrics.record_failure(error.kind(), error.is_transient()),
+        }
+    }
+}
+
+fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
     }
 }
 
@@ -231,5 +297,54 @@ mod tests {
             ProxyConfig::new("127.0.0.1", 8081),
         ]));
         let _fetcher = PooledHttpFetcher::new(pool);
+    }
+
+    #[test]
+    fn test_pooled_http_fetcher_caches_direct_client() {
+        let pool = Arc::new(ProxyPool::new());
+        let fetcher = PooledHttpFetcher::new(pool);
+
+        let _first = fetcher.client_for(None).unwrap();
+        let _second = fetcher.client_for(None).unwrap();
+
+        assert_eq!(lock_recover(&fetcher.client_cache).len(), 1);
+    }
+
+    #[test]
+    fn test_pooled_http_fetcher_caches_proxy_clients_by_url() {
+        let pool = Arc::new(ProxyPool::new());
+        let fetcher = PooledHttpFetcher::new(pool);
+        let proxy = ProxyConfig::new("127.0.0.1", 8080);
+
+        let _first = fetcher.client_for(Some(&proxy)).unwrap();
+        let _second = fetcher.client_for(Some(&proxy)).unwrap();
+        let _direct = fetcher.client_for(None).unwrap();
+
+        assert_eq!(lock_recover(&fetcher.client_cache).len(), 2);
+    }
+
+    #[test]
+    fn test_pooled_http_fetcher_timeout_change_clears_cache() {
+        let pool = Arc::new(ProxyPool::new());
+        let fetcher = PooledHttpFetcher::new(pool);
+
+        let _client = fetcher.client_for(None).unwrap();
+        assert_eq!(lock_recover(&fetcher.client_cache).len(), 1);
+
+        let fetcher = fetcher.with_timeout(Duration::from_secs(5));
+        assert_eq!(lock_recover(&fetcher.client_cache).len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_http_fetcher_records_failure_metrics() {
+        let metrics = Arc::new(Metrics::new());
+        let fetcher = HttpFetcher::new().with_metrics(Arc::clone(&metrics));
+
+        let result = fetcher.fetch("not a url").await;
+        assert!(result.is_err());
+
+        let snapshot = metrics.snapshot().await;
+        assert_eq!(snapshot.failures, 1);
+        assert_eq!(snapshot.total_requests(), 1);
     }
 }

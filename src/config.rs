@@ -32,7 +32,7 @@ use std::time::Duration;
 use a3s_acl::ast::{Document, Value};
 use a3s_acl::parse;
 
-use crate::{HealthConfig, SearchError};
+use crate::{EngineConfig, HealthConfig, SearchError};
 
 /// Top-level search configuration.
 #[derive(Debug, Clone)]
@@ -172,6 +172,47 @@ impl SearchConfig {
             .filter(|(_, entry)| entry.enabled)
             .map(|(shortcut, _)| shortcut.as_str())
             .collect()
+    }
+
+    /// Returns the configuration entry for an engine shortcut or known alias.
+    pub fn engine_entry(&self, shortcut: &str) -> Option<&EngineEntry> {
+        self.engines.get(shortcut).or_else(|| {
+            engine_aliases(shortcut)
+                .iter()
+                .find_map(|alias| self.engines.get(*alias))
+        })
+    }
+
+    /// Applies top-level and per-engine ACL settings to an `EngineConfig`.
+    ///
+    /// The top-level `timeout` becomes the default timeout for every configured
+    /// search run. Per-engine `timeout` overrides it when present.
+    pub fn apply_engine_config(&self, mut config: EngineConfig) -> EngineConfig {
+        config.timeout = self.timeout;
+
+        if let Some(entry) = self.engine_entry(&config.shortcut) {
+            config.enabled = entry.enabled;
+            config.weight = entry.weight;
+            if let Some(timeout) = entry.timeout {
+                config.timeout = timeout;
+            }
+        }
+
+        config
+    }
+}
+
+fn engine_aliases(shortcut: &str) -> &'static [&'static str] {
+    match shortcut {
+        "ddg" => &["duckduckgo"],
+        "duckduckgo" => &["ddg"],
+        "wiki" => &["wikipedia"],
+        "wikipedia" => &["wiki"],
+        "g" => &["google"],
+        "google" => &["g"],
+        "360" => &["so360"],
+        "so360" => &["360"],
+        _ => &[],
     }
 }
 
@@ -419,5 +460,74 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("Failed to read config file"));
+    }
+
+    #[test]
+    fn test_engine_entry_uses_aliases() {
+        let config = SearchConfig::parse(
+            r#"
+            engine "google" {
+                enabled = false
+                weight = 2.0
+            }
+            "#,
+        )
+        .unwrap();
+
+        let entry = config.engine_entry("g").unwrap();
+        assert!(!entry.enabled);
+        assert_eq!(entry.weight, 2.0);
+    }
+
+    #[test]
+    fn test_apply_engine_config_uses_top_level_timeout() {
+        let config = SearchConfig::parse(
+            r#"
+            timeout {
+                value = 12
+            }
+            "#,
+        )
+        .unwrap();
+        let engine = EngineConfig {
+            name: "DuckDuckGo".to_string(),
+            shortcut: "ddg".to_string(),
+            timeout: 5,
+            ..Default::default()
+        };
+
+        let applied = config.apply_engine_config(engine);
+        assert_eq!(applied.timeout, 12);
+        assert!(applied.enabled);
+        assert_eq!(applied.weight, 1.0);
+    }
+
+    #[test]
+    fn test_apply_engine_config_uses_engine_override() {
+        let config = SearchConfig::parse(
+            r#"
+            timeout {
+                value = 12
+            }
+
+            engine "ddg" {
+                enabled = false
+                weight = 1.7
+                timeout = 3
+            }
+            "#,
+        )
+        .unwrap();
+        let engine = EngineConfig {
+            name: "DuckDuckGo".to_string(),
+            shortcut: "ddg".to_string(),
+            timeout: 5,
+            ..Default::default()
+        };
+
+        let applied = config.apply_engine_config(engine);
+        assert_eq!(applied.timeout, 3);
+        assert!(!applied.enabled);
+        assert_eq!(applied.weight, 1.7);
     }
 }

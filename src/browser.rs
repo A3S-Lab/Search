@@ -21,7 +21,7 @@
 //!   via CDP over WebSocket. Requires the `lightpanda` feature.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use chromiumoxide::browser::{Browser, BrowserConfig};
@@ -31,7 +31,7 @@ use tokio::sync::{Mutex, Semaphore};
 use tracing::{debug, warn};
 
 use crate::fetcher::{PageFetcher, WaitStrategy};
-use crate::{Result, SearchError};
+use crate::{Metrics, Result, SearchError};
 
 /// Selects which headless browser backend the pool uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -363,6 +363,7 @@ pub struct BrowserFetcher {
     user_agent: Option<String>,
     max_retries: u32,
     retry_delay_ms: u64,
+    metrics: Option<Arc<Metrics>>,
 }
 
 impl BrowserFetcher {
@@ -376,6 +377,7 @@ impl BrowserFetcher {
             user_agent: None,
             max_retries: 3,
             retry_delay_ms: 100,
+            metrics: None,
         }
     }
 
@@ -400,6 +402,12 @@ impl BrowserFetcher {
     pub fn with_retries(mut self, max_retries: u32, retry_delay_ms: u64) -> Self {
         self.max_retries = max_retries;
         self.retry_delay_ms = retry_delay_ms;
+        self
+    }
+
+    /// Attaches a metrics registry used to record rendered page fetch attempts.
+    pub fn with_metrics(mut self, metrics: Arc<Metrics>) -> Self {
+        self.metrics = Some(metrics);
         self
     }
 
@@ -516,7 +524,15 @@ impl BrowserFetcher {
 #[async_trait]
 impl PageFetcher for BrowserFetcher {
     async fn fetch(&self, url: &str) -> Result<String> {
-        self.fetch_with_retry(url).await
+        let start = Instant::now();
+        let result = self.fetch_with_retry(url).await;
+        if let Some(metrics) = self.metrics.as_ref() {
+            match &result {
+                Ok(_) => metrics.record_success(start.elapsed()),
+                Err(error) => metrics.record_failure(error.kind(), error.is_transient()),
+            }
+        }
+        result
     }
 }
 
@@ -573,6 +589,7 @@ mod tests {
         assert!(fetcher.user_agent.is_none());
         assert_eq!(fetcher.max_retries, 3);
         assert_eq!(fetcher.retry_delay_ms, 100);
+        assert!(fetcher.metrics.is_none());
     }
 
     #[test]
@@ -584,12 +601,14 @@ mod tests {
                 timeout_ms: 5000,
             })
             .with_user_agent("CustomBot/1.0")
-            .with_retries(5, 200);
+            .with_retries(5, 200)
+            .with_metrics(Arc::new(Metrics::new()));
 
         assert!(matches!(fetcher.wait, WaitStrategy::Selector { .. }));
         assert_eq!(fetcher.user_agent.as_deref(), Some("CustomBot/1.0"));
         assert_eq!(fetcher.max_retries, 5);
         assert_eq!(fetcher.retry_delay_ms, 200);
+        assert!(fetcher.metrics.is_some());
     }
 
     #[test]

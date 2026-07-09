@@ -69,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
 
 ```toml
 [dependencies]
-a3s-search = "1.3"
+a3s-search = "1.4"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -82,13 +82,13 @@ tokio = { version = "1", features = ["full"] }
 
 ```toml
 # Default (no headless engines)
-a3s-search = "1.3"
+a3s-search = "1.4"
 
 # With headless browsers
-a3s-search = { version = "1.3", features = ["headless"] }
+a3s-search = { version = "1.4", features = ["headless"] }
 
 # With Lightpanda (Linux/macOS only)
-a3s-search = { version = "1.3", features = ["lightpanda"] }
+a3s-search = { version = "1.4", features = ["lightpanda"] }
 ```
 
 ### Basic Search
@@ -103,6 +103,17 @@ let query = SearchQuery::new("rust async");
 let results = search.search(query).await?;
 println!("Found {} results", results.count);
 ```
+
+### CLI Search
+
+```bash
+a3s-search "rust async" --engines ddg,wiki --limit 5
+a3s-search "rust async" --page 2 --language en-US --safesearch moderate
+a3s-search "rust async" --time-range month --format json
+```
+
+JSON output includes `results`, `errors`, `count`, `total_count`, and `duration_ms`,
+so callers can inspect partial engine failures without parsing stderr.
 
 ## Full-Text Extraction
 
@@ -192,11 +203,28 @@ engine "google" {
 Load the configuration:
 
 ```rust
-use a3s_search::SearchConfig;
+use a3s_search::{Engine, Search, SearchConfig};
+use a3s_search::engines::DuckDuckGo;
 
 let config = SearchConfig::load("search.acl")?;
 let health = config.health_config();
+let mut search = Search::with_health_config(health);
+
+let engine = DuckDuckGo::new();
+let engine_config = config.apply_engine_config(engine.config().clone());
+search.add_engine(engine.with_config(engine_config));
 ```
+
+The CLI can load the same file:
+
+```bash
+a3s-search "rust async" --config search.acl
+```
+
+When `--engines` is not provided, enabled `engine "<shortcut>"` blocks decide
+which engines are added. `--timeout` overrides configuration at runtime; otherwise
+the top-level `timeout` block is applied to each engine, with per-engine
+`timeout` taking precedence.
 
 ### Configuration Options
 
@@ -321,6 +349,15 @@ let pool = Arc::new(ProxyPool::with_provider(MyProxyProvider { /* ... */ }));
 let _handle = a3s_search::proxy::spawn_auto_refresh(Arc::clone(&pool));
 ```
 
+`PooledHttpFetcher` reuses a reqwest client per proxy URL, preserving connection
+pools while still rotating proxies for each request:
+
+```rust
+use a3s_search::{PageFetcher, PooledHttpFetcher};
+
+let fetcher: Arc<dyn PageFetcher> = Arc::new(PooledHttpFetcher::new(Arc::clone(&pool)));
+```
+
 ### ProxyPool API
 
 | Method | Description |
@@ -346,19 +383,22 @@ let _handle = a3s_search::proxy::spawn_auto_refresh(Arc::clone(&pool));
 
 ## Metrics
 
-Track fetcher performance with built-in metrics:
+Track fetcher and per-engine search performance with built-in metrics:
 
 ```rust
 use a3s_search::metrics::{Metrics, TimingGuard};
+use a3s_search::{HttpFetcher, Search};
 use std::sync::Arc;
 
 let metrics = Arc::new(Metrics::new());
+let search = Search::new().with_metrics(Arc::clone(&metrics));
+let fetcher = HttpFetcher::new().with_metrics(Arc::clone(&metrics));
 
 // Record success
 metrics.record_success(std::time::Duration::from_millis(150));
 
 // Record failure
-metrics.record_failure("timeout", is_transient: true);
+metrics.record_failure("timeout", true);
 
 // Get snapshot
 let snapshot = metrics.snapshot().await;
@@ -448,6 +488,12 @@ impl Search {
 
     /// Create with health monitoring
     pub fn with_health_config(config: HealthConfig) -> Self;
+
+    /// Attach metrics for per-engine search attempts
+    pub fn with_metrics(mut self, metrics: Arc<Metrics>) -> Self;
+
+    /// Set or clear metrics for per-engine search attempts
+    pub fn set_metrics(&mut self, metrics: Option<Arc<Metrics>>);
 
     /// Add a search engine
     pub fn add_engine<E: Engine + 'static>(&mut self, engine: E);
@@ -581,6 +627,7 @@ impl BrowserFetcher {
     pub fn with_wait(mut self, wait: WaitStrategy) -> Self;
     pub fn with_user_agent(mut self, user_agent: impl Into<String>) -> Self;
     pub fn with_retries(mut self, max_retries: u32, retry_delay_ms: u64) -> Self;
+    pub fn with_metrics(mut self, metrics: Arc<Metrics>) -> Self;
 }
 
 impl PageFetcher for BrowserFetcher {

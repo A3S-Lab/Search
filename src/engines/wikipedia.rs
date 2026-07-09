@@ -85,9 +85,10 @@ impl Engine for Wikipedia {
     }
 
     async fn search(&self, query: &SearchQuery) -> Result<Vec<SearchResult>> {
+        let language = query_language(query).unwrap_or(&self.language);
         let mut url = format!(
             "https://{}.wikipedia.org/w/api.php?action=query&list=search&srsearch={}&format=json&srlimit=10",
-            self.language,
+            language,
             urlencoding::encode(&query.query)
         );
         if query.page > 1 {
@@ -105,7 +106,7 @@ impl Engine for Wikipedia {
                     .map(|item| {
                         let url = format!(
                             "https://{}.wikipedia.org/wiki/{}",
-                            self.language,
+                            language,
                             item.title.replace(' ', "_")
                         );
                         let content = strip_html_tags(&item.snippet);
@@ -117,6 +118,14 @@ impl Engine for Wikipedia {
 
         Ok(results)
     }
+}
+
+fn query_language(query: &SearchQuery) -> Option<&str> {
+    let language = query.language.as_deref()?;
+    language
+        .split(['-', '_'])
+        .next()
+        .filter(|language| !language.is_empty())
 }
 
 fn strip_html_tags(html: &str) -> String {
@@ -166,6 +175,18 @@ mod tests {
     fn test_wikipedia_with_language() {
         let engine = Wikipedia::new().with_language("zh");
         assert_eq!(engine.language, "zh");
+    }
+
+    #[test]
+    fn test_query_language_uses_primary_subtag() {
+        let query = SearchQuery::new("rust").with_language("en-US");
+        assert_eq!(query_language(&query), Some("en"));
+    }
+
+    #[test]
+    fn test_query_language_empty_is_none() {
+        let query = SearchQuery::new("rust").with_language("");
+        assert_eq!(query_language(&query), None);
     }
 
     #[test]

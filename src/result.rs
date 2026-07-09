@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use url::form_urlencoded::Serializer;
 
 /// Type of search result.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -103,13 +104,60 @@ impl SearchResult {
 
     /// Returns a normalized URL for deduplication (without scheme and trailing slash).
     pub fn normalized_url(&self) -> String {
-        let url = self
-            .url
-            .trim_start_matches("https://")
-            .trim_start_matches("http://")
-            .trim_end_matches('/');
-        url.to_lowercase()
+        match url::Url::parse(&self.url) {
+            Ok(url) => normalize_parsed_url(&url),
+            Err(_) => self
+                .url
+                .trim_start_matches("https://")
+                .trim_start_matches("http://")
+                .trim_end_matches('/')
+                .to_lowercase(),
+        }
     }
+}
+
+fn normalize_parsed_url(url: &url::Url) -> String {
+    let host = url
+        .host_str()
+        .unwrap_or_default()
+        .trim_start_matches("www.");
+    let port = url
+        .port()
+        .map(|port| format!(":{port}"))
+        .unwrap_or_default();
+    let path = match url.path().trim_end_matches('/') {
+        "" => "",
+        "/" => "",
+        path => path,
+    };
+
+    let mut query_pairs: Vec<_> = url
+        .query_pairs()
+        .filter(|(key, _)| !is_tracking_param(key))
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect();
+    query_pairs.sort();
+
+    let query = if query_pairs.is_empty() {
+        String::new()
+    } else {
+        let mut serializer = Serializer::new(String::new());
+        for (key, value) in query_pairs {
+            serializer.append_pair(&key, &value);
+        }
+        format!("?{}", serializer.finish())
+    };
+
+    format!("{host}{port}{path}{query}").to_lowercase()
+}
+
+fn is_tracking_param(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    key.starts_with("utm_")
+        || matches!(
+            key.as_str(),
+            "fbclid" | "gclid" | "dclid" | "msclkid" | "mc_cid" | "mc_eid" | "igshid"
+        )
 }
 
 /// Container for aggregated search results.
@@ -281,6 +329,30 @@ mod tests {
     fn test_normalized_url_trailing_slash() {
         let result = SearchResult::new("https://example.com/", "t", "c");
         assert_eq!(result.normalized_url(), "example.com");
+    }
+
+    #[test]
+    fn test_normalized_url_removes_tracking_and_fragment() {
+        let result = SearchResult::new(
+            "https://www.Example.com/Path/?utm_source=newsletter&b=2&a=1#section",
+            "t",
+            "c",
+        );
+        assert_eq!(result.normalized_url(), "example.com/path?a=1&b=2");
+    }
+
+    #[test]
+    fn test_normalized_url_sorts_query_pairs() {
+        let first = SearchResult::new("https://example.com/path?b=2&a=1", "t", "c");
+        let second = SearchResult::new("https://example.com/path?a=1&b=2", "t", "c");
+
+        assert_eq!(first.normalized_url(), second.normalized_url());
+    }
+
+    #[test]
+    fn test_normalized_url_keeps_non_default_port() {
+        let result = SearchResult::new("https://example.com:8443/path/", "t", "c");
+        assert_eq!(result.normalized_url(), "example.com:8443/path");
     }
 
     #[test]

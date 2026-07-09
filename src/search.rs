@@ -8,7 +8,7 @@ use tokio::time::{timeout, Duration};
 use tracing::{debug, warn};
 
 use crate::{
-    Aggregator, Engine, HealthConfig, HealthMonitor, Result, SearchError, SearchQuery,
+    Aggregator, Engine, HealthConfig, HealthMonitor, Metrics, Result, SearchError, SearchQuery,
     SearchResults,
 };
 
@@ -18,6 +18,7 @@ pub struct Search {
     aggregator: Aggregator,
     timeout_override: Option<Duration>,
     health: Mutex<HealthMonitor>,
+    metrics: Option<Arc<Metrics>>,
 }
 
 impl Search {
@@ -28,6 +29,7 @@ impl Search {
             aggregator: Aggregator::new(),
             timeout_override: None,
             health: Mutex::new(HealthMonitor::default()),
+            metrics: None,
         }
     }
 
@@ -38,7 +40,24 @@ impl Search {
             aggregator: Aggregator::new(),
             timeout_override: None,
             health: Mutex::new(HealthMonitor::new(config)),
+            metrics: None,
         }
+    }
+
+    /// Attaches a metrics registry used to record per-engine search attempts.
+    pub fn with_metrics(mut self, metrics: Arc<Metrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
+    /// Sets or clears the metrics registry used by this search instance.
+    pub fn set_metrics(&mut self, metrics: Option<Arc<Metrics>>) {
+        self.metrics = metrics;
+    }
+
+    /// Returns the configured metrics registry, if any.
+    pub fn metrics(&self) -> Option<Arc<Metrics>> {
+        self.metrics.as_ref().map(Arc::clone)
     }
 
     /// Adds a search engine.
@@ -80,22 +99,33 @@ impl Search {
             .map(|engine| {
                 let engine = Arc::clone(engine);
                 let query = Arc::clone(&query);
+                let metrics = self.metrics.as_ref().map(Arc::clone);
                 let timeout_duration = self
                     .timeout_override
                     .unwrap_or_else(|| Duration::from_secs(engine.config().timeout));
 
                 async move {
                     let name = engine.name().to_string();
+                    let engine_start = Instant::now();
                     match timeout(timeout_duration, engine.search(&query)).await {
                         Ok(Ok(results)) => {
+                            if let Some(metrics) = metrics.as_ref() {
+                                metrics.record_success(engine_start.elapsed());
+                            }
                             debug!("Engine {} returned {} results", name, results.len());
                             Ok((name, results))
                         }
                         Ok(Err(e)) => {
+                            if let Some(metrics) = metrics.as_ref() {
+                                metrics.record_failure(e.kind(), e.is_transient());
+                            }
                             warn!("Engine {} failed: {}", name, e);
                             Err((name, e.to_string()))
                         }
                         Err(_) => {
+                            if let Some(metrics) = metrics.as_ref() {
+                                metrics.record_failure(SearchError::Timeout.kind(), true);
+                            }
                             warn!("Engine {} timed out", name);
                             Err((name, "timed out".to_string()))
                         }
@@ -180,7 +210,7 @@ impl Default for Search {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{EngineCategory, EngineConfig, SearchResult};
+    use crate::{EngineCategory, EngineConfig, Metrics, SearchResult};
     use async_trait::async_trait;
 
     struct MockEngine {
@@ -513,6 +543,30 @@ mod tests {
         assert_eq!(results.errors().len(), 1);
         assert_eq!(results.errors()[0].0, "failing");
         assert!(results.errors()[0].1.contains("Engine failed"));
+    }
+
+    #[tokio::test]
+    async fn test_search_records_metrics() {
+        let metrics = Arc::new(Metrics::new());
+        let mut search = Search::new().with_metrics(Arc::clone(&metrics));
+        search.add_engine(MockEngine::new(
+            "working",
+            vec![SearchResult::new(
+                "https://working.com",
+                "Working",
+                "Content",
+            )],
+        ));
+        search.add_engine(FailingEngine::new("failing"));
+
+        let results = search.search(SearchQuery::new("test")).await.unwrap();
+        assert_eq!(results.items().len(), 1);
+        assert_eq!(results.errors().len(), 1);
+
+        let snapshot = metrics.snapshot().await;
+        assert_eq!(snapshot.successes, 1);
+        assert_eq!(snapshot.failures, 1);
+        assert_eq!(snapshot.error_counts.get("other"), Some(&1));
     }
 
     #[tokio::test]
