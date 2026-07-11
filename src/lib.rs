@@ -117,6 +117,9 @@ pub mod browser;
 #[cfg(feature = "headless")]
 pub mod browser_setup;
 
+#[cfg(feature = "headless")]
+pub mod browser_management;
+
 #[cfg(feature = "lightpanda")]
 pub mod browser_setup_lp;
 

@@ -109,7 +109,7 @@ fn chrome_executable_in_zip(platform: &str) -> String {
 }
 
 /// Base directory for cached Chrome downloads.
-fn cache_dir() -> Result<PathBuf> {
+pub(crate) fn managed_cache_dir() -> Result<PathBuf> {
     let home = dirs_path()?;
     Ok(home.join(".a3s").join("chromium"))
 }
@@ -175,19 +175,19 @@ pub async fn ensure_chrome() -> Result<PathBuf> {
     }
 
     // 2. Check cached download
-    if let Ok(path) = find_cached_chrome() {
+    if let Ok(path) = find_managed_chrome() {
         info!("Using cached Chrome: {}", path.display());
         return Ok(path);
     }
 
     // 3. Download Chrome for Testing
     info!("No Chrome installation found, downloading Chrome for Testing...");
-    download_chrome().await
+    download_latest_chrome().await
 }
 
 /// Look for a previously downloaded Chrome in the cache directory.
-fn find_cached_chrome() -> Result<PathBuf> {
-    let base = cache_dir()?;
+pub(crate) fn find_managed_chrome() -> Result<PathBuf> {
+    let base = managed_cache_dir()?;
     if !base.exists() {
         return Err(SearchError::Browser("No cached Chrome found".to_string()));
     }
@@ -217,7 +217,7 @@ fn find_cached_chrome() -> Result<PathBuf> {
 ///
 /// Downloads the stable version for the current platform and extracts it
 /// to `~/.a3s/chromium/<version>/`.
-async fn download_chrome() -> Result<PathBuf> {
+pub async fn download_latest_chrome() -> Result<PathBuf> {
     let platform = platform_id()?;
 
     // Fetch version metadata
@@ -264,7 +264,7 @@ async fn download_chrome() -> Result<PathBuf> {
         })?;
 
     // Prepare cache directory
-    let version_dir = cache_dir()?.join(version);
+    let version_dir = managed_cache_dir()?.join(version);
     std::fs::create_dir_all(&version_dir).map_err(|e| {
         SearchError::Browser(format!(
             "Failed to create cache directory {}: {}",
@@ -432,7 +432,7 @@ mod tests {
 
     #[test]
     fn test_cache_dir() {
-        let dir = cache_dir();
+        let dir = managed_cache_dir();
         assert!(dir.is_ok());
         let path = dir.unwrap();
         assert!(path.to_string_lossy().contains(".a3s/chromium"));
@@ -469,7 +469,7 @@ mod tests {
         let _lock = env_lock();
         // With no cache directory, should return error
         let _home = EnvVarGuard::set("HOME", "/tmp/a3s_test_nonexistent_home");
-        let result = find_cached_chrome();
+        let result = find_managed_chrome();
         assert!(result.is_err());
     }
 
@@ -504,7 +504,7 @@ mod tests {
     fn test_cache_dir_structure() {
         let _lock = env_lock();
         let _home = EnvVarGuard::set("HOME", "/tmp/test_cache_home");
-        let dir = cache_dir().unwrap();
+        let dir = managed_cache_dir().unwrap();
         assert_eq!(dir, PathBuf::from("/tmp/test_cache_home/.a3s/chromium"));
     }
 
@@ -529,7 +529,7 @@ mod tests {
         std::fs::create_dir_all(&cache).ok();
 
         let _home = EnvVarGuard::set("HOME", tmp.as_os_str());
-        let result = find_cached_chrome();
+        let result = find_managed_chrome();
         assert!(result.is_err());
 
         // Cleanup
@@ -545,7 +545,7 @@ mod tests {
         std::fs::create_dir_all(&version_dir).ok();
 
         let _home = EnvVarGuard::set("HOME", tmp.as_os_str());
-        let result = find_cached_chrome();
+        let result = find_managed_chrome();
         assert!(result.is_err());
 
         // Cleanup

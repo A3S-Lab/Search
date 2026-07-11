@@ -60,6 +60,8 @@ async fn main() -> anyhow::Result<()> {
 - **ACL Configuration**: Load settings from `.acl` config files
 - **Headless Browser**: Chrome and Lightpanda backends for JS-rendered engines
 - **Auto-Download**: Automatically detects or downloads browsers
+- **Browser Lifecycle API**: Inspect, install, update, and repair Chrome or
+  Lightpanda from an embedding host without invoking a search first
 - **Metrics Collection**: Built-in metrics for observability
 - **Full-Text Extraction**: Fetch result pages and extract the main article content (Readability algorithm), dropping nav/ads/boilerplate
 
@@ -89,6 +91,25 @@ a3s-search = { version = "1.4", features = ["headless"] }
 
 # With Lightpanda (Linux/macOS only)
 a3s-search = { version = "1.4", features = ["lightpanda"] }
+```
+
+Embedding CLIs can manage browser runtimes explicitly through
+`a3s_search::browser_management`:
+
+```rust,no_run
+use a3s_search::browser_management::{
+    browser_statuses, install_browser, ManagedBrowser,
+};
+
+#[tokio::main]
+async fn main() -> Result<(), a3s_search::SearchError> {
+    for status in browser_statuses() {
+        println!("{}: {}", status.browser.as_str(), status.detail);
+    }
+    let chrome = install_browser(ManagedBrowser::Chrome).await?;
+    println!("Chrome: {}", chrome.path.unwrap().display());
+    Ok(())
+}
 ```
 
 ### Basic Search
@@ -790,9 +811,9 @@ cargo clippy -p a3s-search --no-default-features -- -D warnings
 Releases are published to GitHub Releases with CLI binaries for multiple platforms.
 
 ```bash
-# Create and push tag to trigger release
-git tag v1.2.0
-git push origin v1.2.0
+# Create and push a tag matching the Cargo package version to trigger release
+git tag v1.4.1
+git push origin v1.4.1
 ```
 
 ## A3S Ecosystem

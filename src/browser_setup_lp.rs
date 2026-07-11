@@ -53,7 +53,7 @@ fn platform_id() -> Result<&'static str> {
 }
 
 /// Base directory for cached Lightpanda downloads.
-fn cache_dir() -> Result<PathBuf> {
+pub(crate) fn managed_cache_dir() -> Result<PathBuf> {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .map(PathBuf::from)
@@ -88,8 +88,8 @@ pub fn detect_lightpanda() -> Option<PathBuf> {
 }
 
 /// Look for a previously downloaded Lightpanda in the cache directory.
-fn find_cached_lightpanda() -> Result<PathBuf> {
-    let base = cache_dir()?;
+pub(crate) fn find_managed_lightpanda() -> Result<PathBuf> {
+    let base = managed_cache_dir()?;
     if !base.exists() {
         return Err(SearchError::Browser(
             "No cached Lightpanda found".to_string(),
@@ -128,17 +128,17 @@ pub async fn ensure_lightpanda() -> Result<PathBuf> {
         return Ok(path);
     }
 
-    if let Ok(path) = find_cached_lightpanda() {
+    if let Ok(path) = find_managed_lightpanda() {
         info!("Using cached Lightpanda: {}", path.display());
         return Ok(path);
     }
 
     info!("Lightpanda not found, downloading latest release...");
-    download_lightpanda().await
+    download_latest_lightpanda().await
 }
 
 /// Download the latest Lightpanda binary from GitHub releases.
-async fn download_lightpanda() -> Result<PathBuf> {
+pub async fn download_latest_lightpanda() -> Result<PathBuf> {
     let platform = platform_id()?;
     let asset_name = format!("lightpanda-{}", platform);
 
@@ -185,7 +185,7 @@ async fn download_lightpanda() -> Result<PathBuf> {
         .to_string();
 
     // Prepare cache directory
-    let version_dir = cache_dir()?.join(tag);
+    let version_dir = managed_cache_dir()?.join(tag);
     std::fs::create_dir_all(&version_dir).map_err(|e| {
         SearchError::Browser(format!(
             "Failed to create Lightpanda cache directory {}: {}",
@@ -282,7 +282,7 @@ mod tests {
     fn test_cache_dir_structure() {
         let _lock = env_lock();
         let _home = EnvVarGuard::set("HOME", "/tmp/test_lp_cache_home");
-        let dir = cache_dir().unwrap();
+        let dir = managed_cache_dir().unwrap();
         assert_eq!(
             dir,
             PathBuf::from("/tmp/test_lp_cache_home/.a3s/lightpanda")
@@ -293,7 +293,7 @@ mod tests {
     fn test_find_cached_lightpanda_no_cache() {
         let _lock = env_lock();
         let _home = EnvVarGuard::set("HOME", "/tmp/a3s_lp_nonexistent_home_xyz");
-        let result = find_cached_lightpanda();
+        let result = find_managed_lightpanda();
         assert!(result.is_err());
     }
 
@@ -320,7 +320,7 @@ mod tests {
         std::fs::create_dir_all(&cache).ok();
 
         let _home = EnvVarGuard::set("HOME", tmp.as_os_str());
-        let result = find_cached_lightpanda();
+        let result = find_managed_lightpanda();
         assert!(result.is_err());
 
         std::fs::remove_dir_all(&tmp).ok();
@@ -337,7 +337,7 @@ mod tests {
         std::fs::create_dir_all(&version_dir).ok();
 
         let _home = EnvVarGuard::set("HOME", tmp.as_os_str());
-        let result = find_cached_lightpanda();
+        let result = find_managed_lightpanda();
         assert!(result.is_err());
 
         std::fs::remove_dir_all(&tmp).ok();
@@ -358,7 +358,7 @@ mod tests {
         std::fs::write(&fake_binary, b"fake").ok();
 
         let _home = EnvVarGuard::set("HOME", tmp.as_os_str());
-        let result = find_cached_lightpanda();
+        let result = find_managed_lightpanda();
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), fake_binary);
 
