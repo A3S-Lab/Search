@@ -46,10 +46,17 @@ jobs:
         run: cargo fmt -- --check
 
       - name: Clippy
-        run: cargo clippy --no-default-features -- -D warnings
+        run: |
+          cargo clippy --all-targets --no-default-features -- -D warnings
+          cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Tests
-        run: cargo test --no-default-features --lib
+        run: |
+          cargo test --no-default-features --lib
+          cargo test --all-features --lib
+
+      - name: Package verification
+        run: cargo package --locked
 
   # ───────────────────────────────────────────────
   # Build CLI binary for 4 platforms
@@ -135,7 +142,9 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          if cargo search a3s-search --limit 1 | grep -q "a3s-search = \"${VERSION}\""; then
+          if curl --retry 5 --retry-all-errors --retry-delay 5 -fsSL \
+            -A "a3s-search-release-check/1.0" \
+            "https://crates.io/api/v1/crates/a3s-search/${VERSION}" >/dev/null; then
             echo "a3s-search ${VERSION} is already published on crates.io; skipping cargo publish."
             exit 0
           fi
