@@ -582,7 +582,7 @@ mod lightpanda_tests {
                     "  fetched {} bytes from {}\n  snippet: {}...",
                     html.len(),
                     url,
-                    &html[..html.len().min(120)].replace('\n', " ")
+                    html[..html.len().min(120)].replace('\n', " ")
                 );
                 html
             }

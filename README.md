@@ -841,8 +841,8 @@ Releases are published to GitHub Releases with CLI binaries for multiple platfor
 
 ```bash
 # Create and push a tag matching the Cargo package version to trigger release
-git tag v1.4.2
-git push origin v1.4.2
+git tag v1.4.3
+git push origin v1.4.3
 ```
 
 ## A3S Ecosystem
