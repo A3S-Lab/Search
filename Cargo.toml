@@ -75,7 +75,7 @@ urlencoding = "2"
 a3s-acl = "0.2"
 
 # Typed Browser rendering supplied by A3S Use. Search never invokes its CLI or MCP surface.
-a3s-use-browser = { git = "https://github.com/A3S-Lab/Use", rev = "0ef4694172c09656d8a7c8f049dbaa4b05b7e274", optional = true }
+a3s-use-browser = { git = "https://github.com/A3S-Lab/Use", rev = "c66ae411b78b10b77d0b093c5a6370db39293b43", optional = true }
 
 # Self-update
 a3s-updater = "0.2"
