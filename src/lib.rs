@@ -115,13 +115,7 @@ pub mod engines;
 pub mod browser;
 
 #[cfg(feature = "headless")]
-pub mod browser_setup;
-
-#[cfg(feature = "headless")]
-pub mod browser_management;
-
-#[cfg(feature = "lightpanda")]
-pub mod browser_setup_lp;
+pub use a3s_use_browser;
 
 pub use aggregator::Aggregator;
 pub use config::{EngineEntry, HealthEntry, SearchConfig};
@@ -139,38 +133,6 @@ pub use result::{ResultType, SearchResult, SearchResults};
 pub use search::Search;
 
 #[cfg(feature = "headless")]
-pub use browser::{BrowserBackend, BrowserFetcher, BrowserPool, BrowserPoolConfig};
-
-#[cfg(all(test, feature = "headless"))]
-pub(crate) mod test_support {
-    use std::sync::{Mutex, MutexGuard};
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    pub(crate) fn env_lock() -> MutexGuard<'static, ()> {
-        ENV_LOCK.lock().expect("test environment lock poisoned")
-    }
-
-    pub(crate) struct EnvVarGuard {
-        key: &'static str,
-        original: Option<String>,
-    }
-
-    impl EnvVarGuard {
-        pub(crate) fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
-            let original = std::env::var(key).ok();
-            std::env::set_var(key, value);
-            Self { key, original }
-        }
-    }
-
-    impl Drop for EnvVarGuard {
-        fn drop(&mut self) {
-            if let Some(value) = &self.original {
-                std::env::set_var(self.key, value);
-            } else {
-                std::env::remove_var(self.key);
-            }
-        }
-    }
-}
+pub use browser::{
+    BrowserBackend, BrowserFetcher, BrowserPool, BrowserPoolConfig, BrowserProvider,
+};

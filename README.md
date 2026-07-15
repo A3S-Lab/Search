@@ -58,10 +58,10 @@ async fn main() -> anyhow::Result<()> {
 - **Dynamic Proxy Pool**: IP rotation with pluggable `ProxyProvider` trait
 - **Health Monitor**: Automatic engine suspension after repeated failures
 - **ACL Configuration**: Load settings from `.acl` config files
-- **Headless Browser**: Chrome and Lightpanda backends for JS-rendered engines
-- **Auto-Download**: Automatically detects or downloads browsers
-- **Browser Lifecycle API**: Inspect, install, update, and repair Chrome or
-  Lightpanda from an embedding host without invoking a search first
+- **Headless Browser**: Typed Chrome and Lightpanda rendering from A3S Use
+- **Explicit Provider Installation**: Default discovery never downloads software
+- **Injected Rendering**: Search depends on `Arc<dyn PageRenderer>`, never the
+  A3S Use CLI or MCP surface
 - **Metrics Collection**: Built-in metrics for observability
 - **Full-Text Extraction**: Fetch result pages and extract the main article content (Readability algorithm), dropping nav/ads/boilerplate
 
@@ -79,11 +79,11 @@ tokio = { version = "1", features = ["full"] }
 
 | Feature | Description |
 |---------|-------------|
-| `headless` | Chrome/Chromium headless backend (via chromiumoxide) |
-| `lightpanda` | Lightpanda headless backend (Linux/macOS, implies `headless`) |
+| `headless` | A3S Use Browser with discovered Chrome/Chromium |
+| `lightpanda` | Adds the A3S Use Lightpanda provider (Linux/macOS, implies `headless`) |
 
 ```toml
-# Default (no headless engines)
+# Default HTTP engines, including Bing and Bing China RSS
 a3s-search = "1.4"
 
 # With headless browsers
@@ -93,16 +93,16 @@ a3s-search = { version = "1.4", features = ["headless"] }
 a3s-search = { version = "1.4", features = ["lightpanda"] }
 ```
 
-Embedding CLIs can manage browser runtimes explicitly through
-`a3s_search::browser_management`:
+Browser runtime lifecycle belongs to A3S Use and is re-exported when the
+`headless` feature is enabled:
 
 ```rust,no_run
-use a3s_search::browser_management::{
+use a3s_search::a3s_use_browser::{
     browser_statuses, install_browser, ManagedBrowser,
 };
 
 #[tokio::main]
-async fn main() -> Result<(), a3s_search::SearchError> {
+async fn main() -> a3s_search::a3s_use_browser::UseResult<()> {
     for status in browser_statuses() {
         println!("{}: {}", status.browser.as_str(), status.detail);
     }
@@ -111,6 +111,10 @@ async fn main() -> Result<(), a3s_search::SearchError> {
     Ok(())
 }
 ```
+
+`BrowserPoolConfig::default()` selects `DiscoveredChrome` and never downloads a
+runtime. A managed provider or `a3s install use/browser` is an explicit install
+authorization.
 
 ### Basic Search
 
@@ -171,7 +175,7 @@ for r in results.items() {
 Some pages build their article body with client-side JavaScript, which a plain HTTP
 fetch never sees. Enable the `headless` feature and swap in a `BrowserFetcher` — it
 implements the same `PageFetcher`, so `enrich_full_text` is unchanged. Chrome is
-auto-detected or downloaded on first use.
+discovered locally by default and is never downloaded implicitly.
 
 ```rust
 use std::sync::Arc;
@@ -181,10 +185,18 @@ use a3s_search::{enrich_full_text, PageFetcher};
 
 // Reuse one browser pool across fetches; each fetch opens a tab.
 let pool = Arc::new(BrowserPool::new(BrowserPoolConfig::default()));
-let fetcher: Arc<dyn PageFetcher> = Arc::new(BrowserFetcher::new(pool));
+let fetcher: Arc<dyn PageFetcher> =
+    Arc::new(BrowserFetcher::new(Arc::clone(&pool)));
 
 // Lower concurrency than plain HTTP — each tab is heavier.
-enrich_full_text(&mut results, fetcher, 3, Duration::from_secs(30)).await;
+enrich_full_text(
+    &mut results,
+    Arc::clone(&fetcher),
+    3,
+    Duration::from_secs(30),
+).await;
+drop(fetcher);
+pool.shutdown().await;
 ```
 
 Extraction is CPU-bound and runs on a blocking thread pool regardless of the fetcher used.
@@ -299,18 +311,21 @@ engine "ddg" {
 |----------|--------|------|------------|
 | `ddg` | DuckDuckGo | HTTP | General |
 | `brave` | Brave Search | HTTP | General, News |
-| `bing` | Bing International | HTTP | General, Images, Videos, News |
+| `bing` | Bing International (RSS) | HTTP | General, Images, Videos, News |
 | `wiki` | Wikipedia | HTTP | General |
 | `sogou` | 搜狗搜索 | HTTP | General |
 | `360` | 360搜索 | HTTP | General |
 | `g` | Google Search | Headless | General |
 | `baidu` | 百度搜索 | Headless | General |
-| `bing_cn` | 必应中国 | Headless | General |
+| `bing_cn` | 必应中国 (RSS) | HTTP | General |
 
 ### Using Headless Engines
 
 ```rust
-use a3s_search::{Search, SearchQuery, BrowserPool, BrowserPoolConfig, BrowserBackend};
+use a3s_search::{
+    BrowserFetcher, BrowserPool, BrowserPoolConfig, BrowserProvider,
+    PageFetcher, Search, SearchQuery,
+};
 use a3s_search::engines::{Google, DuckDuckGo};
 use std::sync::Arc;
 
@@ -318,17 +333,21 @@ let mut search = Search::new();
 
 // Create browser pool with Chrome backend
 let config = BrowserPoolConfig {
-    backend: BrowserBackend::Chrome,
+    provider: BrowserProvider::DiscoveredChrome,
     max_tabs: 4,
     ..Default::default()
 };
 let pool = Arc::new(BrowserPool::new(config));
+let fetcher: Arc<dyn PageFetcher> =
+    Arc::new(BrowserFetcher::new(Arc::clone(&pool)));
 
 // Add engines
 search.add_engine(DuckDuckGo::new());
-search.add_engine(Google::new(pool));
+search.add_engine(Google::new(fetcher));
 
 let results = search.search(SearchQuery::new("rust programming")).await?;
+drop(search);
+pool.shutdown().await;
 ```
 
 ## Proxy Pool
@@ -472,8 +491,8 @@ let elapsed = guard.failure("error_type", is_transient: false); // Records failu
 │       ▼                                             │
 │  ┌─────────────────────────────────────────────┐   │
 │  │                 Engine Layer                  │   │
-│  │  HTTP Engines: ddg, brave, bing, wiki, ...   │   │
-│  │  Headless Engines: google, baidu, bing_cn      │   │
+│  │  HTTP Engines: ddg, brave, bing, bing_cn, ... │   │
+│  │  Headless Engines: google, baidu               │   │
 │  └─────────────────────────────────────────────┘   │
 │       │                                             │
 │       ▼                                             │
@@ -618,25 +637,33 @@ pub struct BrowserPool { /* ... */ }
 
 impl BrowserPool {
     pub fn new(config: BrowserPoolConfig) -> Self;
-    pub async fn acquire_browser(&self) -> Result<Arc<Browser>>;
+    pub async fn warm_up(&self) -> UseResult<()>;
     pub async fn shutdown(&self);
 }
 
 pub struct BrowserPoolConfig {
     pub max_tabs: usize,           // Default: 4
     pub headless: bool,            // Default: true
-    pub chrome_path: Option<String>,
-    pub lightpanda_path: Option<String>,  // (lightpanda feature)
+    pub provider: BrowserProvider, // Default: DiscoveredChrome
     pub proxy_url: Option<String>,
     pub launch_args: Vec<String>,
-    pub backend: BrowserBackend,   // Chrome or Lightpanda
 }
 
-pub enum BrowserBackend {
-    Chrome,     // Default without lightpanda
-    Lightpanda, // Default with lightpanda
+pub enum BrowserProvider {
+    DiscoveredChrome,              // Never downloads
+    ManagedChrome,                 // Explicitly permits installation
+    ChromeExecutable(PathBuf),
+    DiscoveredLightpanda,
+    ManagedLightpanda,
+    LightpandaExecutable(PathBuf),
 }
 ```
+
+`shutdown()` is idempotent and terminal: it closes the CDP browser, kills and
+waits for any remaining child process, and prevents the pool from being
+restarted while cleanup is in progress. Call it after the last fetch; the
+`a3s-search` CLI does this after both successful and failed searches. Concrete
+browser handles remain an implementation detail of A3S Use.
 
 ### BrowserFetcher
 
@@ -644,9 +671,11 @@ pub enum BrowserBackend {
 pub struct BrowserFetcher { /* ... */ }
 
 impl BrowserFetcher {
-    pub fn new(pool: Arc<BrowserPool>) -> Self;
+    pub fn new<R: PageRenderer + 'static>(renderer: Arc<R>) -> Self;
+    pub fn from_renderer(renderer: Arc<dyn PageRenderer>) -> Self;
     pub fn with_wait(mut self, wait: WaitStrategy) -> Self;
     pub fn with_user_agent(mut self, user_agent: impl Into<String>) -> Self;
+    pub fn with_timeout(mut self, timeout: Duration) -> Self;
     pub fn with_retries(mut self, max_retries: u32, retry_delay_ms: u64) -> Self;
     pub fn with_metrics(mut self, metrics: Arc<Metrics>) -> Self;
 }

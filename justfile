@@ -130,11 +130,11 @@ test:
 # Run Lightpanda browser integration tests (requires: --features lightpanda, Linux/macOS)
 #
 # Prerequisites:
-#   - Lightpanda binary in PATH, or LIGHTPANDA=/path/to/binary env var set,
-#     or it will be auto-downloaded from GitHub releases on first run.
+#   - Lightpanda binary in PATH, or A3S_LIGHTPANDA_EXECUTABLE=/path/to/binary.
+#   - Managed installation is explicit: `a3s install use/browser`.
 #
 # Groups (all are --ignored by default, must opt-in):
-#   binary    — ensure_lightpanda() detects/downloads the binary
+#   binary    — detect_lightpanda() discovers an existing binary
 #   pool      — BrowserPool lifecycle (start, shutdown, idempotency)
 #   fetch     — real page fetches via Lightpanda CDP
 #   wait      — WaitStrategy variants (Load, Delay, NetworkIdle, Selector)
@@ -147,7 +147,7 @@ test:
 # Examples:
 #   just test-lightpanda                     # run all groups
 #   just test-lightpanda fetch               # run fetch group only
-#   LIGHTPANDA=/usr/local/bin/lightpanda just test-lightpanda
+#   A3S_LIGHTPANDA_EXECUTABLE=/usr/local/bin/lightpanda just test-lightpanda
 test-lightpanda GROUP="":
     #!/usr/bin/env bash
     set -e
@@ -164,10 +164,10 @@ test-lightpanda GROUP="":
     echo -e "${BOLD}  🐼 Lightpanda Browser Integration Tests${RESET}"
     echo -e "${BOLD}${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 
-    if [ -n "$LIGHTPANDA" ]; then
-        echo -e "  ${DIM}Binary:   $LIGHTPANDA (from \$LIGHTPANDA)${RESET}"
+    if [ -n "$A3S_LIGHTPANDA_EXECUTABLE" ]; then
+        echo -e "  ${DIM}Binary:   $A3S_LIGHTPANDA_EXECUTABLE (from \$A3S_LIGHTPANDA_EXECUTABLE)${RESET}"
     else
-        echo -e "  ${DIM}Binary:   auto-detect / auto-download${RESET}"
+        echo -e "  ${DIM}Binary:   discover installed / A3S-managed provider${RESET}"
     fi
 
     # Build filter from group name

@@ -1,13 +1,14 @@
-//! Bing China search engine implementation using headless browser.
+//! Bing China search engine implementation.
 //!
-//! This engine requires the `headless` feature because Bing China's search results
-//! page relies on JavaScript rendering that plain HTTP requests cannot handle.
+//! Bing's normal HTML result page may redirect automated clients to the home page
+//! or a CAPTCHA. The RSS endpoint returns the same public search results as stable,
+//! server-rendered XML and therefore does not require a headless browser.
 
-use crate::html_engine::{selector, HtmlEngine, HtmlParser};
+use super::bing::{build_bing_rss_url, parse_bing_response};
+use crate::html_engine::{HtmlEngine, HtmlParser};
 use crate::{EngineCategory, EngineConfig, Result, SearchQuery, SearchResult};
-use scraper::Html;
 
-/// Bing China HTML parser.
+/// Bing China RSS/HTML response parser.
 pub struct BingChinaParser;
 
 /// Bing China search engine (必应中国).
@@ -35,49 +36,11 @@ impl HtmlParser for BingChinaParser {
     }
 
     fn build_url(&self, query: &SearchQuery) -> String {
-        let mut url = format!(
-            "https://cn.bing.com/search?q={}",
-            urlencoding::encode(&query.query)
-        );
-        if query.page > 1 {
-            url.push_str(&format!("&first={}", (query.page - 1) * 10 + 1));
-        }
-        url
+        build_bing_rss_url(query)
     }
 
-    fn parse(&self, html: &str) -> Result<Vec<SearchResult>> {
-        let document = Html::parse_document(html);
-        let result_sel = selector("li.b_algo")?;
-        let title_sel = selector("h2 a")?;
-        let snippet_sel = selector(".b_caption p, .b_algoSlug")?;
-
-        let mut results = Vec::new();
-
-        for element in document.select(&result_sel) {
-            let title_elem = match element.select(&title_sel).next() {
-                Some(el) => el,
-                None => continue,
-            };
-
-            let title = title_elem.text().collect::<String>().trim().to_string();
-            let url = title_elem
-                .value()
-                .attr("href")
-                .unwrap_or_default()
-                .to_string();
-
-            let content = element
-                .select(&snippet_sel)
-                .next()
-                .map(|e| e.text().collect::<String>().trim().to_string())
-                .unwrap_or_default();
-
-            if !url.is_empty() && !title.is_empty() && url.starts_with("http") {
-                results.push(SearchResult::new(url, title, content));
-            }
-        }
-
-        Ok(results)
+    fn parse(&self, response: &str) -> Result<Vec<SearchResult>> {
+        parse_bing_response(response)
     }
 }
 
@@ -133,6 +96,47 @@ mod tests {
         let parser = BingChinaParser;
         let results = parser.parse("<html><body></body></html>").unwrap();
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_build_url_uses_rss_endpoint() {
+        let parser = BingChinaParser;
+        let url = parser.build_url(&SearchQuery::new("巴威 2020 台风"));
+        assert!(url.starts_with("https://www.bing.com/search?"));
+        assert!(url.contains("format=rss"));
+        assert!(url.contains("%E5%B7%B4%E5%A8%81"));
+    }
+
+    #[test]
+    fn test_parse_rss_results() {
+        let parser = BingChinaParser;
+        let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+            <rss version="2.0"><channel>
+              <title>Bing: test</title>
+              <item>
+                <title>Typhoon &quot;Bavi&quot;</title>
+                <link>https://example.com/bavi</link>
+                <description>Landfall wind reached 35 m/s.</description>
+                <pubDate>Thu, 27 Aug 2020 00:00:00 GMT</pubDate>
+              </item>
+            </channel></rss>"#;
+        let results = parser.parse(xml).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Typhoon \"Bavi\"");
+        assert_eq!(results[0].url, "https://example.com/bavi");
+        assert_eq!(results[0].content, "Landfall wind reached 35 m/s.");
+        assert_eq!(
+            results[0].published_date.as_deref(),
+            Some("Thu, 27 Aug 2020 00:00:00 GMT")
+        );
+    }
+
+    #[test]
+    fn test_rejects_bing_home_page_without_results() {
+        let parser = BingChinaParser;
+        let html = r#"<html><body><header id="b_header"></header></body></html>"#;
+        let error = parser.parse(html).unwrap_err();
+        assert!(error.to_string().contains("home page"));
     }
 
     #[test]

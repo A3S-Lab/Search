@@ -10,8 +10,8 @@ use tracing_subscriber::FmtSubscriber;
 
 use a3s_search::{
     engines::{
-        Bing, BingParser, Brave, BraveParser, DuckDuckGo, DuckDuckGoParser, So360, So360Parser,
-        Sogou, SogouParser, Wikipedia,
+        Bing, BingChina, BingParser, Brave, BraveParser, DuckDuckGo, DuckDuckGoParser, So360,
+        So360Parser, Sogou, SogouParser, Wikipedia,
     },
     Engine, EngineConfig, HttpFetcher, PageFetcher, SafeSearch, Search, SearchConfig, SearchQuery,
     TimeRange,
@@ -19,8 +19,9 @@ use a3s_search::{
 
 #[cfg(feature = "headless")]
 use a3s_search::{
+    a3s_use_browser::PageRenderer,
     browser::{BrowserFetcher, BrowserPool, BrowserPoolConfig},
-    engines::{Baidu, BingChina, Google},
+    engines::{Baidu, Google},
     WaitStrategy,
 };
 
@@ -237,14 +238,14 @@ fn list_engines() -> Result<()> {
     println!("  Chinese:");
     println!("    sogou    - Sogou (搜狗)");
     println!("    360      - 360 Search (360搜索)");
+    println!("    bing_cn  - Bing China (必应中国)");
 
     #[cfg(feature = "headless")]
     {
         println!();
-        println!("  Headless (Chrome auto-installed if needed):");
+        println!("  Headless (uses an installed Chrome/Chromium):");
         println!("    g        - Google");
         println!("    baidu    - Baidu (百度)");
-        println!("    bing_cn  - Bing China (必应中国)");
     }
 
     println!();
@@ -321,7 +322,7 @@ async fn run_search(args: SearchArgs) -> Result<()> {
     // Warn if headless engines are requested without the feature
     #[cfg(not(feature = "headless"))]
     {
-        let headless_engines = ["g", "google", "baidu", "bing_cn"];
+        let headless_engines = ["g", "google", "baidu"];
         for e in &engine_shortcuts {
             if headless_engines.contains(&e.as_str()) {
                 eprintln!(
@@ -342,6 +343,8 @@ async fn run_search(args: SearchArgs) -> Result<()> {
         };
         std::sync::Arc::new(BrowserPool::new(pool_config))
     };
+    #[cfg(feature = "headless")]
+    let browser_renderer: std::sync::Arc<dyn PageRenderer> = browser_pool.clone();
 
     // Create shared HTTP fetcher (with proxy if provided)
     let http_fetcher: std::sync::Arc<dyn PageFetcher> = if let Some(proxy_url) = &args.proxy {
@@ -412,15 +415,20 @@ async fn run_search(args: SearchArgs) -> Result<()> {
                     configured_engine_config(config.as_ref(), engine.config().clone());
                 search.add_engine(engine.with_config(engine_config));
             }
+            "bing_cn" => {
+                let engine = BingChina::new(std::sync::Arc::clone(&http_fetcher));
+                let engine_config =
+                    configured_engine_config(config.as_ref(), engine.config().clone());
+                search.add_engine(engine.with_config(engine_config));
+            }
             #[cfg(feature = "headless")]
             "g" | "google" => {
                 let fetcher: std::sync::Arc<dyn PageFetcher> = std::sync::Arc::new(
-                    BrowserFetcher::new(std::sync::Arc::clone(&browser_pool)).with_wait(
-                        WaitStrategy::Selector {
+                    BrowserFetcher::from_renderer(std::sync::Arc::clone(&browser_renderer))
+                        .with_wait(WaitStrategy::Selector {
                             css: "div.g".to_string(),
                             timeout_ms: 5000,
-                        },
-                    ),
+                        }),
                 );
                 let engine = Google::new(fetcher);
                 let engine_config =
@@ -430,31 +438,19 @@ async fn run_search(args: SearchArgs) -> Result<()> {
             #[cfg(feature = "headless")]
             "baidu" => {
                 let fetcher: std::sync::Arc<dyn PageFetcher> = std::sync::Arc::new(
-                    BrowserFetcher::new(std::sync::Arc::clone(&browser_pool)).with_wait(
-                        WaitStrategy::Selector {
+                    BrowserFetcher::from_renderer(std::sync::Arc::clone(&browser_renderer))
+                        .with_wait(WaitStrategy::Selector {
                             css: "div.c-container".to_string(),
                             timeout_ms: 5000,
-                        },
-                    ),
+                        }),
                 );
                 let engine = Baidu::new(fetcher);
                 let engine_config =
                     configured_engine_config(config.as_ref(), engine.config().clone());
                 search.add_engine(engine.with_config(engine_config));
             }
-            #[cfg(feature = "headless")]
-            "bing_cn" => {
-                let fetcher: std::sync::Arc<dyn PageFetcher> = std::sync::Arc::new(
-                    BrowserFetcher::new(std::sync::Arc::clone(&browser_pool))
-                        .with_wait(WaitStrategy::Delay { ms: 2000 }),
-                );
-                let engine = BingChina::new(fetcher);
-                let engine_config =
-                    configured_engine_config(config.as_ref(), engine.config().clone());
-                search.add_engine(engine.with_config(engine_config));
-            }
             #[cfg(not(feature = "headless"))]
-            "g" | "google" | "baidu" | "bing_cn" => {
+            "g" | "google" | "baidu" => {
                 eprintln!(
                     "Warning: '{}' engine requires the 'headless' feature. \
                      Rebuild with: cargo build --features headless",
@@ -482,7 +478,10 @@ async fn run_search(args: SearchArgs) -> Result<()> {
     if let Some(time_range) = args.time_range {
         query = query.with_time_range(time_range.into());
     }
-    let results = search.search(query).await?;
+    let search_result = search.search(query).await;
+    #[cfg(feature = "headless")]
+    browser_pool.shutdown().await;
+    let results = search_result?;
 
     // Show engine errors to the user
     for (engine, error) in results.errors() {

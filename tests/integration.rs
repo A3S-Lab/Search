@@ -317,31 +317,27 @@ mod baidu_tests {
     }
 }
 
-#[cfg(feature = "headless")]
 mod bing_china_tests {
     use super::*;
     use std::sync::Arc;
 
-    use a3s_search::{
-        browser::{BrowserFetcher, BrowserPool, BrowserPoolConfig},
-        engines::BingChina,
-        WaitStrategy,
-    };
+    use a3s_search::{engines::BingChina, HttpFetcher};
 
     fn make_bing_china_engine() -> BingChina {
-        let pool = Arc::new(BrowserPool::new(BrowserPoolConfig::default()));
-        let fetcher = Arc::new(BrowserFetcher::new(pool).with_wait(WaitStrategy::Selector {
-            css: "li.b_algo".to_string(),
-            timeout_ms: 5000,
-        }));
-        BingChina::new(fetcher)
+        BingChina::new(Arc::new(HttpFetcher::new()))
     }
 
     #[tokio::test]
     async fn test_bing_china_search() {
         require_network!();
         let engine = make_bing_china_engine();
-        let results = test_engine(engine, "Rust 编程").await;
+        let started = std::time::Instant::now();
+        let results = test_engine(engine, "巴威 2020 台风 登陆 风速 灾情 预警").await;
+        assert!(
+            started.elapsed() <= std::time::Duration::from_secs(15),
+            "Bing China search exceeded the 15-second convergence budget"
+        );
+        assert!(!results.is_empty(), "Bing China returned no results");
         println!("Bing China returned {} results", results.len());
     }
 
@@ -351,6 +347,42 @@ mod bing_china_tests {
         assert_eq!(engine.name(), "Bing China");
         assert_eq!(engine.shortcut(), "bing_cn");
         assert!(engine.is_enabled());
+    }
+}
+
+mod cli_bing_rss_tests {
+    use std::process::Command;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn test_bing_china_cli_returns_json_within_15_seconds() {
+        require_network!();
+
+        let started = Instant::now();
+        let output = Command::new(env!("CARGO_BIN_EXE_a3s-search"))
+            .args([
+                "巴威 2020 台风 登陆 风速 灾情 预警",
+                "-e",
+                "bing_cn",
+                "-f",
+                "json",
+                "-t",
+                "15",
+            ])
+            .output()
+            .expect("run a3s-search");
+        let elapsed = started.elapsed();
+
+        assert!(output.status.success(), "CLI failed: {output:?}");
+        assert!(
+            elapsed <= Duration::from_secs(15),
+            "CLI took {elapsed:?}, exceeding the 15-second convergence budget"
+        );
+
+        let payload: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("CLI stdout must be JSON");
+        assert!(payload["count"].as_u64().unwrap_or_default() > 0);
+        assert_eq!(payload["errors"].as_array().map(Vec::len), Some(0));
     }
 }
 
@@ -449,7 +481,7 @@ mod config_tests {
 
     #[test]
     fn test_config_disabled_engines() {
-        let hcl = r#"
+        let acl = r#"
             engine "ddg" {
                 enabled = true
             }
@@ -459,7 +491,7 @@ mod config_tests {
             }
         "#;
 
-        let config = SearchConfig::parse(hcl).unwrap();
+        let config = SearchConfig::parse(acl).unwrap();
         let enabled = config.enabled_engines();
         assert_eq!(enabled.len(), 1);
         assert!(enabled.contains(&"ddg"));
@@ -474,8 +506,8 @@ mod config_tests {
 ///
 /// To make all tests exercise real assertions:
 ///   - Install lightpanda and put it in PATH, or
-///   - Set `LIGHTPANDA=/path/to/binary` environment variable, or
-///   - Run `just test-lightpanda` once to auto-download and cache it.
+///   - Set `A3S_LIGHTPANDA_EXECUTABLE=/path/to/binary`, or
+///   - Install it explicitly with `a3s install use/browser`.
 ///
 /// Run with:
 ///   cargo test --features lightpanda --test integration -- lightpanda --nocapture
@@ -485,39 +517,20 @@ mod lightpanda_tests {
     use std::time::Duration;
 
     use a3s_search::{
-        browser::{BrowserBackend, BrowserFetcher, BrowserPool, BrowserPoolConfig},
-        browser_setup_lp,
+        browser::{BrowserFetcher, BrowserPool, BrowserPoolConfig, BrowserProvider},
         engines::Google,
         PageFetcher, WaitStrategy,
     };
+    use a3s_use_browser::detect_lightpanda;
 
     // ─── helpers ────────────────────────────────────────────────────────────
 
     /// Find the Lightpanda binary without triggering an auto-download.
     ///
-    /// Check order: `LIGHTPANDA` env var → PATH → `~/.a3s/lightpanda/<tag>/lightpanda` cache.
+    /// Check order is owned by A3S Use: environment, PATH, then its managed cache.
     /// Returns `None` if the binary is not locally available.
     fn find_lp_binary() -> Option<std::path::PathBuf> {
-        // 1. Explicit env var
-        if let Ok(p) = std::env::var("LIGHTPANDA") {
-            let path = std::path::PathBuf::from(p);
-            if path.exists() {
-                return Some(path);
-            }
-        }
-        // 2. PATH / system install
-        if let Some(path) = browser_setup_lp::detect_lightpanda() {
-            return Some(path);
-        }
-        // 3. Local download cache (~/.a3s/lightpanda/<tag>/lightpanda)
-        let home = std::env::var("HOME").ok()?;
-        let cache = std::path::PathBuf::from(home).join(".a3s/lightpanda");
-        std::fs::read_dir(&cache)
-            .ok()?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().is_dir())
-            .map(|e| e.path().join("lightpanda"))
-            .find(|p| p.exists())
+        detect_lightpanda()
     }
 
     /// Build a `BrowserPool` wired to Lightpanda.
@@ -527,8 +540,7 @@ mod lightpanda_tests {
     fn try_lp_pool(max_tabs: usize) -> Option<Arc<BrowserPool>> {
         let path = find_lp_binary()?;
         Some(Arc::new(BrowserPool::new(BrowserPoolConfig {
-            backend: BrowserBackend::Lightpanda,
-            lightpanda_path: Some(path.to_string_lossy().into_owned()),
+            provider: BrowserProvider::LightpandaExecutable(path),
             max_tabs,
             ..Default::default()
         })))
@@ -539,8 +551,8 @@ mod lightpanda_tests {
         ($pool_var:ident) => {
             let Some($pool_var) = try_lp_pool(3) else {
                 println!(
-                    "SKIP: Lightpanda binary not found. \
-                     Install it, set LIGHTPANDA=/path, or run `just test-lightpanda` once to auto-download."
+                     "SKIP: Lightpanda binary not found. \
+                     Install it, set A3S_LIGHTPANDA_EXECUTABLE=/path, or run `a3s install use/browser`."
                 );
                 return;
             };
@@ -548,8 +560,8 @@ mod lightpanda_tests {
         ($pool_var:ident, max_tabs = $n:expr) => {
             let Some($pool_var) = try_lp_pool($n) else {
                 println!(
-                    "SKIP: Lightpanda binary not found. \
-                     Install it, set LIGHTPANDA=/path, or run `just test-lightpanda` once to auto-download."
+                     "SKIP: Lightpanda binary not found. \
+                     Install it, set A3S_LIGHTPANDA_EXECUTABLE=/path, or run `a3s install use/browser`."
                 );
                 return;
             };
@@ -576,44 +588,18 @@ mod lightpanda_tests {
         }
     }
 
-    // ─── binary detection ───────────────────────────────────────────────────
-
-    /// Verify `ensure_lightpanda()` returns a valid executable path.
-    ///
-    /// If the binary is already cached this completes instantly.
-    /// On a fresh machine it triggers a one-time download (~60 MB).
-    #[tokio::test]
-    async fn test_ensure_lightpanda_binary() {
-        match browser_setup_lp::ensure_lightpanda().await {
-            Ok(path) => {
-                println!("Lightpanda binary: {}", path.display());
-                assert!(path.exists(), "Binary path must exist on disk");
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-                    assert!(mode & 0o111 != 0, "Binary must be executable");
-                }
-            }
-            Err(e) => {
-                // Unsupported platform or network unavailable — not a test failure.
-                println!("ensure_lightpanda not available: {} (skipping)", e);
-            }
-        }
-    }
-
-    /// `detect_lightpanda()` must honour the `LIGHTPANDA` env var.
+    /// `detect_lightpanda()` must honour the A3S executable override.
     #[test]
     fn test_detect_lightpanda_env_var() {
-        if let Ok(path) = std::env::var("LIGHTPANDA") {
-            let result = browser_setup_lp::detect_lightpanda();
+        if let Ok(path) = std::env::var("A3S_LIGHTPANDA_EXECUTABLE") {
+            let result = detect_lightpanda();
             assert!(
                 result.is_some(),
-                "detect_lightpanda() must find binary via LIGHTPANDA env var"
+                "detect_lightpanda() must find the A3S override"
             );
             assert_eq!(result.unwrap().to_string_lossy(), path);
         } else {
-            println!("LIGHTPANDA env var not set — detection-via-env test is a no-op");
+            println!("A3S_LIGHTPANDA_EXECUTABLE not set — detection test is a no-op");
         }
     }
 
@@ -624,19 +610,20 @@ mod lightpanda_tests {
     async fn test_lightpanda_pool_start_and_shutdown() {
         require_lp!(pool);
 
-        let browser = pool.acquire_browser().await;
+        let browser = pool.warm_up().await;
         assert!(
             browser.is_ok(),
-            "acquire_browser() must succeed: {:?}",
+            "warm_up() must succeed: {:?}",
             browser.err()
         );
         println!("  browser acquired ok");
 
+        drop(browser);
         pool.shutdown().await;
         println!("  shutdown completed without panic");
     }
 
-    /// `shutdown()` without any prior `acquire_browser()` must not panic.
+    /// `shutdown()` without any prior warm-up must not panic.
     #[tokio::test]
     async fn test_lightpanda_pool_shutdown_without_acquire() {
         require_lp!(pool);
@@ -648,26 +635,21 @@ mod lightpanda_tests {
     #[tokio::test]
     async fn test_lightpanda_pool_double_shutdown() {
         require_lp!(pool);
-        let _ = pool.acquire_browser().await;
+        let _ = pool.warm_up().await;
         pool.shutdown().await;
         pool.shutdown().await;
         println!("  double shutdown: ok");
     }
 
-    /// Multiple `acquire_browser()` calls must return the same `Arc<Browser>`.
+    /// Multiple warm-ups reuse the provider without exposing its implementation handle.
     #[tokio::test]
-    async fn test_lightpanda_pool_acquire_returns_same_instance() {
+    async fn test_lightpanda_pool_warm_up_is_idempotent() {
         require_lp!(pool);
 
-        let b1 = pool.acquire_browser().await.expect("first acquire");
-        let b2 = pool.acquire_browser().await.expect("second acquire");
-        assert!(
-            Arc::ptr_eq(&b1, &b2),
-            "Both acquires must return the same Arc<Browser>"
-        );
-
+        pool.warm_up().await.expect("first warm-up");
+        pool.warm_up().await.expect("second warm-up");
         pool.shutdown().await;
-        println!("  both acquires returned same Arc: ok");
+        println!("  repeated warm-up reused the provider: ok");
     }
 
     // ─── basic page fetch ───────────────────────────────────────────────────
@@ -789,25 +771,22 @@ mod lightpanda_tests {
         pool.shutdown().await;
     }
 
-    /// A missing selector must be non-fatal — page HTML is returned regardless.
+    /// A missing selector is a typed wait timeout rather than a false success.
     #[tokio::test]
-    async fn test_lightpanda_wait_strategy_selector_not_found_is_non_fatal() {
+    async fn test_lightpanda_wait_strategy_selector_not_found_is_an_error() {
         require_lp!(pool);
 
-        let html = fetch_with(
-            pool.clone(),
-            "https://example.com",
-            WaitStrategy::Selector {
+        let result = BrowserFetcher::new(Arc::clone(&pool))
+            .with_wait(WaitStrategy::Selector {
                 css: "div.this-element-does-not-exist-xyz".to_string(),
                 timeout_ms: 500,
-            },
-        )
-        .await;
+            })
+            .with_retries(0, 0)
+            .fetch("https://example.com")
+            .await;
 
-        assert!(
-            !html.is_empty(),
-            "Missing selector must be non-fatal; HTML must still be returned"
-        );
+        let error = result.expect_err("missing selector must fail the wait condition");
+        assert!(error.to_string().contains("use.browser.wait_timeout"));
 
         pool.shutdown().await;
     }
@@ -825,10 +804,7 @@ mod lightpanda_tests {
             .with_wait(WaitStrategy::Load)
             .with_user_agent(custom_ua);
 
-        // `with_user_agent` sets `Network.setUserAgentOverride` after the tab opens.
-        // This affects subsequent sub-requests on the page. For the initial document
-        // request, Lightpanda uses its own UA; override only applies to later requests.
-        // Test that the fetch completes without error — not that UA is echoed in HTML.
+        // A3S Use applies the override before navigating the initial document.
         let result = fetcher.fetch("https://example.com").await;
         assert!(
             result.is_ok(),
@@ -984,12 +960,13 @@ mod lightpanda_tests {
     async fn test_lightpanda_missing_binary_error() {
         // This test doesn't need a real binary — it intentionally passes a bad path.
         let pool = Arc::new(BrowserPool::new(BrowserPoolConfig {
-            backend: BrowserBackend::Lightpanda,
-            lightpanda_path: Some("/nonexistent/path/to/lightpanda".to_string()),
+            provider: BrowserProvider::LightpandaExecutable(
+                "/nonexistent/path/to/lightpanda".into(),
+            ),
             ..Default::default()
         }));
 
-        let result = pool.acquire_browser().await;
+        let result = pool.warm_up().await;
         assert!(
             result.is_err(),
             "Acquiring browser with missing binary must return Err"
@@ -1464,7 +1441,7 @@ mod full_text_headless_tests {
     /// Returns a warmed browser pool, or `None` (with a printed skip) if Chrome cannot launch.
     async fn browser_pool_or_skip() -> Option<Arc<BrowserPool>> {
         let pool = Arc::new(BrowserPool::new(BrowserPoolConfig::default()));
-        match pool.acquire_browser().await {
+        match pool.warm_up().await {
             Ok(_) => Some(pool),
             Err(e) => {
                 println!("  SKIP: headless browser unavailable: {e}");

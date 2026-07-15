@@ -32,10 +32,9 @@ path = "src/main.rs"
 
 [features]
 default = []
-headless = ["dep:chromiumoxide", "dep:which", "dep:zip"]
+headless = ["dep:a3s-use-browser"]
 # Lightpanda headless backend (Linux/macOS only; Windows unsupported by Lightpanda).
-# Depends on `headless` because it reuses chromiumoxide as the CDP client.
-lightpanda = ["headless"]
+lightpanda = ["headless", "a3s-use-browser/lightpanda"]
 
 [dependencies]
 # Async runtime
@@ -62,6 +61,9 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # HTML parsing
 scraper = "0.22"
 
+# XML parsing for Bing's stable RSS search endpoint
+quick-xml = { version = "0.38", features = ["serialize"] }
+
 # Main article content extraction (Readability.js port, pure Rust)
 dom_smoothie = "0.18"
 
@@ -72,12 +74,8 @@ urlencoding = "2"
 # Configuration file parsing
 a3s-acl = "0.2"
 
-# Headless browser (optional, for JS-rendered engines)
-chromiumoxide = { version = "0.7", features = ["tokio-runtime"], optional = true }
-
-# Browser detection and auto-install (optional, for headless feature)
-which = { version = "7", optional = true }
-zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
+# Typed Browser rendering supplied by A3S Use. Search never invokes its CLI or MCP surface.
+a3s-use-browser = { git = "https://github.com/A3S-Lab/Use", rev = "0ef4694172c09656d8a7c8f049dbaa4b05b7e274", optional = true }
 
 # Self-update
 a3s-updater = "0.2"
@@ -94,7 +92,7 @@ tokio-test.workspace = true
 # =============================================================================
 # Release Profile — optimized for binary size
 # =============================================================================
-# a3s-search is a CLI/library with optional headless browser (chromiumoxide).
+# a3s-search is a CLI/library with optional A3S Use Browser rendering.
 # I/O-bound workload — optimize for size over speed.
 #
 [profile.release]

@@ -1,10 +1,36 @@
 //! Bing International search engine implementation.
+//!
+//! Bing's RSS endpoint is used instead of the bot-sensitive HTML results page.
 
 use crate::html_engine::{selector, HtmlEngine, HtmlParser};
-use crate::{EngineCategory, EngineConfig, Result, SearchQuery, SearchResult};
+use crate::{EngineCategory, EngineConfig, Result, SearchError, SearchQuery, SearchResult};
 use scraper::Html;
+use serde::Deserialize;
 
-/// Bing HTML parser.
+#[derive(Debug, Deserialize)]
+struct BingRss {
+    channel: BingRssChannel,
+}
+
+#[derive(Debug, Deserialize)]
+struct BingRssChannel {
+    #[serde(default)]
+    item: Vec<BingRssItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BingRssItem {
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    link: String,
+    #[serde(default)]
+    description: String,
+    #[serde(rename = "pubDate", default)]
+    published_date: String,
+}
+
+/// Bing RSS/HTML response parser.
 pub struct BingParser;
 
 /// Bing International search engine.
@@ -38,62 +64,114 @@ impl HtmlParser for BingParser {
     }
 
     fn build_url(&self, query: &SearchQuery) -> String {
-        let mut url = format!(
-            "https://www.bing.com/search?q={}&pq={}",
-            urlencoding::encode(&query.query),
-            urlencoding::encode(&query.query),
-        );
-        if query.page > 1 {
-            let first = (query.page - 1) * 10 + 1;
-            url.push_str(&format!("&first={}", first));
-        }
-        if let Some(range) = query.time_range {
-            use crate::query::TimeRange;
-            let filter = match range {
-                TimeRange::Day => "ex1:\"ez1\"",
-                TimeRange::Week => "ex1:\"ez2\"",
-                TimeRange::Month => "ex1:\"ez3\"",
-                TimeRange::Year => "ex1:\"ez5\"",
-            };
-            url.push_str(&format!("&filters={}", urlencoding::encode(filter)));
-        }
-        url
+        build_bing_rss_url(query)
     }
 
-    fn parse(&self, html: &str) -> Result<Vec<SearchResult>> {
-        let document = Html::parse_document(html);
-        let result_sel = selector("li.b_algo")?;
-        let title_sel = selector("h2 a")?;
-        let snippet_sel = selector("p, .b_caption p")?;
+    fn parse(&self, response: &str) -> Result<Vec<SearchResult>> {
+        parse_bing_response(response)
+    }
+}
 
-        let mut results = Vec::new();
+pub(crate) fn build_bing_rss_url(query: &SearchQuery) -> String {
+    let mut url = format!(
+        "https://www.bing.com/search?q={}&format=rss",
+        urlencoding::encode(&query.query)
+    );
+    if query.page > 1 {
+        let first = (query.page - 1) * 10 + 1;
+        url.push_str(&format!("&first={first}"));
+    }
+    if let Some(range) = query.time_range {
+        use crate::query::TimeRange;
+        let filter = match range {
+            TimeRange::Day => "ex1:\"ez1\"",
+            TimeRange::Week => "ex1:\"ez2\"",
+            TimeRange::Month => "ex1:\"ez3\"",
+            TimeRange::Year => "ex1:\"ez5\"",
+        };
+        url.push_str(&format!("&filters={}", urlencoding::encode(filter)));
+    }
+    url
+}
 
-        for element in document.select(&result_sel) {
-            let title_elem = match element.select(&title_sel).next() {
-                Some(el) => el,
-                None => continue,
-            };
+pub(crate) fn parse_bing_response(response: &str) -> Result<Vec<SearchResult>> {
+    if response.trim_start().starts_with("<?xml") || response.contains("<rss") {
+        return parse_bing_rss(response);
+    }
 
-            let title = title_elem.text().collect::<String>().trim().to_string();
-            let url = title_elem
-                .value()
-                .attr("href")
-                .unwrap_or_default()
-                .to_string();
+    if is_bing_challenge_or_home_page(response) {
+        return Err(SearchError::Parse(
+            "Bing returned a challenge or search home page instead of results".to_string(),
+        ));
+    }
 
-            let content = element
-                .select(&snippet_sel)
-                .next()
-                .map(|e| e.text().collect::<String>().trim().to_string())
-                .unwrap_or_default();
+    parse_bing_html(response)
+}
 
-            if !url.is_empty() && !title.is_empty() && url.starts_with("http") {
-                results.push(SearchResult::new(url, title, content));
+fn parse_bing_rss(xml: &str) -> Result<Vec<SearchResult>> {
+    let feed: BingRss = quick_xml::de::from_str(xml)
+        .map_err(|error| SearchError::Parse(format!("Failed to parse Bing RSS: {error}")))?;
+
+    Ok(feed
+        .channel
+        .item
+        .into_iter()
+        .filter_map(|item| {
+            let title = item.title.trim();
+            let url = item.link.trim();
+            if title.is_empty() || !url.starts_with("http") {
+                return None;
             }
-        }
+            let result = SearchResult::new(url, title, item.description.trim());
+            Some(if item.published_date.trim().is_empty() {
+                result
+            } else {
+                result.with_published_date(item.published_date.trim())
+            })
+        })
+        .collect())
+}
 
-        Ok(results)
+fn parse_bing_html(html: &str) -> Result<Vec<SearchResult>> {
+    let document = Html::parse_document(html);
+    let result_sel = selector("li.b_algo")?;
+    let title_sel = selector("h2 a")?;
+    let snippet_sel = selector("p, .b_caption p, .b_algoSlug")?;
+
+    let mut results = Vec::new();
+
+    for element in document.select(&result_sel) {
+        let title_elem = match element.select(&title_sel).next() {
+            Some(el) => el,
+            None => continue,
+        };
+
+        let title = title_elem.text().collect::<String>().trim().to_string();
+        let url = title_elem
+            .value()
+            .attr("href")
+            .unwrap_or_default()
+            .to_string();
+
+        let content = element
+            .select(&snippet_sel)
+            .next()
+            .map(|e| e.text().collect::<String>().trim().to_string())
+            .unwrap_or_default();
+
+        if !url.is_empty() && !title.is_empty() && url.starts_with("http") {
+            results.push(SearchResult::new(url, title, content));
+        }
     }
+
+    Ok(results)
+}
+
+fn is_bing_challenge_or_home_page(html: &str) -> bool {
+    let lowercase = html.to_ascii_lowercase();
+    lowercase.contains("b_captcha")
+        || lowercase.contains("captcha")
+        || (lowercase.contains("id=\"b_header\"") && !lowercase.contains("class=\"b_algo"))
 }
 
 #[cfg(test)]
@@ -144,6 +222,7 @@ mod tests {
         let query = SearchQuery::new("rust programming");
         let url = parser.build_url(&query);
         assert!(url.starts_with("https://www.bing.com/search?q=rust%20programming"));
+        assert!(url.contains("format=rss"));
     }
 
     #[test]
