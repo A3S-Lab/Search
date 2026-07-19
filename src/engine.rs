@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::{Result, SearchQuery, SearchResult};
+use crate::{Result, SearchImage, SearchQuery, SearchReport, SearchResult};
 
 /// Categories for search engines.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -74,6 +74,66 @@ impl Default for EngineConfig {
     }
 }
 
+/// Rich output from one engine execution.
+///
+/// Existing engines can continue implementing [`Engine::search`]; the default
+/// [`Engine::search_output`] implementation wraps those results. Provider
+/// adapters override `search_output` to return direct answers, suggestions, and
+/// structured request reports without encoding them as synthetic web results.
+#[derive(Debug, Clone, Default)]
+pub struct EngineOutput {
+    /// Web or media results returned by the engine.
+    pub results: Vec<SearchResult>,
+    /// Query suggestions returned by the engine.
+    pub suggestions: Vec<String>,
+    /// Direct answers returned by the engine.
+    pub answers: Vec<String>,
+    /// Query-related images returned by the engine.
+    pub images: Vec<SearchImage>,
+    /// Structured execution reports.
+    pub reports: Vec<SearchReport>,
+}
+
+impl EngineOutput {
+    /// Creates output from ordinary search results.
+    pub fn new(results: Vec<SearchResult>) -> Self {
+        Self {
+            results,
+            ..Self::default()
+        }
+    }
+
+    /// Adds a direct answer.
+    pub fn with_answer(mut self, answer: impl Into<String>) -> Self {
+        self.answers.push(answer.into());
+        self
+    }
+
+    /// Adds a query suggestion.
+    pub fn with_suggestion(mut self, suggestion: impl Into<String>) -> Self {
+        self.suggestions.push(suggestion.into());
+        self
+    }
+
+    /// Adds a query-related image.
+    pub fn with_image(mut self, image: SearchImage) -> Self {
+        crate::result::merge_image(&mut self.images, image);
+        self
+    }
+
+    /// Adds a structured execution report.
+    pub fn with_report(mut self, report: SearchReport) -> Self {
+        self.reports.push(report);
+        self
+    }
+}
+
+impl From<Vec<SearchResult>> for EngineOutput {
+    fn from(results: Vec<SearchResult>) -> Self {
+        Self::new(results)
+    }
+}
+
 /// Trait for implementing search engines.
 ///
 /// Each search engine must implement this trait to be used with the meta search.
@@ -84,6 +144,13 @@ pub trait Engine: Send + Sync {
 
     /// Performs a search and returns results.
     async fn search(&self, query: &SearchQuery) -> Result<Vec<SearchResult>>;
+
+    /// Performs a search and returns rich engine output.
+    ///
+    /// The default preserves source compatibility for existing engines.
+    async fn search_output(&self, query: &SearchQuery) -> Result<EngineOutput> {
+        self.search(query).await.map(EngineOutput::new)
+    }
 
     /// Returns the engine name.
     fn name(&self) -> &str {
@@ -211,5 +278,24 @@ mod tests {
         set.insert(EngineCategory::Images);
         set.insert(EngineCategory::General); // duplicate
         assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn test_engine_output_builders() {
+        let output = EngineOutput::new(vec![SearchResult::new(
+            "https://example.com",
+            "Example",
+            "Snippet",
+        )])
+        .with_answer("42")
+        .with_suggestion("rust async")
+        .with_image(SearchImage::new("https://example.com/image.png"))
+        .with_report(SearchReport::new("provider"));
+
+        assert_eq!(output.results.len(), 1);
+        assert_eq!(output.answers, vec!["42"]);
+        assert_eq!(output.suggestions, vec!["rust async"]);
+        assert_eq!(output.images.len(), 1);
+        assert_eq!(output.reports.len(), 1);
     }
 }

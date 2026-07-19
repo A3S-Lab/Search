@@ -84,10 +84,13 @@ impl HealthMonitor {
             .engines
             .entry(name.to_string())
             .or_insert_with(EngineHealth::new);
-        health.consecutive_failures += 1;
+        health.consecutive_failures = health.consecutive_failures.saturating_add(1);
 
         if health.consecutive_failures >= self.config.max_failures {
-            health.suspended_until = Some(Instant::now() + self.config.suspend_duration);
+            health.suspended_until = Some(representable_deadline(
+                Instant::now(),
+                self.config.suspend_duration,
+            ));
         }
     }
 
@@ -97,6 +100,15 @@ impl HealthMonitor {
             .get(name)
             .map(|h| h.consecutive_failures)
             .unwrap_or(0)
+    }
+}
+
+fn representable_deadline(now: Instant, mut duration: Duration) -> Instant {
+    loop {
+        if let Some(deadline) = now.checked_add(duration) {
+            return deadline;
+        }
+        duration /= 2;
     }
 }
 
@@ -197,5 +209,34 @@ mod tests {
     fn test_failure_count_unknown_engine() {
         let monitor = HealthMonitor::default();
         assert_eq!(monitor.failure_count("nonexistent"), 0);
+    }
+
+    #[test]
+    fn test_extreme_suspension_duration_does_not_overflow() {
+        let mut monitor = HealthMonitor::new(HealthConfig {
+            max_failures: 1,
+            suspend_duration: Duration::MAX,
+        });
+
+        monitor.record_failure("extreme");
+
+        assert_eq!(monitor.failure_count("extreme"), 1);
+        assert!(monitor.is_suspended("extreme"));
+    }
+
+    #[test]
+    fn test_failure_count_saturates() {
+        let mut monitor = HealthMonitor::default();
+        monitor.engines.insert(
+            "saturated".to_string(),
+            EngineHealth {
+                consecutive_failures: u32::MAX,
+                suspended_until: None,
+            },
+        );
+
+        monitor.record_failure("saturated");
+
+        assert_eq!(monitor.failure_count("saturated"), u32::MAX);
     }
 }

@@ -107,27 +107,28 @@ impl Search {
                 async move {
                     let name = engine.name().to_string();
                     let engine_start = Instant::now();
-                    match timeout(timeout_duration, engine.search(&query)).await {
-                        Ok(Ok(results)) => {
+                    match timeout(timeout_duration, engine.search_output(&query)).await {
+                        Ok(Ok(output)) => {
                             if let Some(metrics) = metrics.as_ref() {
                                 metrics.record_success(engine_start.elapsed());
                             }
-                            debug!("Engine {} returned {} results", name, results.len());
-                            Ok((name, results))
+                            debug!("Engine {} returned {} results", name, output.results.len());
+                            Ok((name, output))
                         }
                         Ok(Err(e)) => {
                             if let Some(metrics) = metrics.as_ref() {
                                 metrics.record_failure(e.kind(), e.is_transient());
                             }
                             warn!("Engine {} failed: {}", name, e);
-                            Err((name, e.to_string()))
+                            let affects_health = !e.is_client_error();
+                            Err((name, e.to_string(), affects_health))
                         }
                         Err(_) => {
                             if let Some(metrics) = metrics.as_ref() {
                                 metrics.record_failure(SearchError::Timeout.kind(), true);
                             }
                             warn!("Engine {} timed out", name);
-                            Err((name, "timed out".to_string()))
+                            Err((name, "timed out".to_string(), true))
                         }
                     }
                 }
@@ -137,7 +138,7 @@ impl Search {
         let all_results: Vec<_> = join_all(futures).await;
 
         let mut engine_errors = Vec::new();
-        let results: Vec<_> = all_results
+        let outputs: Vec<_> = all_results
             .into_iter()
             .filter_map(|r| match r {
                 Ok(pair) => Some(pair),
@@ -150,16 +151,43 @@ impl Search {
 
         // Update health state for each engine
         if let Ok(mut health) = self.health.lock() {
-            for (name, _) in &results {
+            for (name, _) in &outputs {
                 health.record_success(name);
             }
-            for (name, _) in &engine_errors {
-                health.record_failure(name);
+            for (name, _, affects_health) in &engine_errors {
+                if *affects_health {
+                    health.record_failure(name);
+                }
             }
         }
 
-        let mut search_results = self.aggregator.aggregate(results);
-        for (engine, error) in engine_errors {
+        let mut result_sets = Vec::with_capacity(outputs.len());
+        let mut suggestions = Vec::new();
+        let mut answers = Vec::new();
+        let mut images = Vec::new();
+        let mut reports = Vec::new();
+        for (name, output) in outputs {
+            result_sets.push((name, output.results));
+            suggestions.extend(output.suggestions);
+            answers.extend(output.answers);
+            images.extend(output.images);
+            reports.extend(output.reports);
+        }
+
+        let mut search_results = self.aggregator.aggregate(result_sets);
+        for suggestion in suggestions {
+            search_results.add_suggestion(suggestion);
+        }
+        for answer in answers {
+            search_results.add_answer(answer);
+        }
+        for image in images {
+            search_results.add_image(image);
+        }
+        for report in reports {
+            search_results.add_report(report);
+        }
+        for (engine, error, _) in engine_errors {
             search_results.add_error(engine, error);
         }
         search_results.set_duration(start.elapsed().as_millis() as u64);
@@ -210,7 +238,10 @@ impl Default for Search {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{EngineCategory, EngineConfig, Metrics, SearchResult};
+    use crate::{
+        EngineCategory, EngineConfig, EngineOutput, Metrics, ProviderError, ProviderErrorKind,
+        SearchImage, SearchReport, SearchResult,
+    };
     use async_trait::async_trait;
 
     struct MockEngine {
@@ -258,6 +289,41 @@ mod tests {
         }
     }
 
+    struct RichEngine {
+        config: EngineConfig,
+    }
+
+    #[async_trait]
+    impl Engine for RichEngine {
+        fn config(&self) -> &EngineConfig {
+            &self.config
+        }
+
+        async fn search(&self, _query: &SearchQuery) -> Result<Vec<SearchResult>> {
+            Ok(vec![SearchResult::new(
+                "https://example.com",
+                "Example",
+                "Snippet",
+            )])
+        }
+
+        async fn search_output(&self, query: &SearchQuery) -> Result<EngineOutput> {
+            let results = self.search(query).await?;
+            Ok(EngineOutput::new(results)
+                .with_answer("direct answer")
+                .with_suggestion("suggested query")
+                .with_image(
+                    SearchImage::new("https://example.com/image.png")
+                        .with_description("query image"),
+                )
+                .with_report(
+                    SearchReport::new("Rich")
+                        .with_provider("rich")
+                        .with_request_id("req-1"),
+                ))
+        }
+    }
+
     struct FailingEngine {
         config: EngineConfig,
     }
@@ -283,6 +349,26 @@ mod tests {
 
         async fn search(&self, _query: &SearchQuery) -> Result<Vec<SearchResult>> {
             Err(SearchError::Other("Engine failed".to_string()))
+        }
+    }
+
+    struct ClientErrorEngine {
+        config: EngineConfig,
+    }
+
+    #[async_trait]
+    impl Engine for ClientErrorEngine {
+        fn config(&self) -> &EngineConfig {
+            &self.config
+        }
+
+        async fn search(&self, _query: &SearchQuery) -> Result<Vec<SearchResult>> {
+            Err(ProviderError::new(
+                "test-provider",
+                ProviderErrorKind::Authentication,
+                "credential is missing",
+            )
+            .into())
         }
     }
 
@@ -352,6 +438,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_search_preserves_rich_engine_output() {
+        let mut search = Search::new();
+        search.add_engine(RichEngine {
+            config: EngineConfig {
+                name: "Rich".to_string(),
+                shortcut: "rich".to_string(),
+                ..Default::default()
+            },
+        });
+
+        let results = search.search(SearchQuery::new("test")).await.unwrap();
+
+        assert_eq!(results.items().len(), 1);
+        assert_eq!(results.answers(), &["direct answer"]);
+        assert_eq!(results.suggestions(), &["suggested query"]);
+        assert_eq!(results.images().len(), 1);
+        assert_eq!(
+            results.images()[0].description.as_deref(),
+            Some("query image")
+        );
+        assert_eq!(results.reports().len(), 1);
+        assert_eq!(results.reports()[0].request_id.as_deref(), Some("req-1"));
+    }
+
+    #[tokio::test]
     async fn test_search_set_timeout() {
         let mut search = Search::new();
         search.set_timeout(Duration::from_millis(10));
@@ -363,6 +474,24 @@ mod tests {
         assert_eq!(results.errors().len(), 1);
         assert_eq!(results.errors()[0].0, "slow");
         assert!(results.errors()[0].1.contains("timed out"));
+    }
+
+    #[tokio::test]
+    async fn test_extreme_timeout_does_not_overflow() {
+        let mut search = Search::new();
+        search.set_timeout(Duration::MAX);
+        search.add_engine(MockEngine::new(
+            "fast",
+            vec![SearchResult::new(
+                "https://example.com",
+                "Example",
+                "Content",
+            )],
+        ));
+
+        let results = search.search(SearchQuery::new("test")).await.unwrap();
+
+        assert_eq!(results.items().len(), 1);
     }
 
     #[tokio::test]
@@ -647,6 +776,30 @@ mod tests {
 
         let health = search.health.lock().unwrap();
         assert_eq!(health.failure_count("bad_engine"), 1);
+    }
+
+    #[tokio::test]
+    async fn test_health_does_not_suspend_provider_for_client_configuration_errors() {
+        let mut search = Search::with_health_config(HealthConfig {
+            max_failures: 1,
+            suspend_duration: Duration::from_secs(3600),
+        });
+        search.add_engine(ClientErrorEngine {
+            config: EngineConfig {
+                name: "client-error".to_string(),
+                shortcut: "client-error".to_string(),
+                ..Default::default()
+            },
+        });
+
+        let first = search.search(SearchQuery::new("first")).await.unwrap();
+        let second = search.search(SearchQuery::new("second")).await.unwrap();
+
+        assert_eq!(first.errors().len(), 1);
+        assert_eq!(second.errors().len(), 1);
+        let health = search.health.lock().unwrap();
+        assert_eq!(health.failure_count("client-error"), 0);
+        assert!(!health.is_suspended("client-error"));
     }
 
     #[tokio::test]

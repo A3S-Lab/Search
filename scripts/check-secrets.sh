@@ -1,36 +1,33 @@
-#!/bin/bash
-# 检查 GitHub Actions secrets 配置状态
+#!/usr/bin/env bash
+set -euo pipefail
 
-echo "🔍 Checking GitHub Actions secrets configuration..."
-echo ""
-
-REPO="A3S-Lab/Search"
-
-# 检查必需的 secrets
-REQUIRED_SECRETS=(
+repository="A3S-Lab/Search"
+required_secrets=(
   "CARGO_TOKEN"
-  "NPM_TOKEN"
-  "PYPI_TOKEN"
   "HOMEBREW_TAP_TOKEN"
 )
 
-echo "Required secrets for $REPO:"
-echo ""
+if ! command -v gh >/dev/null 2>&1; then
+  echo "GitHub CLI (gh) is required." >&2
+  exit 1
+fi
 
-for secret in "${REQUIRED_SECRETS[@]}"; do
-  if gh secret list --repo "$REPO" | grep -q "^$secret"; then
-    echo "✅ $secret - configured"
+configured=$(gh secret list --repo "${repository}" --json name --jq '.[].name')
+missing=0
+
+echo "Required GitHub Actions secrets for ${repository}:"
+for secret in "${required_secrets[@]}"; do
+  if grep -Fxq "${secret}" <<<"${configured}"; then
+    echo "  ${secret}: configured"
   else
-    echo "❌ $secret - NOT configured"
+    echo "  ${secret}: missing"
+    missing=1
   fi
 done
 
-echo ""
-echo "To set a missing secret:"
-echo "  echo 'YOUR_TOKEN' | gh secret set SECRET_NAME --repo $REPO"
-echo ""
-echo "To get tokens:"
-echo "  CARGO_TOKEN:          cat ~/.cargo/credentials.toml"
-echo "  NPM_TOKEN:            cat ~/.npmrc | grep authToken"
-echo "  PYPI_TOKEN:           cat ~/.pypirc | grep password"
-echo "  HOMEBREW_TAP_TOKEN:   gh auth token"
+if ((missing)); then
+  echo >&2
+  echo "Configure each missing value with:" >&2
+  echo "  gh secret set SECRET_NAME --repo ${repository}" >&2
+  exit 1
+fi

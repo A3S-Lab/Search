@@ -1,8 +1,35 @@
 //! Search result types.
 
-use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
-use url::form_urlencoded::Serializer;
+use serde::{Deserialize, Serialize, Serializer};
+use std::collections::{BTreeMap, HashSet};
+use url::form_urlencoded::Serializer as FormSerializer;
+
+/// An image returned for a search query or extracted from a result page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct SearchImage {
+    /// Absolute image URL.
+    pub url: String,
+    /// Optional provider-supplied image description.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+impl SearchImage {
+    /// Creates an image without a description.
+    pub fn new(url: impl Into<String>) -> Self {
+        Self {
+            url: url.into(),
+            description: None,
+        }
+    }
+
+    /// Attaches a description.
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+}
 
 /// Type of search result.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -31,6 +58,7 @@ pub enum ResultType {
 
 /// A single search result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SearchResult {
     /// Result URL.
     pub url: String,
@@ -41,17 +69,34 @@ pub struct SearchResult {
     /// Type of result.
     pub result_type: ResultType,
     /// Engines that returned this result.
+    #[serde(serialize_with = "serialize_sorted_engines")]
     pub engines: HashSet<String>,
     /// Positions in each engine's results.
     pub positions: Vec<u32>,
     /// Calculated score for ranking.
     pub score: f64,
+    /// Native relevance reported by the source before meta-search aggregation.
+    ///
+    /// Providers should use a finite value in the inclusive `0.0..=1.0`
+    /// range. The aggregator clamps the value defensively and keeps the
+    /// strongest value when duplicate URLs are merged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relevance_score: Option<f64>,
     /// Thumbnail URL (for images/videos).
     pub thumbnail: Option<String>,
     /// Published date (for news).
     pub published_date: Option<String>,
-    /// Extracted main article text, filled by [`enrich_full_text`](crate::enrich_full_text).
-    /// `None` until a reader pass fetches and extracts the page.
+    /// Favicon URL returned by the source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub favicon: Option<String>,
+    /// Images extracted from this result page.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<SearchImage>,
+    /// Provider-supplied or extracted main article text.
+    ///
+    /// Native providers may populate this field directly. For snippet-only
+    /// engines, [`enrich_full_text`](crate::enrich_full_text) can fetch and
+    /// extract the page body.
     #[serde(default)]
     pub full_text: Option<String>,
 }
@@ -71,8 +116,11 @@ impl SearchResult {
             engines: HashSet::new(),
             positions: Vec::new(),
             score: 0.0,
+            relevance_score: None,
             thumbnail: None,
             published_date: None,
+            favicon: None,
+            images: Vec::new(),
             full_text: None,
         }
     }
@@ -102,18 +150,48 @@ impl SearchResult {
         self
     }
 
+    /// Sets the favicon URL.
+    pub fn with_favicon(mut self, favicon: impl Into<String>) -> Self {
+        self.favicon = Some(favicon.into());
+        self
+    }
+
+    /// Adds an image extracted from this result page.
+    pub fn with_image(mut self, image: SearchImage) -> Self {
+        merge_image(&mut self.images, image);
+        self
+    }
+
+    /// Sets the native relevance reported by the source.
+    pub fn with_relevance_score(mut self, score: f64) -> Self {
+        self.relevance_score = Some(score);
+        self
+    }
+
     /// Returns a normalized URL for deduplication (without scheme and trailing slash).
     pub fn normalized_url(&self) -> String {
-        match url::Url::parse(&self.url) {
+        let value = self.url.trim();
+        match url::Url::parse(value).or_else(|_| url::Url::parse(&format!("https://{value}"))) {
             Ok(url) => normalize_parsed_url(&url),
-            Err(_) => self
-                .url
+            Err(_) => value
                 .trim_start_matches("https://")
                 .trim_start_matches("http://")
                 .trim_end_matches('/')
-                .to_lowercase(),
+                .to_string(),
         }
     }
+}
+
+fn serialize_sorted_engines<S>(
+    engines: &HashSet<String>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let mut engines: Vec<_> = engines.iter().collect();
+    engines.sort_unstable();
+    engines.serialize(serializer)
 }
 
 fn normalize_parsed_url(url: &url::Url) -> String {
@@ -121,10 +199,10 @@ fn normalize_parsed_url(url: &url::Url) -> String {
         .host_str()
         .unwrap_or_default()
         .trim_start_matches("www.");
-    let port = url
-        .port()
-        .map(|port| format!(":{port}"))
-        .unwrap_or_default();
+    let port = match (url.scheme(), url.port()) {
+        ("http", Some(80)) | ("https", Some(443)) | (_, None) => String::new(),
+        (_, Some(port)) => format!(":{port}"),
+    };
     let path = match url.path().trim_end_matches('/') {
         "" => "",
         "/" => "",
@@ -141,14 +219,14 @@ fn normalize_parsed_url(url: &url::Url) -> String {
     let query = if query_pairs.is_empty() {
         String::new()
     } else {
-        let mut serializer = Serializer::new(String::new());
+        let mut serializer = FormSerializer::new(String::new());
         for (key, value) in query_pairs {
             serializer.append_pair(&key, &value);
         }
         format!("?{}", serializer.finish())
     };
 
-    format!("{host}{port}{path}{query}").to_lowercase()
+    format!("{host}{port}{path}{query}")
 }
 
 fn is_tracking_param(key: &str) -> bool {
@@ -160,6 +238,118 @@ fn is_tracking_param(key: &str) -> bool {
         )
 }
 
+/// Provider billing or quota usage associated with one search request.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct SearchUsage {
+    /// Provider-defined credits consumed by the request.
+    ///
+    /// Native provider adapters preserve only finite, non-negative values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credits: Option<f64>,
+}
+
+impl SearchUsage {
+    /// Creates an empty usage record.
+    pub const fn new() -> Self {
+        Self { credits: None }
+    }
+
+    /// Attaches provider-defined credits consumed by the request.
+    pub const fn with_credits(mut self, credits: f64) -> Self {
+        self.credits = Some(credits);
+        self
+    }
+}
+
+/// Structured execution metadata returned by an engine.
+///
+/// Common fields stay typed while `metadata` provides a namespaced extension
+/// point for provider-specific, non-secret response information.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct SearchReport {
+    /// Configured engine display name.
+    pub engine: String,
+    /// Stable provider identifier, when the engine adapts a provider API.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Provider request identifier for support correlation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    /// Total number of matches reported by the provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_results: Option<u64>,
+    /// Provider-side response time in milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_time_ms: Option<u64>,
+    /// Provider billing or quota usage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<SearchUsage>,
+    /// Additional provider metadata.
+    ///
+    /// Provider adapters must exclude secrets and keep values bounded.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, serde_json::Value>,
+}
+
+impl SearchReport {
+    /// Creates an empty report for an engine.
+    pub fn new(engine: impl Into<String>) -> Self {
+        Self {
+            engine: engine.into(),
+            provider: None,
+            request_id: None,
+            total_results: None,
+            response_time_ms: None,
+            usage: None,
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    /// Identifies the third-party provider behind this engine.
+    pub fn with_provider(mut self, provider: impl Into<String>) -> Self {
+        self.provider = Some(provider.into());
+        self
+    }
+
+    /// Attaches a provider request identifier.
+    pub fn with_request_id(mut self, request_id: impl Into<String>) -> Self {
+        self.request_id = Some(request_id.into());
+        self
+    }
+
+    /// Attaches the provider's total result count.
+    pub fn with_total_results(mut self, total_results: u64) -> Self {
+        self.total_results = Some(total_results);
+        self
+    }
+
+    /// Attaches the provider-side response time.
+    pub fn with_response_time_ms(mut self, response_time_ms: u64) -> Self {
+        self.response_time_ms = Some(response_time_ms);
+        self
+    }
+
+    /// Attaches provider billing or quota usage.
+    pub fn with_usage(mut self, usage: SearchUsage) -> Self {
+        self.usage = Some(usage);
+        self
+    }
+
+    /// Adds provider-specific metadata.
+    ///
+    /// Callers must not include credentials or other secrets.
+    pub fn with_metadata(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<serde_json::Value>,
+    ) -> Self {
+        self.metadata.insert(key.into(), value.into());
+        self
+    }
+}
+
 /// Container for aggregated search results.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SearchResults {
@@ -169,8 +359,14 @@ pub struct SearchResults {
     suggestions: Vec<String>,
     /// Direct answers.
     answers: Vec<String>,
+    /// Query-related images returned independently of individual results.
+    #[serde(default)]
+    images: Vec<SearchImage>,
     /// Engine errors (engine name → error message).
     errors: Vec<(String, String)>,
+    /// Structured per-engine execution reports.
+    #[serde(default)]
+    reports: Vec<SearchReport>,
     /// Number of results.
     pub count: usize,
     /// Search duration in milliseconds.
@@ -189,14 +385,25 @@ impl SearchResults {
         self.count = self.results.len();
     }
 
-    /// Adds a suggestion.
+    /// Adds a suggestion unless an identical suggestion is already present.
     pub fn add_suggestion(&mut self, suggestion: impl Into<String>) {
-        self.suggestions.push(suggestion.into());
+        let suggestion = suggestion.into();
+        if !self.suggestions.contains(&suggestion) {
+            self.suggestions.push(suggestion);
+        }
     }
 
-    /// Adds an answer.
+    /// Adds an answer unless an identical answer is already present.
     pub fn add_answer(&mut self, answer: impl Into<String>) {
-        self.answers.push(answer.into());
+        let answer = answer.into();
+        if !self.answers.contains(&answer) {
+            self.answers.push(answer);
+        }
+    }
+
+    /// Adds a query-related image, merging duplicate URLs deterministically.
+    pub fn add_image(&mut self, image: SearchImage) {
+        merge_image(&mut self.images, image);
     }
 
     /// Returns the results.
@@ -219,6 +426,11 @@ impl SearchResults {
         &self.answers
     }
 
+    /// Returns query-related images.
+    pub fn images(&self) -> &[SearchImage] {
+        &self.images
+    }
+
     /// Records an engine error.
     pub fn add_error(&mut self, engine: impl Into<String>, error: impl Into<String>) {
         self.errors.push((engine.into(), error.into()));
@@ -229,9 +441,40 @@ impl SearchResults {
         &self.errors
     }
 
+    /// Records a structured engine execution report.
+    pub fn add_report(&mut self, report: SearchReport) {
+        self.reports.push(report);
+    }
+
+    /// Returns structured engine execution reports.
+    pub fn reports(&self) -> &[SearchReport] {
+        &self.reports
+    }
+
     /// Sets the search duration.
     pub fn set_duration(&mut self, duration_ms: u64) {
         self.duration_ms = duration_ms;
+    }
+}
+
+pub(crate) fn merge_image(images: &mut Vec<SearchImage>, image: SearchImage) {
+    if let Some(existing) = images.iter_mut().find(|existing| existing.url == image.url) {
+        merge_image_description(&mut existing.description, image.description);
+        return;
+    }
+    images.push(image);
+    images.sort_by(|left, right| left.url.cmp(&right.url));
+}
+
+fn merge_image_description(existing: &mut Option<String>, new: Option<String>) {
+    match (existing.as_ref(), new) {
+        (None, Some(new)) => *existing = Some(new),
+        (Some(current), Some(new))
+            if new.len() > current.len() || (new.len() == current.len() && new < *current) =>
+        {
+            *existing = Some(new);
+        }
+        _ => {}
     }
 }
 
@@ -271,8 +514,11 @@ mod tests {
         assert!(result.engines.is_empty());
         assert!(result.positions.is_empty());
         assert_eq!(result.score, 0.0);
+        assert!(result.relevance_score.is_none());
         assert!(result.thumbnail.is_none());
         assert!(result.published_date.is_none());
+        assert!(result.favicon.is_none());
+        assert!(result.images.is_empty());
     }
 
     #[test]
@@ -308,15 +554,21 @@ mod tests {
     }
 
     #[test]
+    fn test_search_result_with_relevance_score() {
+        let result = SearchResult::new("url", "title", "content").with_relevance_score(0.82);
+        assert_eq!(result.relevance_score, Some(0.82));
+    }
+
+    #[test]
     fn test_normalized_url_https() {
         let result = SearchResult::new("https://Example.COM/Path/", "t", "c");
-        assert_eq!(result.normalized_url(), "example.com/path");
+        assert_eq!(result.normalized_url(), "example.com/Path");
     }
 
     #[test]
     fn test_normalized_url_http() {
         let result = SearchResult::new("http://Example.COM/Path/", "t", "c");
-        assert_eq!(result.normalized_url(), "example.com/path");
+        assert_eq!(result.normalized_url(), "example.com/Path");
     }
 
     #[test]
@@ -338,7 +590,7 @@ mod tests {
             "t",
             "c",
         );
-        assert_eq!(result.normalized_url(), "example.com/path?a=1&b=2");
+        assert_eq!(result.normalized_url(), "example.com/Path?a=1&b=2");
     }
 
     #[test]
@@ -356,6 +608,22 @@ mod tests {
     }
 
     #[test]
+    fn test_normalized_url_preserves_case_sensitive_path_and_query_values() {
+        let upper = SearchResult::new("https://example.com/Docs?q=Rust", "t", "c");
+        let lower = SearchResult::new("https://example.com/docs?q=rust", "t", "c");
+
+        assert_ne!(upper.normalized_url(), lower.normalized_url());
+    }
+
+    #[test]
+    fn test_normalized_url_removes_default_port() {
+        let explicit = SearchResult::new("https://example.com:443/path", "t", "c");
+        let implicit = SearchResult::new("https://example.com/path", "t", "c");
+
+        assert_eq!(explicit.normalized_url(), implicit.normalized_url());
+    }
+
+    #[test]
     fn test_search_results_new() {
         let results = SearchResults::new();
         assert_eq!(results.count, 0);
@@ -363,6 +631,8 @@ mod tests {
         assert!(results.items().is_empty());
         assert!(results.suggestions().is_empty());
         assert!(results.answers().is_empty());
+        assert!(results.images().is_empty());
+        assert!(results.reports().is_empty());
     }
 
     #[test]
@@ -379,6 +649,7 @@ mod tests {
         let mut results = SearchResults::new();
         results.add_suggestion("suggestion1");
         results.add_suggestion("suggestion2");
+        results.add_suggestion("suggestion1");
         assert_eq!(results.suggestions().len(), 2);
         assert_eq!(results.suggestions()[0], "suggestion1");
     }
@@ -387,8 +658,28 @@ mod tests {
     fn test_search_results_add_answer() {
         let mut results = SearchResults::new();
         results.add_answer("42");
+        results.add_answer("42");
         assert_eq!(results.answers().len(), 1);
         assert_eq!(results.answers()[0], "42");
+    }
+
+    #[test]
+    fn test_search_results_merge_duplicate_images_deterministically() {
+        let mut results = SearchResults::new();
+        results
+            .add_image(SearchImage::new("https://example.com/image.png").with_description("short"));
+        results.add_image(
+            SearchImage::new("https://example.com/image.png")
+                .with_description("a richer image description"),
+        );
+        results.add_image(SearchImage::new("https://a.example/image.png"));
+
+        assert_eq!(results.images().len(), 2);
+        assert_eq!(results.images()[0].url, "https://a.example/image.png");
+        assert_eq!(
+            results.images()[1].description.as_deref(),
+            Some("a richer image description")
+        );
     }
 
     #[test]
@@ -408,10 +699,13 @@ mod tests {
 
     #[test]
     fn test_search_result_serialization() {
-        let result = SearchResult::new("https://example.com", "Title", "Content");
+        let result = SearchResult::new("https://example.com", "Title", "Content")
+            .with_engine("zeta", 1)
+            .with_engine("alpha", 2);
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("\"url\":\"https://example.com\""));
         assert!(json.contains("\"title\":\"Title\""));
+        assert!(json.contains("\"engines\":[\"alpha\",\"zeta\"]"));
     }
 
     #[test]
@@ -443,6 +737,25 @@ mod tests {
         assert_eq!(results.errors().len(), 1);
         assert_eq!(results.errors()[0].0, "Google");
         assert_eq!(results.errors()[0].1, "CAPTCHA detected");
+    }
+
+    #[test]
+    fn test_search_results_add_structured_report() {
+        let report = SearchReport::new("Tavily")
+            .with_provider("tavily")
+            .with_request_id("req-123")
+            .with_total_results(42)
+            .with_response_time_ms(125)
+            .with_usage(SearchUsage::new().with_credits(2.0))
+            .with_metadata("search_depth", "advanced");
+        let mut results = SearchResults::new();
+        results.add_report(report.clone());
+
+        assert_eq!(results.reports(), &[report]);
+        let json = serde_json::to_value(&results).unwrap();
+        assert_eq!(json["reports"][0]["provider"], "tavily");
+        assert_eq!(json["reports"][0]["usage"]["credits"], 2.0);
+        assert_eq!(json["reports"][0]["metadata"]["search_depth"], "advanced");
     }
 
     #[test]

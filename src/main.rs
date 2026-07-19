@@ -13,8 +13,8 @@ use a3s_search::{
         Bing, BingChina, BingParser, Brave, BraveParser, DuckDuckGo, DuckDuckGoParser, So360,
         So360Parser, Sogou, SogouParser, Wikipedia,
     },
-    Engine, EngineConfig, HttpFetcher, PageFetcher, SafeSearch, Search, SearchConfig, SearchQuery,
-    TimeRange,
+    providers::BuiltinProvider,
+    Engine, EngineConfig, HttpFetcher, SafeSearch, Search, SearchConfig, SearchQuery, TimeRange,
 };
 
 #[cfg(feature = "headless")]
@@ -22,10 +22,28 @@ use a3s_search::{
     a3s_use_browser::PageRenderer,
     browser::{BrowserFetcher, BrowserPool, BrowserPoolConfig},
     engines::{Baidu, Google},
-    WaitStrategy,
+    PageFetcher, WaitStrategy,
 };
 
-/// A3S Search - Embeddable meta search engine CLI
+mod cli;
+
+use cli::output::{print_results, OutputFormat};
+use cli::provider::{
+    create_provider_engine, ensure_provider_ready, list_engines, load_search_config,
+};
+use cli::proxy::{create_http_fetcher, report_proxy_scope};
+
+#[cfg(test)]
+use a3s_search::{
+    providers::{ProviderAuthentication, ProviderReadiness},
+    SearchResults,
+};
+#[cfg(test)]
+use cli::output::{json_output, truncate_str};
+#[cfg(test)]
+use cli::provider::provider_readiness_summary;
+
+/// Extensible web search CLI with native providers and meta-search engines
 #[derive(Parser)]
 #[command(name = "a3s-search")]
 #[command(author, version, about, long_about = None)]
@@ -34,7 +52,7 @@ struct Cli {
     query: Option<String>,
 
     /// Search engines to use (comma-separated)
-    /// Available: ddg, brave, bing, wiki, sogou, 360, g, baidu, bing_cn
+    /// Available: ddg, brave, bing, wiki, sogou, 360, g, baidu, bing_cn, anysearch, tavily
     #[arg(short, long, value_delimiter = ',')]
     engines: Option<Vec<String>>,
 
@@ -95,16 +113,6 @@ enum Commands {
 }
 
 #[derive(Clone, Copy, ValueEnum, Debug)]
-enum OutputFormat {
-    /// Human-readable text output
-    Text,
-    /// JSON output
-    Json,
-    /// Compact single-line output
-    Compact,
-}
-
-#[derive(Clone, Copy, ValueEnum, Debug)]
 enum SafeSearchArg {
     Off,
     Moderate,
@@ -153,7 +161,7 @@ async fn main() -> Result<()> {
     }
 
     match cli.command {
-        Some(Commands::Engines) => list_engines(),
+        Some(Commands::Engines) => list_engines(cli.config.as_deref()),
         Some(Commands::Update) => {
             a3s_updater::run_update(&a3s_updater::UpdateConfig {
                 binary_name: "a3s-search",
@@ -182,7 +190,7 @@ async fn main() -> Result<()> {
                 .await
             } else {
                 // No query provided, show help
-                println!("A3S Search - Meta search engine CLI\n");
+                println!("A3S Search - Extensible web search CLI\n");
                 println!("Usage: a3s-search <QUERY> [OPTIONS]");
                 println!("       a3s-search engines\n");
                 println!("Examples:");
@@ -192,7 +200,7 @@ async fn main() -> Result<()> {
                 println!("  a3s-search \"Rust\" -p http://127.0.0.1:8080\n");
                 println!("Options:");
                 println!(
-                    "  -e, --engines <ENGINES>  Engines: ddg,brave,bing,wiki,sogou,360,g,baidu,bing_cn"
+                    "  -e, --engines <ENGINES>  Engines/providers: ddg,brave,bing,wiki,sogou,360,g,baidu,bing_cn,anysearch,tavily"
                 );
                 println!("  -l, --limit <N>          Max results (default: 10)");
                 println!("  -t, --timeout <SECS>     Timeout in seconds");
@@ -227,41 +235,15 @@ struct SearchArgs {
     config: Option<PathBuf>,
 }
 
-fn list_engines() -> Result<()> {
-    println!("Available search engines:\n");
-    println!("  International:");
-    println!("    ddg      - DuckDuckGo (privacy-focused search)");
-    println!("    brave    - Brave Search");
-    println!("    bing     - Bing International");
-    println!("    wiki     - Wikipedia");
-    println!();
-    println!("  Chinese:");
-    println!("    sogou    - Sogou (搜狗)");
-    println!("    360      - 360 Search (360搜索)");
-    println!("    bing_cn  - Bing China (必应中国)");
-
-    #[cfg(feature = "headless")]
-    {
-        println!();
-        println!("  Headless (uses an installed Chrome/Chromium):");
-        println!("    g        - Google");
-        println!("    baidu    - Baidu (百度)");
-    }
-
-    println!();
-    println!("Usage: a3s-search \"query\" -e ddg,wiki,sogou");
-    Ok(())
-}
-
 fn selected_engine_shortcuts(args: &SearchArgs, config: Option<&SearchConfig>) -> Vec<String> {
     if let Some(engines) = &args.engines {
         return engines.clone();
     }
 
     if let Some(config) = config {
-        if !config.engines.is_empty() {
+        if !config.engines.is_empty() || !config.providers.is_empty() {
             return config
-                .enabled_engines()
+                .enabled_sources()
                 .into_iter()
                 .map(str::to_string)
                 .collect();
@@ -273,8 +255,12 @@ fn selected_engine_shortcuts(args: &SearchArgs, config: Option<&SearchConfig>) -
 
 fn is_config_enabled(config: Option<&SearchConfig>, shortcut: &str) -> bool {
     config
-        .and_then(|config| config.engine_entry(shortcut))
-        .map(|entry| entry.enabled)
+        .and_then(|config| {
+            config
+                .engine_entry(shortcut)
+                .map(|entry| entry.enabled)
+                .or_else(|| config.provider_entry(shortcut).map(|entry| entry.enabled))
+        })
         .unwrap_or(true)
 }
 
@@ -290,13 +276,7 @@ fn configured_engine_config(
 }
 
 async fn run_search(args: SearchArgs) -> Result<()> {
-    let config = match &args.config {
-        Some(path) => Some(
-            SearchConfig::load(path)
-                .map_err(|e| anyhow::anyhow!("Failed to load config {}: {}", path.display(), e))?,
-        ),
-        None => None,
-    };
+    let config = load_search_config(args.config.as_deref())?;
 
     let mut search = if let Some(config) = config.as_ref() {
         Search::with_health_config(config.health_config())
@@ -311,13 +291,11 @@ async fn run_search(args: SearchArgs) -> Result<()> {
     }
 
     let engine_shortcuts = selected_engine_shortcuts(&args, config.as_ref());
-
-    // Log proxy usage
-    if let Some(proxy_url) = &args.proxy {
-        if matches!(args.format, OutputFormat::Text) {
-            eprintln!("Using proxy: {}", proxy_url);
-        }
-    }
+    report_proxy_scope(
+        args.proxy.as_deref(),
+        &engine_shortcuts,
+        matches!(args.format, OutputFormat::Text),
+    );
 
     // Warn if headless engines are requested without the feature
     #[cfg(not(feature = "headless"))]
@@ -346,15 +324,7 @@ async fn run_search(args: SearchArgs) -> Result<()> {
     #[cfg(feature = "headless")]
     let browser_renderer: std::sync::Arc<dyn PageRenderer> = browser_pool.clone();
 
-    // Create shared HTTP fetcher (with proxy if provided)
-    let http_fetcher: std::sync::Arc<dyn PageFetcher> = if let Some(proxy_url) = &args.proxy {
-        std::sync::Arc::new(
-            HttpFetcher::with_proxy(proxy_url)
-                .map_err(|e| anyhow::anyhow!("Failed to create HTTP fetcher with proxy: {}", e))?,
-        )
-    } else {
-        std::sync::Arc::new(HttpFetcher::new())
-    };
+    let http_fetcher = create_http_fetcher(args.proxy.as_deref(), &engine_shortcuts)?;
 
     for shortcut in &engine_shortcuts {
         if !is_config_enabled(config.as_ref(), shortcut) {
@@ -364,6 +334,13 @@ async fn run_search(args: SearchArgs) -> Result<()> {
                     shortcut
                 );
             }
+            continue;
+        }
+
+        if let Some(provider) = BuiltinProvider::from_id(shortcut) {
+            let engine = create_provider_engine(provider, config.as_ref())?;
+            ensure_provider_ready(&engine)?;
+            search.add_engine(engine);
             continue;
         }
 
@@ -488,60 +465,7 @@ async fn run_search(args: SearchArgs) -> Result<()> {
         eprintln!("Warning: {} engine failed: {}", engine, error);
     }
 
-    // Output results
-    match args.format {
-        OutputFormat::Text => {
-            println!(
-                "\nSearch results for \"{}\" ({} results in {}ms):\n",
-                args.query, results.count, results.duration_ms
-            );
-
-            for (i, result) in results.items().iter().take(args.limit).enumerate() {
-                println!("{}. {}", i + 1, result.title);
-                println!("   URL: {}", result.url);
-                if !result.content.is_empty() {
-                    let content = truncate_str(&result.content, 150);
-                    println!("   {}", content);
-                }
-                println!(
-                    "   Engines: {:?} | Score: {:.2}",
-                    result.engines, result.score
-                );
-                println!();
-            }
-        }
-        OutputFormat::Json => {
-            let output: Vec<_> = results.items().iter().take(args.limit).collect();
-            let payload = serde_json::json!({
-                "results": output,
-                "errors": results.errors(),
-                "count": output.len(),
-                "total_count": results.count,
-                "duration_ms": results.duration_ms,
-            });
-            println!("{}", serde_json::to_string_pretty(&payload)?);
-        }
-        OutputFormat::Compact => {
-            for result in results.items().iter().take(args.limit) {
-                println!("{}\t{}", result.title, result.url);
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Truncates a string to at most `max_bytes` bytes at a valid UTF-8 char boundary.
-fn truncate_str(s: &str, max_bytes: usize) -> String {
-    if s.len() <= max_bytes {
-        return s.to_string();
-    }
-    // Find the last char boundary at or before max_bytes
-    let truncated = match s.char_indices().take_while(|(i, _)| *i < max_bytes).last() {
-        Some((i, c)) => &s[..i + c.len_utf8()],
-        None => "",
-    };
-    format!("{}...", truncated)
+    print_results(&args.query, &results, args.limit, args.format)
 }
 
 #[cfg(test)]
@@ -671,10 +595,14 @@ mod tests {
 
     #[test]
     fn test_cli_with_engines() {
-        let cli = Cli::parse_from(["a3s-search", "query", "-e", "ddg,wiki"]);
+        let cli = Cli::parse_from(["a3s-search", "query", "-e", "ddg,anysearch,tavily"]);
         assert_eq!(
             cli.engines,
-            Some(vec!["ddg".to_string(), "wiki".to_string()])
+            Some(vec![
+                "ddg".to_string(),
+                "anysearch".to_string(),
+                "tavily".to_string()
+            ])
         );
     }
 
@@ -796,6 +724,13 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_engines_subcommand_accepts_config() {
+        let cli = Cli::parse_from(["a3s-search", "--config", "search.acl", "engines"]);
+        assert!(matches!(cli.command, Some(Commands::Engines)));
+        assert_eq!(cli.config, Some(PathBuf::from("search.acl")));
+    }
+
+    #[test]
     fn test_cli_no_args() {
         let cli = Cli::parse_from(["a3s-search"]);
         assert!(cli.query.is_none());
@@ -860,15 +795,19 @@ mod tests {
             engine "ddg" { enabled = true }
             engine "brave" { enabled = false }
             engine "wiki" { enabled = true }
+            provider "anysearch" { enabled = true }
+            provider "tavily" { enabled = false }
             "#,
         )
         .unwrap();
 
         let selected = selected_engine_shortcuts(&args, Some(&config));
-        assert_eq!(selected.len(), 2);
+        assert_eq!(selected, vec!["anysearch", "ddg", "wiki"]);
         assert!(selected.contains(&"ddg".to_string()));
         assert!(selected.contains(&"wiki".to_string()));
+        assert!(selected.contains(&"anysearch".to_string()));
         assert!(!selected.contains(&"brave".to_string()));
+        assert!(!selected.contains(&"tavily".to_string()));
     }
 
     #[test]
@@ -901,6 +840,84 @@ mod tests {
         assert!(!is_config_enabled(Some(&config), "g"));
         assert!(!is_config_enabled(Some(&config), "google"));
         assert!(is_config_enabled(Some(&config), "ddg"));
+    }
+
+    #[test]
+    fn test_is_config_enabled_respects_provider_entries() {
+        let config = SearchConfig::parse(r#"provider "anysearch" { enabled = false }"#).unwrap();
+
+        assert!(!is_config_enabled(Some(&config), "anysearch"));
+        assert!(is_config_enabled(Some(&config), "tavily"));
+    }
+
+    #[test]
+    fn test_configured_provider_engine_applies_common_settings() {
+        let config = SearchConfig::parse(
+            r#"
+            timeout { value = 17 }
+            provider "tavily" {
+                api_key = "test-key"
+                weight = 1.7
+            }
+            "#,
+        )
+        .unwrap();
+        let engine = create_provider_engine(BuiltinProvider::Tavily, Some(&config)).unwrap();
+
+        assert_eq!(engine.shortcut(), "tavily");
+        assert_eq!(engine.config().timeout, 17);
+        assert_eq!(engine.config().weight, 1.7);
+        assert!(engine.readiness().is_ready());
+    }
+
+    #[test]
+    fn test_provider_readiness_summary_never_contains_credentials() {
+        assert_eq!(
+            provider_readiness_summary(&ProviderReadiness::Ready {
+                authentication: ProviderAuthentication::Anonymous,
+            }),
+            "ready, keyless/anonymous"
+        );
+        assert_eq!(
+            provider_readiness_summary(&ProviderReadiness::MissingCredential {
+                environment_variable: Some("TAVILY_API_KEY".to_string()),
+            }),
+            "not ready, missing TAVILY_API_KEY"
+        );
+    }
+
+    #[test]
+    fn test_json_output_preserves_provider_rich_fields() {
+        let mut results = SearchResults::new();
+        results.add_result(a3s_search::SearchResult::new(
+            "https://example.com",
+            "Example",
+            "Snippet",
+        ));
+        results.add_answer("Direct answer");
+        results.add_suggestion("Related query");
+        results.add_image(
+            a3s_search::SearchImage::new("https://example.com/image.png")
+                .with_description("Example image"),
+        );
+        results.add_report(
+            a3s_search::SearchReport::new("Tavily")
+                .with_provider("tavily")
+                .with_request_id("request-1")
+                .with_usage(a3s_search::SearchUsage::new().with_credits(1.0)),
+        );
+        results.set_duration(42);
+
+        let output = json_output("rust", &results, 1);
+
+        assert_eq!(output["query"], "rust");
+        assert_eq!(output["answers"], serde_json::json!(["Direct answer"]));
+        assert_eq!(output["suggestions"], serde_json::json!(["Related query"]));
+        assert_eq!(output["images"][0]["description"], "Example image");
+        assert_eq!(output["reports"][0]["provider"], "tavily");
+        assert_eq!(output["reports"][0]["request_id"], "request-1");
+        assert_eq!(output["reports"][0]["usage"]["credits"], 1.0);
+        assert_eq!(output["count"], 1);
     }
 
     #[test]

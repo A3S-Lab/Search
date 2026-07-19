@@ -1,40 +1,63 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
-if [ $# -ne 1 ]; then
-  echo "Usage: $0 <version>"
-  echo "Example: $0 0.9.0"
+usage() {
+  echo "Usage: $0 <major.minor.patch>" >&2
+}
+
+if [[ $# -ne 1 ]]; then
+  usage
+  exit 2
+fi
+
+version=$1
+if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+  echo "Version must be a semantic version without a leading v: ${version}" >&2
+  exit 2
+fi
+
+repository_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "${repository_root}"
+
+if [[ $(git branch --show-current) != "main" ]]; then
+  echo "Release preparation must run from the main branch." >&2
+  exit 1
+fi
+if [[ -n $(git status --porcelain) ]]; then
+  echo "Release preparation requires a clean worktree." >&2
+  exit 1
+fi
+if git rev-parse --verify --quiet "refs/tags/v${version}" >/dev/null; then
+  echo "Tag v${version} already exists." >&2
   exit 1
 fi
 
-NEW_VERSION="$1"
+NEW_VERSION="${version}" perl -0pi -e \
+  's/(\[package\].*?\nversion = ")[^"]+(")/$1$ENV{NEW_VERSION}$2/s' \
+  Cargo.toml
 
-echo "🚀 Releasing version $NEW_VERSION"
+# Refresh only generated dependency metadata before locking every verification
+# command to the reviewed dependency graph.
+cargo metadata --format-version 1 >/dev/null
 
-# 1. 更新版本号
-echo "📝 Updating version numbers..."
-sed -i '' "s/^version = \".*\"/version = \"$NEW_VERSION\"/" Cargo.toml
+cargo fmt --all -- --check
+cargo test --no-default-features --locked
+cargo test --all-features --locked
+cargo clippy --all-targets --no-default-features --locked -- -D warnings
+cargo clippy --all-targets --all-features --locked -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --locked
+cargo package --locked --allow-dirty
+scripts/test-release-package.sh
+git diff --check
 
-# 2. 更新 Cargo.lock
-echo "🔒 Updating Cargo.lock..."
-cargo update -p a3s-search
+git add Cargo.toml Cargo.lock
+git commit -m "release: prepare a3s-search ${version}"
+git tag "v${version}"
 
-# 3. 运行测试
-echo "🧪 Running tests..."
-cargo test --lib
+cat <<EOF
+Prepared a3s-search ${version} and created tag v${version}.
+Review the commit and tag, then publish explicitly:
 
-# 4. 提交
-echo "💾 Committing changes..."
-git add -A
-git commit -m "chore: bump version to v$NEW_VERSION"
-
-# 5. 创建 tag
-echo "🏷️  Creating tag..."
-git tag "v$NEW_VERSION"
-
-# 6. 推送
-echo "📤 Pushing to remote..."
-git push origin main --tags
-
-echo "✅ Release v$NEW_VERSION initiated!"
-echo "📊 Monitor progress: gh run watch --repo A3S-Lab/Search"
+  git push origin main
+  git push origin v${version}
+EOF

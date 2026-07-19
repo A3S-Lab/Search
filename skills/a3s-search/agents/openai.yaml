@@ -1,0 +1,4 @@
+interface:
+  display_name: "A3S Search"
+  short_description: "Search and verify current web evidence"
+  default_prompt: "Use $a3s-search to find and verify current web evidence."

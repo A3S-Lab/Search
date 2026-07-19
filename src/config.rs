@@ -23,6 +23,13 @@
 //!   enabled = true
 //!   weight  = 1.2
 //! }
+//!
+//! provider "tavily" {
+//!   api_key            = env("TAVILY_API_KEY")
+//!   search_depth       = "advanced"
+//!   include_answer     = "advanced"
+//!   include_raw_content = "markdown"
+//! }
 //! ```
 
 use std::collections::HashMap;
@@ -32,10 +39,18 @@ use std::time::Duration;
 use a3s_acl::ast::{Document, Value};
 use a3s_acl::parse;
 
-use crate::{EngineConfig, HealthConfig, SearchError};
+use crate::providers::ProviderEngine;
+use crate::{Engine, EngineConfig, HealthConfig, SearchError};
+
+mod provider;
+
+pub use provider::{ProviderEntry, ProviderSettings};
+
+const MAX_ACL_EXACT_INTEGER: f64 = 9_007_199_254_740_991.0;
 
 /// Top-level search configuration.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SearchConfig {
     /// Default timeout in seconds for all engines.
     pub timeout: u64,
@@ -45,6 +60,9 @@ pub struct SearchConfig {
 
     /// Engine configurations keyed by shortcut.
     pub engines: HashMap<String, EngineEntry>,
+
+    /// Typed native provider configurations keyed by provider identifier.
+    pub providers: HashMap<String, ProviderEntry>,
 }
 
 /// Health monitor configuration entry.
@@ -71,6 +89,16 @@ pub struct EngineEntry {
 }
 
 impl SearchConfig {
+    /// Creates an empty configuration with the documented global defaults.
+    pub fn new() -> Self {
+        Self {
+            timeout: 10,
+            health: None,
+            engines: HashMap::new(),
+            providers: HashMap::new(),
+        }
+    }
+
     /// Loads a configuration from an ACL file.
     pub fn load(path: impl AsRef<Path>) -> crate::Result<Self> {
         let path = path.as_ref();
@@ -95,50 +123,100 @@ impl SearchConfig {
 
     /// Converts an ACL Document to SearchConfig.
     fn from_document(doc: &Document) -> crate::Result<Self> {
-        let mut timeout = 10u64;
-        let mut health = None;
-        let mut engines: HashMap<String, EngineEntry> = HashMap::new();
+        let Self {
+            mut timeout,
+            mut health,
+            mut engines,
+            mut providers,
+        } = Self::new();
 
         for block in &doc.blocks {
             match block.name.as_str() {
                 "timeout" => {
                     if let Some(v) = block.attributes.get("value") {
-                        timeout = value_as_u64(v).unwrap_or(10);
+                        timeout = value_as_u64(v, "timeout.value")?;
+                        if timeout == 0 {
+                            return Err(config_value_error(
+                                "timeout.value",
+                                "an integer greater than zero",
+                            ));
+                        }
                     }
                 }
                 "health" => {
+                    let max_failures = block
+                        .attributes
+                        .get("max_failures")
+                        .map(|value| value_as_u32(value, "health.max_failures"))
+                        .transpose()?
+                        .unwrap_or(3);
+                    if max_failures == 0 {
+                        return Err(config_value_error(
+                            "health.max_failures",
+                            "an integer greater than zero",
+                        ));
+                    }
                     health = Some(HealthEntry {
-                        max_failures: block
-                            .attributes
-                            .get("max_failures")
-                            .and_then(value_as_u32)
-                            .unwrap_or(3),
+                        max_failures,
                         suspend_seconds: block
                             .attributes
                             .get("suspend_seconds")
-                            .and_then(value_as_u64)
+                            .map(|value| value_as_u64(value, "health.suspend_seconds"))
+                            .transpose()?
                             .unwrap_or(60),
                     });
                 }
                 "engine" => {
                     // Engine blocks have the engine shortcut as a label
                     if let Some(shortcut) = block.labels.first() {
-                        engines.insert(
-                            shortcut.clone(),
-                            EngineEntry {
-                                enabled: block
-                                    .attributes
-                                    .get("enabled")
-                                    .and_then(value_as_bool)
-                                    .unwrap_or(true),
-                                weight: block
-                                    .attributes
-                                    .get("weight")
-                                    .and_then(value_as_f64)
-                                    .unwrap_or(1.0),
-                                timeout: block.attributes.get("timeout").and_then(value_as_u64),
-                            },
-                        );
+                        let prefix = format!("engine \"{shortcut}\"");
+                        let enabled = block
+                            .attributes
+                            .get("enabled")
+                            .map(|value| value_as_bool(value, &format!("{prefix}.enabled")))
+                            .transpose()?
+                            .unwrap_or(true);
+                        let weight = block
+                            .attributes
+                            .get("weight")
+                            .map(|value| value_as_f64(value, &format!("{prefix}.weight")))
+                            .transpose()?
+                            .unwrap_or(1.0);
+                        if !weight.is_finite() || weight <= 0.0 {
+                            return Err(config_value_error(
+                                &format!("{prefix}.weight"),
+                                "a finite number greater than zero",
+                            ));
+                        }
+                        let engine_timeout = block
+                            .attributes
+                            .get("timeout")
+                            .map(|value| value_as_u64(value, &format!("{prefix}.timeout")))
+                            .transpose()?;
+                        if engine_timeout == Some(0) {
+                            return Err(config_value_error(
+                                &format!("{prefix}.timeout"),
+                                "an integer greater than zero",
+                            ));
+                        }
+                        let entry = EngineEntry {
+                            enabled,
+                            weight,
+                            timeout: engine_timeout,
+                        };
+                        if engines.insert(shortcut.clone(), entry).is_some() {
+                            return Err(SearchError::Parse(format!(
+                                "duplicate engine block for \"{shortcut}\""
+                            )));
+                        }
+                    }
+                }
+                "provider" => {
+                    let (provider, entry) = provider::parse_provider_block(block)?;
+                    if providers.insert(provider.clone(), entry).is_some() {
+                        return Err(SearchError::Parse(format!(
+                            "duplicate provider block for \"{provider}\""
+                        )));
                     }
                 }
                 _ => {
@@ -147,10 +225,20 @@ impl SearchConfig {
             }
         }
 
+        if let Some(duplicate) = providers
+            .keys()
+            .find(|provider| engines.contains_key(provider.as_str()))
+        {
+            return Err(SearchError::Parse(format!(
+                "search source \"{duplicate}\" cannot be configured as both an engine and a provider"
+            )));
+        }
+
         Ok(Self {
             timeout,
             health,
             engines,
+            providers,
         })
     }
 
@@ -167,11 +255,34 @@ impl SearchConfig {
 
     /// Returns the list of enabled engine shortcuts.
     pub fn enabled_engines(&self) -> Vec<&str> {
-        self.engines
+        let mut engines: Vec<_> = self
+            .engines
             .iter()
             .filter(|(_, entry)| entry.enabled)
             .map(|(shortcut, _)| shortcut.as_str())
-            .collect()
+            .collect();
+        engines.sort_unstable();
+        engines
+    }
+
+    /// Returns enabled native provider identifiers in deterministic order.
+    pub fn enabled_providers(&self) -> Vec<&str> {
+        let mut providers: Vec<_> = self
+            .providers
+            .iter()
+            .filter(|(_, entry)| entry.enabled)
+            .map(|(provider, _)| provider.as_str())
+            .collect();
+        providers.sort_unstable();
+        providers
+    }
+
+    /// Returns all enabled engine and provider identifiers.
+    pub fn enabled_sources(&self) -> Vec<&str> {
+        let mut sources = self.enabled_engines();
+        sources.extend(self.enabled_providers());
+        sources.sort_unstable();
+        sources
     }
 
     /// Returns the configuration entry for an engine shortcut or known alias.
@@ -181,6 +292,23 @@ impl SearchConfig {
                 .iter()
                 .find_map(|alias| self.engines.get(*alias))
         })
+    }
+
+    /// Returns a typed native provider entry.
+    pub fn provider_entry(&self, provider: &str) -> Option<&ProviderEntry> {
+        self.providers.get(provider)
+    }
+
+    /// Creates a configured native provider engine.
+    ///
+    /// Returns `None` when the provider is not present in this configuration.
+    pub fn create_provider_engine(&self, provider: &str) -> crate::Result<Option<ProviderEngine>> {
+        let Some(entry) = self.provider_entry(provider) else {
+            return Ok(None);
+        };
+        let engine = entry.create_engine()?;
+        let config = self.apply_engine_config(engine.config().clone());
+        Ok(Some(engine.with_config(config)))
     }
 
     /// Applies top-level and per-engine ACL settings to an `EngineConfig`.
@@ -196,9 +324,21 @@ impl SearchConfig {
             if let Some(timeout) = entry.timeout {
                 config.timeout = timeout;
             }
+        } else if let Some(entry) = self.provider_entry(&config.shortcut) {
+            config.enabled = entry.enabled;
+            config.weight = entry.weight;
+            if let Some(timeout) = entry.timeout {
+                config.timeout = timeout;
+            }
         }
 
         config
+    }
+}
+
+impl Default for SearchConfig {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -216,41 +356,69 @@ fn engine_aliases(shortcut: &str) -> &'static [&'static str] {
     }
 }
 
-/// Extract a u64 from a Value.
-fn value_as_u64(v: &Value) -> Option<u64> {
-    match v {
-        Value::Number(n) => Some(*n as u64),
-        _ => None,
+/// Extract a lossless u64 from an ACL value.
+fn value_as_u64(value: &Value, attribute: &str) -> crate::Result<u64> {
+    match value {
+        Value::Number(number)
+            if number.is_finite()
+                && *number >= 0.0
+                && number.fract() == 0.0
+                && *number <= MAX_ACL_EXACT_INTEGER =>
+        {
+            Ok(*number as u64)
+        }
+        _ => Err(config_value_error(attribute, "a non-negative integer")),
     }
 }
 
-/// Extract a u32 from a Value.
-fn value_as_u32(v: &Value) -> Option<u32> {
-    match v {
-        Value::Number(n) => Some(*n as u32),
-        _ => None,
+/// Extract a lossless u32 from an ACL value.
+fn value_as_u32(value: &Value, attribute: &str) -> crate::Result<u32> {
+    match value {
+        Value::Number(number)
+            if number.is_finite()
+                && *number >= 0.0
+                && number.fract() == 0.0
+                && *number <= f64::from(u32::MAX) =>
+        {
+            Ok(*number as u32)
+        }
+        _ => Err(config_value_error(attribute, "a non-negative integer")),
     }
 }
 
 /// Extract a f64 from a Value.
-fn value_as_f64(v: &Value) -> Option<f64> {
-    match v {
-        Value::Number(n) => Some(*n),
-        _ => None,
+fn value_as_f64(value: &Value, attribute: &str) -> crate::Result<f64> {
+    match value {
+        Value::Number(number) => Ok(*number),
+        _ => Err(config_value_error(attribute, "a number")),
     }
 }
 
 /// Extract a bool from a Value.
-fn value_as_bool(v: &Value) -> Option<bool> {
-    match v {
-        Value::Bool(b) => Some(*b),
-        _ => None,
+fn value_as_bool(value: &Value, attribute: &str) -> crate::Result<bool> {
+    match value {
+        Value::Bool(value) => Ok(*value),
+        _ => Err(config_value_error(attribute, "a boolean")),
     }
+}
+
+fn config_value_error(attribute: &str, expected: &str) -> SearchError {
+    SearchError::Parse(format!("attribute \"{attribute}\" must be {expected}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_uses_documented_empty_defaults() {
+        let config = SearchConfig::new();
+
+        assert_eq!(config.timeout, 10);
+        assert!(config.health.is_none());
+        assert!(config.engines.is_empty());
+        assert!(config.providers.is_empty());
+    }
 
     #[test]
     fn test_parse_acl_basic() {
@@ -529,5 +697,28 @@ mod tests {
         assert_eq!(applied.timeout, 3);
         assert!(!applied.enabled);
         assert_eq!(applied.weight, 1.7);
+    }
+
+    #[test]
+    fn strict_top_level_and_engine_values_reject_lossy_or_unsafe_configuration() {
+        for acl in [
+            r#"timeout { value = -1 }"#,
+            r#"timeout { value = 1.5 }"#,
+            r#"timeout { value = 9007199254740992 }"#,
+            r#"timeout { value = 0 }"#,
+            r#"health { max_failures = 0 }"#,
+            r#"health { max_failures = 1.5 }"#,
+            r#"health { max_failures = "3" }"#,
+            r#"health { suspend_seconds = -1 }"#,
+            r#"engine "ddg" { enabled = "true" }"#,
+            r#"engine "ddg" { weight = 0 }"#,
+            r#"engine "ddg" { weight = -1 }"#,
+            r#"engine "ddg" { weight = "1" }"#,
+            r#"engine "ddg" { timeout = 0 }"#,
+            r#"engine "ddg" { timeout = 1.5 }"#,
+            r#"engine "ddg" {} engine "ddg" {}"#,
+        ] {
+            assert!(SearchConfig::parse(acl).is_err(), "{acl}");
+        }
     }
 }

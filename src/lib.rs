@@ -1,6 +1,7 @@
 //! # a3s-search
 //!
-//! An embeddable meta search engine library inspired by SearXNG.
+//! An extensible web search library with conventional engines and native
+//! third-party provider APIs.
 //!
 //! This library provides a framework for aggregating search results from multiple
 //! search engines, with support for:
@@ -9,6 +10,9 @@
 //! - Result deduplication and merging
 //! - Configurable ranking algorithms
 //! - Extensible engine interface
+//! - Provider-neutral [`SearchProvider`](providers::SearchProvider) extensions
+//! - Native AnySearch and Tavily integrations
+//! - Rich answers, full text, images, relevance, usage, and request reports
 //! - Dynamic proxy IP pool for anti-crawler protection
 //!
 //! ## Example
@@ -110,6 +114,7 @@ mod result;
 mod search;
 
 pub mod engines;
+pub mod providers;
 
 #[cfg(feature = "headless")]
 pub mod browser;
@@ -118,10 +123,10 @@ pub mod browser;
 pub use a3s_use_browser;
 
 pub use aggregator::Aggregator;
-pub use config::{EngineEntry, HealthEntry, SearchConfig};
-pub use engine::{Engine, EngineCategory, EngineConfig};
+pub use config::{EngineEntry, HealthEntry, ProviderEntry, ProviderSettings, SearchConfig};
+pub use engine::{Engine, EngineCategory, EngineConfig, EngineOutput};
 pub use enrich::enrich_full_text;
-pub use error::{Result, SearchError};
+pub use error::{ProviderError, ProviderErrorKind, Result, SearchError};
 pub use extract::extract_main_text;
 pub use fetcher::{PageFetcher, WaitStrategy};
 pub use fetcher_http::{HttpFetcher, PooledHttpFetcher};
@@ -129,7 +134,7 @@ pub use health::{HealthConfig, HealthMonitor};
 pub use html_engine::{selector, HtmlEngine, HtmlParser};
 pub use metrics::{Metrics, MetricsSnapshot, TimingGuard};
 pub use query::{SafeSearch, SearchQuery, TimeRange};
-pub use result::{ResultType, SearchResult, SearchResults};
+pub use result::{ResultType, SearchImage, SearchReport, SearchResult, SearchResults, SearchUsage};
 pub use search::Search;
 
 #[cfg(feature = "headless")]
