@@ -22,7 +22,8 @@ mod response;
 pub use config::{AnySearchConfig, AnySearchDomain, AnySearchSubDomain};
 
 use error::{
-    anysearch_http_error, anysearch_rpc_error, classify_failure, invalid_request, invalid_response,
+    anysearch_declared_tool_error, anysearch_embedded_quota_error, anysearch_http_error,
+    anysearch_rpc_error, invalid_request, invalid_response,
 };
 use request::{AnySearchArguments, AnySearchCallParams, AnySearchRpcRequest};
 use response::{
@@ -182,17 +183,12 @@ impl SearchProvider for AnySearchProvider {
                     .map(|value| sanitize_provider_text_with_secrets(value, 128, &secrets))
             });
 
+        let text_content = first_text_content(&result.content);
         if result.is_error {
-            let message = first_text_content(&result.content)
-                .map(|value| sanitize_provider_text_with_secrets(value, 300, &secrets))
-                .filter(|value| !value.is_empty())
-                .unwrap_or_else(|| "AnySearch search tool returned an error".to_string());
-            let mut error =
-                ProviderError::new(PROVIDER_ID, classify_failure(None, None, &message), message);
-            if let Some(request_id) = provider_request_id {
-                error = error.with_request_id(request_id);
-            }
-            return Err(error.into());
+            return Err(anysearch_declared_tool_error(
+                text_content,
+                provider_request_id.as_deref(),
+            ));
         }
 
         let parsed = match result
@@ -202,7 +198,14 @@ impl SearchProvider for AnySearchProvider {
         {
             Some(parsed) => parsed,
             None => {
-                let markdown = first_text_content(&result.content).ok_or_else(|| {
+                if let Some(error) = anysearch_embedded_quota_error(
+                    text_content,
+                    result.structured_content.as_ref(),
+                    provider_request_id.as_deref(),
+                ) {
+                    return Err(error);
+                }
+                let markdown = text_content.ok_or_else(|| {
                     ProviderError::new(
                         PROVIDER_ID,
                         ProviderErrorKind::InvalidResponse,
@@ -233,6 +236,7 @@ mod tests {
     use serde_json::Value;
 
     use super::config::DEFAULT_ENDPOINT;
+    use super::error::classify_failure;
     use super::response::{parse_search_markdown, AnySearchRpcError};
     use super::*;
     use crate::providers::{CredentialSource, ProviderAuthentication};
@@ -409,6 +413,18 @@ mod tests {
         assert_eq!(
             classify_failure(None, Some(-32000), "rate limit reached"),
             ProviderErrorKind::RateLimited
+        );
+    }
+
+    #[test]
+    fn exhausted_quota_message_is_not_misclassified_as_authentication() {
+        assert_eq!(
+            classify_failure(
+                None,
+                None,
+                "free quota exhausted; configure the issued API key"
+            ),
+            ProviderErrorKind::Quota
         );
     }
 }

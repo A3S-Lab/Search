@@ -350,6 +350,53 @@ impl SearchReport {
     }
 }
 
+/// A structured failure from one search engine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct EngineFailure {
+    /// Human-readable engine name.
+    pub engine: String,
+    /// Native provider identifier, when the engine wraps a provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Stable, low-cardinality error kind.
+    pub kind: String,
+    /// Bounded diagnostic safe for callers to display.
+    pub message: String,
+    /// Whether retrying the same engine may succeed without configuration changes.
+    #[serde(default)]
+    pub transient: bool,
+}
+
+impl EngineFailure {
+    /// Creates a structured engine failure.
+    pub fn new(
+        engine: impl Into<String>,
+        kind: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            engine: engine.into(),
+            provider: None,
+            kind: kind.into(),
+            message: message.into(),
+            transient: false,
+        }
+    }
+
+    /// Attaches the native provider identifier.
+    pub fn with_provider(mut self, provider: impl Into<String>) -> Self {
+        self.provider = Some(provider.into());
+        self
+    }
+
+    /// Marks whether retrying the same engine may succeed.
+    pub fn with_transient(mut self, transient: bool) -> Self {
+        self.transient = transient;
+        self
+    }
+}
+
 /// Container for aggregated search results.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SearchResults {
@@ -364,6 +411,9 @@ pub struct SearchResults {
     images: Vec<SearchImage>,
     /// Engine errors (engine name → error message).
     errors: Vec<(String, String)>,
+    /// Structured engine failures for policy-driven callers.
+    #[serde(default)]
+    failures: Vec<EngineFailure>,
     /// Structured per-engine execution reports.
     #[serde(default)]
     reports: Vec<SearchReport>,
@@ -433,12 +483,24 @@ impl SearchResults {
 
     /// Records an engine error.
     pub fn add_error(&mut self, engine: impl Into<String>, error: impl Into<String>) {
-        self.errors.push((engine.into(), error.into()));
+        self.add_failure(EngineFailure::new(engine, "unknown", error));
     }
 
     /// Returns engine errors (engine name, error message).
     pub fn errors(&self) -> &[(String, String)] {
         &self.errors
+    }
+
+    /// Records a structured engine failure while preserving the legacy error view.
+    pub fn add_failure(&mut self, failure: EngineFailure) {
+        self.errors
+            .push((failure.engine.clone(), failure.message.clone()));
+        self.failures.push(failure);
+    }
+
+    /// Returns structured engine failures.
+    pub fn failures(&self) -> &[EngineFailure] {
+        &self.failures
     }
 
     /// Records a structured engine execution report.
@@ -737,6 +799,30 @@ mod tests {
         assert_eq!(results.errors().len(), 1);
         assert_eq!(results.errors()[0].0, "Google");
         assert_eq!(results.errors()[0].1, "CAPTCHA detected");
+        assert_eq!(results.failures().len(), 1);
+        assert_eq!(results.failures()[0].kind, "unknown");
+    }
+
+    #[test]
+    fn test_search_results_add_structured_failure_preserves_legacy_error_view() {
+        let failure = EngineFailure::new(
+            "AnySearch",
+            "provider_quota",
+            "AnySearch quota is exhausted",
+        )
+        .with_provider("anysearch")
+        .with_transient(false);
+        let mut results = SearchResults::new();
+        results.add_failure(failure.clone());
+
+        assert_eq!(results.failures(), &[failure]);
+        assert_eq!(
+            results.errors(),
+            &[(
+                "AnySearch".to_string(),
+                "AnySearch quota is exhausted".to_string()
+            )]
+        );
     }
 
     #[test]

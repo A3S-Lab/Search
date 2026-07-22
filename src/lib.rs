@@ -134,7 +134,9 @@ pub use health::{HealthConfig, HealthMonitor};
 pub use html_engine::{selector, HtmlEngine, HtmlParser};
 pub use metrics::{Metrics, MetricsSnapshot, TimingGuard};
 pub use query::{SafeSearch, SearchQuery, TimeRange};
-pub use result::{ResultType, SearchImage, SearchReport, SearchResult, SearchResults, SearchUsage};
+pub use result::{
+    EngineFailure, ResultType, SearchImage, SearchReport, SearchResult, SearchResults, SearchUsage,
+};
 pub use search::Search;
 
 #[cfg(feature = "headless")]

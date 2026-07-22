@@ -8,8 +8,8 @@ use tokio::time::{timeout, Duration};
 use tracing::{debug, warn};
 
 use crate::{
-    Aggregator, Engine, HealthConfig, HealthMonitor, Metrics, Result, SearchError, SearchQuery,
-    SearchResults,
+    Aggregator, Engine, EngineFailure, HealthConfig, HealthMonitor, Metrics, Result, SearchError,
+    SearchQuery, SearchResults,
 };
 
 /// Meta search engine that orchestrates searches across multiple engines.
@@ -121,14 +121,23 @@ impl Search {
                             }
                             warn!("Engine {} failed: {}", name, e);
                             let affects_health = !e.is_client_error();
-                            Err((name, e.to_string(), affects_health))
+                            let mut failure = EngineFailure::new(name, e.kind(), e.to_string())
+                                .with_transient(e.is_transient());
+                            if let SearchError::Provider(provider_error) = &e {
+                                failure = failure.with_provider(provider_error.provider());
+                            }
+                            Err((failure, affects_health))
                         }
                         Err(_) => {
                             if let Some(metrics) = metrics.as_ref() {
                                 metrics.record_failure(SearchError::Timeout.kind(), true);
                             }
                             warn!("Engine {} timed out", name);
-                            Err((name, "timed out".to_string(), true))
+                            Err((
+                                EngineFailure::new(name, "timeout", "timed out")
+                                    .with_transient(true),
+                                true,
+                            ))
                         }
                     }
                 }
@@ -154,9 +163,9 @@ impl Search {
             for (name, _) in &outputs {
                 health.record_success(name);
             }
-            for (name, _, affects_health) in &engine_errors {
+            for (failure, affects_health) in &engine_errors {
                 if *affects_health {
-                    health.record_failure(name);
+                    health.record_failure(&failure.engine);
                 }
             }
         }
@@ -187,8 +196,8 @@ impl Search {
         for report in reports {
             search_results.add_report(report);
         }
-        for (engine, error, _) in engine_errors {
-            search_results.add_error(engine, error);
+        for (failure, _) in engine_errors {
+            search_results.add_failure(failure);
         }
         search_results.set_duration(start.elapsed().as_millis() as u64);
 
@@ -474,6 +483,8 @@ mod tests {
         assert_eq!(results.errors().len(), 1);
         assert_eq!(results.errors()[0].0, "slow");
         assert!(results.errors()[0].1.contains("timed out"));
+        assert_eq!(results.failures()[0].kind, "timeout");
+        assert!(results.failures()[0].transient);
     }
 
     #[tokio::test]
@@ -672,6 +683,8 @@ mod tests {
         assert_eq!(results.errors().len(), 1);
         assert_eq!(results.errors()[0].0, "failing");
         assert!(results.errors()[0].1.contains("Engine failed"));
+        assert_eq!(results.failures()[0].kind, "other");
+        assert!(!results.failures()[0].transient);
     }
 
     #[tokio::test]
@@ -797,6 +810,12 @@ mod tests {
 
         assert_eq!(first.errors().len(), 1);
         assert_eq!(second.errors().len(), 1);
+        assert_eq!(first.failures()[0].kind, "provider_authentication");
+        assert_eq!(
+            first.failures()[0].provider.as_deref(),
+            Some("test-provider")
+        );
+        assert!(!first.failures()[0].transient);
         let health = search.health.lock().unwrap();
         assert_eq!(health.failure_count("client-error"), 0);
         assert!(!health.is_suspended("client-error"));

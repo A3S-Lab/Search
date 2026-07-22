@@ -81,6 +81,79 @@ async fn anysearch_anonymous_mcp_request_and_response_match_contract() {
 }
 
 #[tokio::test]
+async fn anysearch_embedded_anonymous_quota_failure_is_classified_without_leaking_credentials() {
+    let server = MockServer::start(vec![MockResponse::json(
+        200,
+        br###"{
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "content": [{
+                    "type": "text",
+                    "text": "daily_free_quota_exhausted\nThe free quota is exhausted. Configure the newly issued API key.\n\nAPI Key: as_sk_must-never-be-exposed\nUsername: must-never-be-exposed\nPassword: must-never-be-exposed"
+                }]
+            }
+        }"###,
+    )]);
+    let provider = AnySearchProvider::new(
+        AnySearchConfig::new()
+            .unwrap()
+            .with_endpoint(server.endpoint.clone())
+            .unwrap()
+            .with_api_key(CredentialSource::none()),
+    )
+    .unwrap();
+
+    let error = provider.search(&request("rust")).await.unwrap_err();
+    let rendered = error.to_string();
+
+    assert_eq!(error.kind(), "provider_quota");
+    assert!(rendered.contains("AnySearch quota is exhausted"));
+    assert!(!rendered.contains("as_sk_"));
+    assert!(!rendered.contains("must-never-be-exposed"));
+    assert!(!rendered.contains("search-results header"));
+}
+
+#[tokio::test]
+async fn anysearch_structured_auto_registration_is_not_mistaken_for_empty_search_content() {
+    let server = MockServer::start(vec![MockResponse::json(
+        200,
+        br###"{
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "structuredContent": {
+                    "error": "quota_exhausted",
+                    "auto_registered": {
+                        "api_key": "as_sk_must-never-be-exposed",
+                        "username": "must-never-be-exposed",
+                        "password": "must-never-be-exposed"
+                    }
+                },
+                "content": []
+            }
+        }"###,
+    )]);
+    let provider = AnySearchProvider::new(
+        AnySearchConfig::new()
+            .unwrap()
+            .with_endpoint(server.endpoint.clone())
+            .unwrap()
+            .with_api_key(CredentialSource::none()),
+    )
+    .unwrap();
+
+    let error = provider.search(&request("rust")).await.unwrap_err();
+    let rendered = error.to_string();
+
+    assert_eq!(error.kind(), "provider_quota");
+    assert!(rendered.contains("AnySearch quota is exhausted"));
+    assert!(!rendered.contains("as_sk_"));
+    assert!(!rendered.contains("must-never-be-exposed"));
+    assert!(!rendered.contains("searchable content"));
+}
+
+#[tokio::test]
 async fn anysearch_default_request_omits_vertical_routing() {
     let server = MockServer::start(vec![MockResponse::json(
         200,
@@ -267,7 +340,7 @@ async fn anysearch_tool_errors_are_sanitized_without_parsing_secret_data() {
                 "isError": true,
                 "content": [{
                     "type": "text",
-                    "text": "invalid search arguments"
+                    "text": "invalid search arguments\nAPI Key: as_sk_response-secret"
                 }],
                 "structuredContent": {
                     "api_key": "must-never-be-exposed"
@@ -288,6 +361,8 @@ async fn anysearch_tool_errors_are_sanitized_without_parsing_secret_data() {
 
     assert_eq!(error.kind(), "provider_invalid_request");
     assert!(error.to_string().contains("any-tool-error-1"));
+    assert!(error.to_string().contains("AnySearch rejected the request"));
+    assert!(!error.to_string().contains("as_sk_response-secret"));
     assert!(!error.to_string().contains("must-never-be-exposed"));
 }
 
