@@ -104,6 +104,19 @@ tool to `POST https://api.anysearch.com/mcp`. It prefers structured content and
 supports the official Markdown result fallback. `ANYSEARCH_API_KEY` is optional;
 when present it is sent as a bearer token.
 
+AnySearch may report an exhausted anonymous allowance or auto-registration data
+inside an otherwise successful JSON-RPC tool result. The adapter classifies
+these responses as `provider_quota` instead of malformed search content and
+never retains or exposes credentials returned in the response. Configure or
+replace `ANYSEARCH_API_KEY` explicitly before retrying; the library does not
+write provider-issued keys to disk.
+
+Aggregated searches retain both the legacy engine error pairs and structured
+`EngineFailure` records containing the engine, provider identifier, stable error
+kind, diagnostic, and transient flag. Callers can therefore implement fallback
+policies for quota, rate-limit, authentication, transport, and timeout failures
+without parsing provider-specific messages.
+
 This integration follows the
 [AnySearch Skill v2.1.0](https://github.com/anysearch-ai/anysearch-skill/tree/v2.1.0)
 MCP contract linked from AnySearch's Skill download. AnySearch also documents a

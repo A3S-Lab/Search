@@ -1,5 +1,7 @@
 //! Sanitized AnySearch HTTP and JSON-RPC error mapping.
 
+use serde_json::Value;
+
 use super::super::http::ProviderHttpResponse;
 use super::super::protocol::sanitize_provider_text_with_secrets;
 use super::response::{AnySearchRpcEnvelope, AnySearchRpcError};
@@ -51,6 +53,64 @@ pub(super) fn anysearch_rpc_error(
     error.into()
 }
 
+pub(super) fn anysearch_declared_tool_error(
+    text: Option<&str>,
+    request_id: Option<&str>,
+) -> SearchError {
+    let diagnostic = text.and_then(first_non_empty_line).unwrap_or_default();
+    let kind = classify_failure(None, None, diagnostic);
+    build_tool_error(kind, request_id)
+}
+
+pub(super) fn anysearch_embedded_quota_error(
+    text: Option<&str>,
+    structured_content: Option<&Value>,
+    request_id: Option<&str>,
+) -> Option<SearchError> {
+    let text_reports_quota = text
+        .and_then(first_non_empty_line)
+        .is_some_and(is_quota_exhaustion_marker);
+    let structured_reports_quota = structured_content.is_some_and(structured_quota_failure);
+    (text_reports_quota || structured_reports_quota)
+        .then(|| build_tool_error(ProviderErrorKind::Quota, request_id))
+}
+
+fn build_tool_error(kind: ProviderErrorKind, request_id: Option<&str>) -> SearchError {
+    let mut error = ProviderError::new(PROVIDER_ID, kind, failure_message(kind));
+    if let Some(request_id) = request_id {
+        error = error.with_request_id(request_id);
+    }
+    error.into()
+}
+
+fn first_non_empty_line(text: &str) -> Option<&str> {
+    text.lines().map(str::trim).find(|line| !line.is_empty())
+}
+
+fn is_quota_exhaustion_marker(marker: &str) -> bool {
+    let marker: String = marker
+        .chars()
+        .take(256)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    marker.contains("quota")
+        && ["exhaust", "exceed", "deplet", "reached"]
+            .iter()
+            .any(|term| marker.contains(term))
+}
+
+fn structured_quota_failure(value: &Value) -> bool {
+    let candidate = value.get("data").unwrap_or(value);
+    let Some(object) = candidate.as_object() else {
+        return false;
+    };
+    object.contains_key("auto_registered")
+        || ["status", "code", "error", "message"]
+            .iter()
+            .filter_map(|key| object.get(*key).and_then(Value::as_str))
+            .any(is_quota_exhaustion_marker)
+}
+
 fn build_rpc_error(
     error: AnySearchRpcError,
     request_id: Option<&str>,
@@ -98,19 +158,19 @@ pub(super) fn classify_failure(
     }
 
     let message = message.to_ascii_lowercase();
-    if message.contains("api key")
-        || message.contains("credential")
-        || message.contains("unauthorized")
-        || message.contains("authentication")
-    {
-        ProviderErrorKind::Authentication
-    } else if message.contains("rate limit") || message.contains("too many requests") {
+    if message.contains("rate limit") || message.contains("too many requests") {
         ProviderErrorKind::RateLimited
     } else if message.contains("quota")
         || message.contains("credit")
         || message.contains("limit reached")
     {
         ProviderErrorKind::Quota
+    } else if message.contains("api key")
+        || message.contains("credential")
+        || message.contains("unauthorized")
+        || message.contains("authentication")
+    {
+        ProviderErrorKind::Authentication
     } else if message.contains("permission") || message.contains("forbidden") {
         ProviderErrorKind::Permission
     } else if matches!(code, Some(-32603 | -32099..=-32000)) {
