@@ -17,7 +17,7 @@ request reports.
 - Deterministic URL deduplication, rich-field merging, duplicate evidence
   suppression, and consensus ranking
 - Typed ACL configuration with redacted credential sources
-- Conventional HTTP, RSS, and optional A3S Use Browser engines
+- Conventional HTTP, RSS, and optional A3S Browser engines
 - Query answers, suggestions, images, full text, favicons, relevance, usage, and reports
 - Bounded provider responses and sanitized provider errors
 - Bundled Codex Skill in every release archive
@@ -44,7 +44,7 @@ Optional features:
 
 | Feature | Purpose |
 | --- | --- |
-| `headless` | Enable A3S Use Browser rendering for Google, Baidu, and JavaScript pages |
+| `headless` | Enable A3S Browser rendering for Google, Baidu, and JavaScript pages |
 | `lightpanda` | Add the Lightpanda backend; implies `headless` |
 
 Provider APIs do not require either browser feature.
@@ -467,18 +467,19 @@ adding provider-specific branches to the search core.
 | `sogou` | Sogou | HTTP |
 | `360` | 360 Search | HTTP |
 | `bing_cn` | Bing China | RSS |
-| `g` | Google | A3S Use Browser, `headless` feature |
-| `baidu` | Baidu | A3S Use Browser, `headless` feature |
+| `g` | Google | A3S Browser, `headless` feature |
+| `baidu` | Baidu | A3S Browser, `headless` feature |
 
 Provider APIs and conventional engines can participate in the same search.
 
 ## Browser rendering and full text
 
 With the `headless` feature, Search adapts the typed
-`a3s_use_browser::PageRenderer` interface. A3S Use owns browser discovery,
-managed installation, process lifecycle, and tab limits; Search owns only
-URL-to-HTML adaptation, wait conditions, retries, and metrics. Search never
-invokes the A3S Use CLI or MCP surface.
+`a3s_use_browser::PageRenderer` interface from the independently maintained
+[A3S Browser repository](https://github.com/A3S-Lab/Browser). Browser owns
+browser discovery, managed installation, process lifecycle, and tab limits;
+Search owns only URL-to-HTML adaptation, wait conditions, retries, and metrics.
+Search never depends on the A3S Use facade, Browser driver, or MCP surface.
 
 Providers may return `full_text` directly. For snippet-only results,
 `enrich_full_text` can fetch each result page and extract the main article body:

@@ -74,8 +74,9 @@ urlencoding = "2"
 # Configuration file parsing
 a3s-acl = "0.2"
 
-# Typed Browser rendering supplied by A3S Use. Search never invokes its CLI or MCP surface.
-a3s-use-browser = { version = "0.1.0", optional = true }
+# Typed rendering supplied by the independent A3S Browser repository.
+# Search never invokes the A3S Use facade, Browser driver, or MCP surface.
+a3s-use-browser = { version = "=0.3.0", git = "https://github.com/A3S-Lab/Browser", rev = "b0461b6a6d95484d92f65b2bf86fea14dea39c69", optional = true }
 
 # Self-update
 a3s-updater = "0.2"
@@ -93,7 +94,7 @@ tempfile = "3"
 # =============================================================================
 # Release Profile — optimized for binary size
 # =============================================================================
-# a3s-search is a CLI/library with optional A3S Use Browser rendering.
+# a3s-search is a CLI/library with optional A3S Browser rendering.
 # I/O-bound workload — optimize for size over speed.
 #
 [profile.release]

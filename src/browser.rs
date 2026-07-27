@@ -1,4 +1,4 @@
-//! Search-specific adapter for the typed A3S Use Browser renderer.
+//! Search-specific adapter for the typed A3S Browser renderer.
 //!
 //! Browser process ownership, provider installation, tab limits, rendering, and
 //! cleanup live in `a3s-use-browser`. Search owns only URL-to-HTML adaptation,
