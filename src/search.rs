@@ -8,8 +8,9 @@ use tokio::time::{timeout, Duration};
 use tracing::{debug, warn};
 
 use crate::{
-    Aggregator, Engine, EngineFailure, HealthConfig, HealthMonitor, Metrics, Result, SearchError,
-    SearchQuery, SearchResults,
+    Aggregator, CircuitBreaker, CircuitPermit, Engine, EngineFailure, EngineOutcome,
+    EngineOutcomeKind, HealthConfig, HealthMonitor, Metrics, Result, SearchError, SearchQuery,
+    SearchResults,
 };
 
 /// Meta search engine that orchestrates searches across multiple engines.
@@ -19,6 +20,7 @@ pub struct Search {
     timeout_override: Option<Duration>,
     health: Mutex<HealthMonitor>,
     metrics: Option<Arc<Metrics>>,
+    circuit_breaker: Option<CircuitBreaker>,
 }
 
 impl Search {
@@ -30,6 +32,7 @@ impl Search {
             timeout_override: None,
             health: Mutex::new(HealthMonitor::default()),
             metrics: None,
+            circuit_breaker: None,
         }
     }
 
@@ -41,6 +44,7 @@ impl Search {
             timeout_override: None,
             health: Mutex::new(HealthMonitor::new(config)),
             metrics: None,
+            circuit_breaker: None,
         }
     }
 
@@ -48,6 +52,18 @@ impl Search {
     pub fn with_metrics(mut self, metrics: Arc<Metrics>) -> Self {
         self.metrics = Some(metrics);
         self
+    }
+
+    /// Attaches shared circuit state that may be reused by other `Search`
+    /// instances and later requests.
+    pub fn with_circuit_breaker(mut self, circuit_breaker: CircuitBreaker) -> Self {
+        self.circuit_breaker = Some(circuit_breaker);
+        self
+    }
+
+    /// Sets or clears shared circuit state.
+    pub fn set_circuit_breaker(&mut self, circuit_breaker: Option<CircuitBreaker>) {
+        self.circuit_breaker = circuit_breaker;
     }
 
     /// Sets or clears the metrics registry used by this search instance.
@@ -91,13 +107,14 @@ impl Search {
         let start = Instant::now();
         let query = Arc::new(query);
 
-        let engines_to_use = self.select_engines(&query);
+        let (engines_to_use, skipped_outcomes, skipped_failures) = self.select_engines(&query);
         debug!("Searching {} engines", engines_to_use.len());
 
         let futures: Vec<_> = engines_to_use
-            .iter()
-            .map(|engine| {
-                let engine = Arc::clone(engine);
+            .into_iter()
+            .map(|attempt| {
+                let engine = attempt.engine;
+                let permit = attempt.permit;
                 let query = Arc::clone(&query);
                 let metrics = self.metrics.as_ref().map(Arc::clone);
                 let timeout_duration = self
@@ -106,6 +123,7 @@ impl Search {
 
                 async move {
                     let name = engine.name().to_string();
+                    let shortcut = engine.shortcut().to_string();
                     let engine_start = Instant::now();
                     match timeout(timeout_duration, engine.search_output(&query)).await {
                         Ok(Ok(output)) => {
@@ -113,7 +131,33 @@ impl Search {
                                 metrics.record_success(engine_start.elapsed());
                             }
                             debug!("Engine {} returned {} results", name, output.results.len());
-                            Ok((name, output))
+                            let empty = output.results.is_empty()
+                                && output.suggestions.is_empty()
+                                && output.answers.is_empty()
+                                && output.images.is_empty();
+                            if let Some(permit) = permit {
+                                if empty {
+                                    permit.record_empty();
+                                } else {
+                                    permit.record_success();
+                                }
+                            }
+                            let mut outcome = EngineOutcome::completed(
+                                name.clone(),
+                                shortcut,
+                                if empty {
+                                    EngineOutcomeKind::Empty
+                                } else {
+                                    EngineOutcomeKind::Success
+                                },
+                                output.results.len(),
+                            )
+                            .with_duration(engine_start.elapsed());
+                            outcome.provider = output
+                                .reports
+                                .iter()
+                                .find_map(|report| report.provider.clone());
+                            Ok((name, output, outcome))
                         }
                         Ok(Err(e)) => {
                             if let Some(metrics) = metrics.as_ref() {
@@ -126,18 +170,37 @@ impl Search {
                             if let SearchError::Provider(provider_error) = &e {
                                 failure = failure.with_provider(provider_error.provider());
                             }
-                            Err((failure, affects_health))
+                            if let Some(seconds) = e.retry_after_seconds() {
+                                failure = failure.with_retry_after(seconds);
+                            }
+                            if let Some(permit) = permit {
+                                permit.record_failure(&failure);
+                            }
+                            let outcome = EngineOutcome::failed(
+                                shortcut,
+                                failure.clone(),
+                                EngineOutcomeKind::Failure,
+                            )
+                            .with_duration(engine_start.elapsed());
+                            Err((failure, affects_health, outcome))
                         }
                         Err(_) => {
                             if let Some(metrics) = metrics.as_ref() {
                                 metrics.record_failure(SearchError::Timeout.kind(), true);
                             }
                             warn!("Engine {} timed out", name);
-                            Err((
-                                EngineFailure::new(name, "timeout", "timed out")
-                                    .with_transient(true),
-                                true,
-                            ))
+                            let failure = EngineFailure::new(name, "timeout", "timed out")
+                                .with_transient(true);
+                            if let Some(permit) = permit {
+                                permit.record_failure(&failure);
+                            }
+                            let outcome = EngineOutcome::failed(
+                                shortcut,
+                                failure.clone(),
+                                EngineOutcomeKind::Timeout,
+                            )
+                            .with_duration(engine_start.elapsed());
+                            Err((failure, true, outcome))
                         }
                     }
                 }
@@ -146,13 +209,21 @@ impl Search {
 
         let all_results: Vec<_> = join_all(futures).await;
 
-        let mut engine_errors = Vec::new();
+        let mut engine_errors = skipped_failures
+            .into_iter()
+            .map(|failure| (failure, false))
+            .collect::<Vec<_>>();
+        let mut outcomes = skipped_outcomes;
         let outputs: Vec<_> = all_results
             .into_iter()
             .filter_map(|r| match r {
-                Ok(pair) => Some(pair),
-                Err(err) => {
-                    engine_errors.push(err);
+                Ok((name, output, outcome)) => {
+                    outcomes.push(outcome);
+                    Some((name, output))
+                }
+                Err((failure, affects_health, outcome)) => {
+                    outcomes.push(outcome);
+                    engine_errors.push((failure, affects_health));
                     None
                 }
             })
@@ -183,7 +254,9 @@ impl Search {
             reports.extend(output.reports);
         }
 
-        let mut search_results = self.aggregator.aggregate(result_sets);
+        let mut search_results = self
+            .aggregator
+            .aggregate_for_query(&query.query, result_sets);
         for suggestion in suggestions {
             search_results.add_suggestion(suggestion);
         }
@@ -196,6 +269,9 @@ impl Search {
         for report in reports {
             search_results.add_report(report);
         }
+        for outcome in outcomes {
+            search_results.add_outcome(outcome);
+        }
         for (failure, _) in engine_errors {
             search_results.add_failure(failure);
         }
@@ -205,37 +281,96 @@ impl Search {
     }
 
     /// Selects engines based on query parameters, filtering out suspended engines.
-    fn select_engines(&self, query: &SearchQuery) -> Vec<Arc<dyn Engine>> {
+    fn select_engines(
+        &self,
+        query: &SearchQuery,
+    ) -> (Vec<EngineAttempt>, Vec<EngineOutcome>, Vec<EngineFailure>) {
         let health = self.health.lock().ok();
+        let mut attempts = Vec::new();
+        let mut outcomes = Vec::new();
+        let mut failures = Vec::new();
 
-        self.engines
-            .iter()
-            .filter(|engine| {
-                if !engine.is_enabled() {
-                    return false;
-                }
-
-                // Skip suspended engines
-                if let Some(ref h) = health {
-                    if h.is_suspended(engine.name()) {
-                        debug!("Engine {} is suspended, skipping", engine.name());
-                        return false;
-                    }
-                }
-
-                if !query.engines.is_empty() {
-                    return query.engines.contains(&engine.shortcut().to_string());
-                }
-
-                let config = engine.config();
-                query
+        for engine in &self.engines {
+            if !engine.is_enabled() {
+                continue;
+            }
+            if !query.engines.is_empty() && !query.engines.contains(&engine.shortcut().to_string())
+            {
+                continue;
+            }
+            if query.engines.is_empty()
+                && !query
                     .categories
                     .iter()
-                    .any(|cat| config.categories.contains(cat))
-            })
-            .cloned()
-            .collect()
+                    .any(|category| engine.config().categories.contains(category))
+            {
+                continue;
+            }
+
+            let shortcut = engine.shortcut().to_string();
+            if health
+                .as_ref()
+                .is_some_and(|health| health.is_suspended(engine.name()))
+            {
+                debug!("Engine {} is suspended, skipping", engine.name());
+                let failure = EngineFailure::new(
+                    engine.name(),
+                    "engine_suspended",
+                    "local engine health monitor is open",
+                )
+                .with_transient(true);
+                outcomes.push(EngineOutcome::failed(
+                    shortcut,
+                    failure.clone(),
+                    EngineOutcomeKind::CircuitOpen,
+                ));
+                failures.push(failure);
+                continue;
+            }
+
+            let permit = match self.circuit_breaker.as_ref() {
+                None => None,
+                Some(circuit_breaker) => match circuit_breaker.acquire(&shortcut) {
+                    Ok(permit) => Some(permit),
+                    Err(open) => {
+                        let retry_after_seconds = duration_ceiling_seconds(open.retry_after);
+                        let mut failure = EngineFailure::new(
+                            engine.name(),
+                            "circuit_open",
+                            "shared engine circuit is open",
+                        )
+                        .with_transient(true);
+                        if retry_after_seconds > 0 {
+                            failure = failure.with_retry_after(retry_after_seconds);
+                        }
+                        outcomes.push(EngineOutcome::failed(
+                            shortcut,
+                            failure.clone(),
+                            EngineOutcomeKind::CircuitOpen,
+                        ));
+                        failures.push(failure);
+                        continue;
+                    }
+                },
+            };
+            attempts.push(EngineAttempt {
+                engine: Arc::clone(engine),
+                permit,
+            });
+        }
+
+        (attempts, outcomes, failures)
     }
+}
+
+struct EngineAttempt {
+    engine: Arc<dyn Engine>,
+    permit: Option<CircuitPermit>,
+}
+
+fn duration_ceiling_seconds(duration: Duration) -> u64 {
+    let millis = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
+    millis.saturating_add(999) / 1_000
 }
 
 impl Default for Search {
@@ -252,6 +387,7 @@ mod tests {
         SearchImage, SearchReport, SearchResult,
     };
     use async_trait::async_trait;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct MockEngine {
         config: EngineConfig,
@@ -381,6 +517,42 @@ mod tests {
         }
     }
 
+    struct CountingQuotaEngine {
+        config: EngineConfig,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl CountingQuotaEngine {
+        fn new(name: &str, shortcut: &str, calls: Arc<AtomicUsize>) -> Self {
+            Self {
+                config: EngineConfig {
+                    name: name.to_string(),
+                    shortcut: shortcut.to_string(),
+                    categories: vec![EngineCategory::General],
+                    ..Default::default()
+                },
+                calls,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Engine for CountingQuotaEngine {
+        fn config(&self) -> &EngineConfig {
+            &self.config
+        }
+
+        async fn search(&self, _query: &SearchQuery) -> Result<Vec<SearchResult>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(ProviderError::new(
+                "quota-provider",
+                ProviderErrorKind::Quota,
+                "quota exhausted",
+            )
+            .into())
+        }
+    }
+
     struct SlowEngine {
         config: EngineConfig,
         delay: Duration,
@@ -472,6 +644,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_search_records_conventional_engine_empty_outcome() {
+        let mut search = Search::new().with_circuit_breaker(CircuitBreaker::default());
+        search.add_engine(MockEngine::new("empty-http-engine", vec![]));
+
+        let results = search
+            .search(SearchQuery::new("generic empty result query"))
+            .await
+            .unwrap();
+
+        assert!(results.items().is_empty());
+        assert!(results.failures().is_empty());
+        assert_eq!(results.outcomes().len(), 1);
+        assert_eq!(results.outcomes()[0].kind, EngineOutcomeKind::Empty);
+        assert_eq!(results.outcomes()[0].result_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_distinct_search_instances_share_open_circuit_without_second_call() {
+        let breaker = CircuitBreaker::new(crate::CircuitBreakerConfig {
+            terminal_open_duration: Duration::from_secs(3_600),
+            ..Default::default()
+        });
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let mut first = Search::new().with_circuit_breaker(breaker.clone());
+        first.add_engine(CountingQuotaEngine::new(
+            "Quota API",
+            "quota-api",
+            Arc::clone(&calls),
+        ));
+        let first_results = first
+            .search(SearchQuery::new("first generic query"))
+            .await
+            .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(first_results.outcomes()[0].kind, EngineOutcomeKind::Failure);
+        assert_eq!(first_results.failures()[0].kind, "provider_quota");
+
+        let mut second = Search::new().with_circuit_breaker(breaker);
+        second.add_engine(CountingQuotaEngine::new(
+            "Quota API",
+            "quota-api",
+            Arc::clone(&calls),
+        ));
+        let second_results = second
+            .search(SearchQuery::new("unrelated second query"))
+            .await
+            .unwrap();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(second_results.outcomes().len(), 1);
+        assert_eq!(
+            second_results.outcomes()[0].kind,
+            EngineOutcomeKind::CircuitOpen
+        );
+        assert_eq!(second_results.failures()[0].kind, "circuit_open");
+        assert!(second_results.failures()[0]
+            .retry_after_seconds
+            .is_some_and(|seconds| seconds > 0));
+
+        let json = serde_json::to_value(&second_results).unwrap();
+        assert_eq!(json["outcomes"][0]["kind"], "circuit_open");
+        assert_eq!(json["failures"][0]["kind"], "circuit_open");
+        assert!(json["failures"][0]["retry_after_seconds"]
+            .as_u64()
+            .is_some_and(|seconds| seconds > 0));
+    }
+
+    #[tokio::test]
     async fn test_search_set_timeout() {
         let mut search = Search::new();
         search.set_timeout(Duration::from_millis(10));
@@ -485,6 +726,12 @@ mod tests {
         assert!(results.errors()[0].1.contains("timed out"));
         assert_eq!(results.failures()[0].kind, "timeout");
         assert!(results.failures()[0].transient);
+        assert_eq!(results.outcomes().len(), 1);
+        assert_eq!(results.outcomes()[0].kind, EngineOutcomeKind::Timeout);
+        assert!(results.outcomes()[0].duration_ms >= 1);
+        let json = serde_json::to_value(&results).unwrap();
+        assert_eq!(json["outcomes"][0]["kind"], "timeout");
+        assert!(json["outcomes"][0]["duration_ms"].as_u64().unwrap() >= 1);
     }
 
     #[tokio::test]
@@ -849,7 +1096,12 @@ mod tests {
         // Only stable engine should have been used
         assert_eq!(results.items().len(), 1);
         assert_eq!(results.items()[0].url, "https://stable.com");
-        assert!(results.errors().is_empty());
+        assert_eq!(results.failures().len(), 1);
+        assert_eq!(results.failures()[0].kind, "engine_suspended");
+        assert_eq!(results.outcomes().len(), 2);
+        assert!(results.outcomes().iter().any(|outcome| {
+            outcome.kind == EngineOutcomeKind::CircuitOpen && outcome.shortcut == "flaky"
+        }));
 
         let health = search.health.lock().unwrap();
         assert!(health.is_suspended("flaky"));

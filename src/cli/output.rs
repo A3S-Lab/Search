@@ -76,6 +76,8 @@ pub(crate) fn json_output(query: &str, results: &SearchResults, limit: usize) ->
         "images": results.images(),
         "reports": results.reports(),
         "errors": results.errors(),
+        "failures": results.failures(),
+        "outcomes": results.outcomes(),
         "count": output.len(),
         "total_count": results.count,
         "duration_ms": results.duration_ms,

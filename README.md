@@ -14,6 +14,8 @@ request reports.
 - Anonymous AnySearch and keyless Tavily access, with optional bearer authentication
 - Provider-neutral `SearchProvider` protocol for downstream integrations
 - Parallel execution with isolated timeouts and partial-failure results
+- Shared closed/open/half-open circuit breaking with bounded `Retry-After`
+- Caller-driven, quality-gated API → HTTP/RSS → headless cascades
 - Deterministic URL deduplication, rich-field merging, duplicate evidence
   suppression, and consensus ranking
 - Typed ACL configuration with redacted credential sources
@@ -278,7 +280,9 @@ Use `--format json` for machine-readable evidence. The top-level object contains
 | `suggestions` | Provider or engine query suggestions |
 | `images` | Query-level images |
 | `reports` | Provider request IDs, total counts, timings, usage, and bounded metadata |
-| `errors` | Per-engine failure entries |
+| `errors` | Legacy per-engine failure entries |
+| `failures` | Typed failures with stable kinds, transient status, and retry context |
+| `outcomes` | Success, empty, failure, timeout, or circuit-open state for each selected engine |
 | `count` | Number of displayed results |
 | `total_count` | Number of aggregated results before the display limit |
 | `duration_ms` | End-to-end orchestration duration |
@@ -304,9 +308,52 @@ are bounded, non-finite or negative usage is discarded, and provider metadata
 is recursively bounded before it reaches `SearchReport`.
 
 One failed source does not discard successful sources. The CLI writes warnings
-to stderr and keeps failures in `errors`; even an all-source failure returns an
-empty result set with the individual errors. Treat those failures as part of
-the evidence rather than silently ignoring them.
+to stderr and keeps failures in both the compatibility `errors` view and typed
+`failures`/`outcomes`; even an all-source failure returns an empty result set
+with the individual errors. Each outcome includes the engine identity, result
+count, and attempt duration. Treat those failures as part of the evidence
+rather than silently ignoring them.
+
+## Reliability and quality-gated fallback
+
+`CircuitBreaker` is an optional shared registry. Clone one registry into every
+`Search` instance that belongs to the same isolation scope so unavailable
+engines are not retried by each new request:
+
+```rust,no_run
+use a3s_search::{CircuitBreaker, Search};
+
+let circuit = CircuitBreaker::default();
+let first = Search::new().with_circuit_breaker(circuit.clone());
+let second = Search::new().with_circuit_breaker(circuit);
+```
+
+Scope a registry to compatible credentials, endpoint configuration, and
+network routing. Do not share terminal authentication or quota state between
+unrelated tenants. Recreate the registry when those inputs change.
+
+The circuit uses closed, open, and half-open states. Quota, authentication,
+permission, and rate-limit failures open immediately; transient failures and
+structurally empty responses use configurable consecutive thresholds. A
+provider `Retry-After` value controls the bounded open interval. When the
+interval expires, exactly one concurrent request receives a probe permit.
+Request-scoped invalid-query failures neither claim recovery nor poison later
+queries.
+
+`SearchCascade` provides a lazy tier gate rather than eagerly running every
+fallback. Callers execute a native API tier first, merge it with `push_tier`,
+and run HTTP/RSS or headless tiers only while `needs_next_tier()` is true. The
+quality floor is caller-configurable and uses only generic signals: usable
+result count, normalized host diversity, contributing engines, independent
+engine consensus, per-result Unicode query/text alignment, and mean alignment.
+The default floor does not force consensus; research callers can require it
+without embedding publisher or topic rules. The mechanism contains no host,
+named-entity, or language exceptions.
+
+All executed tiers merge through `SearchResults::merge`, which applies the
+same URL normalization, provenance merge, and deterministic ranking path.
+`SearchCascade` deliberately does not retry or create browsers: the caller owns
+the total deadline, retry budget, tier composition, and lazy browser lifecycle.
 
 ## Library usage
 
@@ -441,17 +488,20 @@ The layers have separate responsibilities:
   responses, and sanitized provider failures.
 - `ProviderEngine` adapts any provider into the stable `Engine` orchestration
   contract and applies the provider-neutral rich-output normalization boundary.
-- `Search` owns parallel execution, timeouts, health, and partial failures.
+- `Search` owns parallel execution, timeouts, optional shared circuit state,
+  typed outcomes, and partial failures.
 - `Aggregator` owns URL normalization, merging, provenance, and ranking.
 - Provider modules own wire protocols and are split into configuration,
   request, response, and error concerns.
 - `ProviderHttpClient` enforces HTTPS, disables redirects, limits decompressed
   response size, applies timeouts, and never exposes response bodies in errors.
 
-Client-side provider failures such as authentication, permission, quota, and
-invalid request errors remain visible in `errors` but do not trip the engine
-health circuit breaker. Transport, timeout, invalid-response, rate-limit, and
-service failures still contribute to suspension.
+The legacy per-instance health monitor ignores client-side provider failures.
+When a shared `CircuitBreaker` is attached, quota, authentication, and
+permission failures open immediately because another request cannot repair
+them; provider invalid-request and query-validation failures remain
+request-scoped. Transport, timeout, invalid-response, rate-limit, parse, and
+service failures contribute to the configured circuit policy.
 
 This boundary lets a new provider reuse orchestration and aggregation without
 adding provider-specific branches to the search core.
@@ -606,6 +656,8 @@ impl Search {
     pub fn new() -> Self;
     pub fn with_health_config(config: HealthConfig) -> Self;
     pub fn with_metrics(self, metrics: Arc<Metrics>) -> Self;
+    pub fn with_circuit_breaker(self, circuit_breaker: CircuitBreaker) -> Self;
+    pub fn set_circuit_breaker(&mut self, circuit_breaker: Option<CircuitBreaker>);
     pub fn set_metrics(&mut self, metrics: Option<Arc<Metrics>>);
     pub fn metrics(&self) -> Option<Arc<Metrics>>;
     pub fn add_engine<E: Engine + 'static>(&mut self, engine: E);
@@ -688,14 +740,17 @@ pub struct SearchResult {
     pub favicon: Option<String>,
     pub images: Vec<SearchImage>,
     pub full_text: Option<String>,
+    pub query_match_score: Option<f64>,
 }
 ```
 
 `SearchResults` exposes `items`, `items_mut`, `suggestions`, `answers`,
-`images`, `errors`, and `reports`; `count` and `duration_ms` are public summary
-fields. `SearchReport` contains engine/provider identity, request ID, total
-matches, provider timing, optional `SearchUsage`, and bounded provider
-metadata.
+`images`, `errors`, `failures`, `reports`, and `outcomes`, plus canonical
+cross-tier `merge`; `count` and `duration_ms` are public summary fields.
+`EngineOutcome` contains engine/provider identity, a typed terminal state,
+result count, duration, and an optional structured failure. `SearchReport`
+contains engine/provider identity, request ID, total matches, provider timing,
+optional `SearchUsage`, and bounded provider metadata.
 
 ### Fetching and browser rendering
 
@@ -722,7 +777,9 @@ managed variants explicitly permit A3S Use to install the selected browser.
 
 ### Health, proxy, and metrics types
 
-`HealthConfig` exposes `max_failures` and `suspend_duration`.
+`HealthConfig` exposes the compatibility per-instance failure threshold and
+suspension duration. `CircuitBreakerConfig` controls shared failure and empty
+thresholds plus transient, terminal, and maximum open durations.
 `ProxyConfig` contains host, port, protocol, and optional authentication;
 `ProxyPool` supports static or dynamic providers and round-robin or random
 selection. `Metrics` supports recording, snapshots, request counts, success

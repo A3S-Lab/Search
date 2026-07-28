@@ -2,14 +2,8 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::{SearchResult, SearchResults};
-
-#[derive(Debug, Clone, Copy)]
-struct RankSignal {
-    position: u32,
-    relevance: Option<f64>,
-    contribution: f64,
-}
+use crate::result::RankSignal;
+use crate::{query_match_score, SearchResult, SearchResults};
 
 #[derive(Debug)]
 struct Candidate {
@@ -48,6 +42,24 @@ impl Aggregator {
     /// 3. Score calculation
     /// 4. Sorting by score
     pub fn aggregate(&self, engine_results: Vec<(String, Vec<SearchResult>)>) -> SearchResults {
+        self.aggregate_internal(None, engine_results)
+    }
+
+    /// Aggregates results and applies language-neutral query alignment as a
+    /// bounded ranking signal.
+    pub fn aggregate_for_query(
+        &self,
+        query: &str,
+        engine_results: Vec<(String, Vec<SearchResult>)>,
+    ) -> SearchResults {
+        self.aggregate_internal(Some(query), engine_results)
+    }
+
+    fn aggregate_internal(
+        &self,
+        query: Option<&str>,
+        engine_results: Vec<(String, Vec<SearchResult>)>,
+    ) -> SearchResults {
         let mut url_map: HashMap<String, Candidate> = HashMap::new();
 
         for (engine_name, results) in engine_results {
@@ -55,8 +67,11 @@ impl Aggregator {
                 let normalized = result.normalized_url();
                 let position = (position + 1) as u32;
                 let relevance = normalized_relevance(result.relevance_score);
-                let contribution = self.engine_weight(&engine_name) * relevance.unwrap_or(1.0)
-                    / f64::from(position);
+                let query_match = query.map(|query| query_match_score(query, &result));
+                let alignment_weight = query_match.map(|score| 0.2 + 0.8 * score).unwrap_or(1.0);
+                let contribution =
+                    self.engine_weight(&engine_name) * relevance.unwrap_or(1.0) * alignment_weight
+                        / f64::from(position);
                 let signal = RankSignal {
                     position,
                     relevance,
@@ -66,6 +81,8 @@ impl Aggregator {
                 result.engines.clear();
                 result.positions.clear();
                 result.score = 0.0;
+                result.query_match_score = query_match;
+                result.rank_signals.clear();
 
                 if let Some(candidate) = url_map.get_mut(&normalized) {
                     merge_results(&mut candidate.result, result);
@@ -89,36 +106,7 @@ impl Aggregator {
             }
         }
 
-        let mut results: Vec<SearchResult> = url_map
-            .into_values()
-            .map(|mut candidate| {
-                candidate.result.engines = candidate.signals.keys().cloned().collect();
-                candidate.result.positions = candidate
-                    .signals
-                    .values()
-                    .map(|signal| signal.position)
-                    .collect();
-                candidate.result.relevance_score = candidate
-                    .signals
-                    .values()
-                    .filter_map(|signal| signal.relevance)
-                    .max_by(f64::total_cmp);
-                candidate.result.score = candidate
-                    .signals
-                    .values()
-                    .map(|signal| signal.contribution)
-                    .fold(0.0, saturating_score_add);
-                candidate.result
-            })
-            .collect();
-
-        results.sort_by(|a, b| {
-            b.score
-                .total_cmp(&a.score)
-                .then_with(|| b.engines.len().cmp(&a.engines.len()))
-                .then_with(|| a.normalized_url().cmp(&b.normalized_url()))
-                .then_with(|| a.title.cmp(&b.title))
-        });
+        let results = finalize_candidates(url_map);
 
         let mut search_results = SearchResults::new();
         for result in results {
@@ -130,6 +118,114 @@ impl Aggregator {
     fn engine_weight(&self, engine: &str) -> f64 {
         self.engine_weights.get(engine).copied().unwrap_or(1.0)
     }
+}
+
+pub(crate) fn merge_ranked_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
+    let mut url_map: HashMap<String, Candidate> = HashMap::new();
+
+    for mut result in results {
+        let normalized = result.normalized_url();
+        let signals = if result.rank_signals.is_empty() {
+            inferred_rank_signals(&result, &normalized)
+        } else {
+            std::mem::take(&mut result.rank_signals)
+        };
+
+        if let Some(candidate) = url_map.get_mut(&normalized) {
+            merge_results(&mut candidate.result, result);
+            merge_rank_signals(&mut candidate.signals, signals);
+        } else {
+            url_map.insert(normalized, Candidate { result, signals });
+        }
+    }
+
+    finalize_candidates(url_map)
+}
+
+fn inferred_rank_signals(result: &SearchResult, normalized: &str) -> BTreeMap<String, RankSignal> {
+    let mut engines = result.engines.iter().cloned().collect::<Vec<_>>();
+    engines.sort_unstable();
+    if engines.is_empty() {
+        engines.push(format!("unattributed:{normalized}"));
+    }
+    let contribution = result.score / engines.len() as f64;
+    engines
+        .into_iter()
+        .enumerate()
+        .map(|(index, engine)| {
+            let position = result.positions.get(index).copied().unwrap_or(1);
+            (
+                engine,
+                RankSignal {
+                    position,
+                    relevance: normalized_relevance(result.relevance_score),
+                    contribution,
+                },
+            )
+        })
+        .collect()
+}
+
+fn merge_rank_signals(
+    existing: &mut BTreeMap<String, RankSignal>,
+    incoming: BTreeMap<String, RankSignal>,
+) {
+    for (engine, signal) in incoming {
+        existing
+            .entry(engine)
+            .and_modify(|current| {
+                if signal.contribution > current.contribution
+                    || (signal.contribution == current.contribution
+                        && signal.position < current.position)
+                {
+                    *current = signal;
+                }
+            })
+            .or_insert(signal);
+    }
+}
+
+fn finalize_candidates(url_map: HashMap<String, Candidate>) -> Vec<SearchResult> {
+    let mut results = url_map
+        .into_values()
+        .map(|mut candidate| {
+            candidate.result.engines = candidate.signals.keys().cloned().collect();
+            candidate.result.positions = candidate
+                .signals
+                .values()
+                .map(|signal| signal.position)
+                .collect();
+            candidate.result.relevance_score = candidate
+                .signals
+                .values()
+                .filter_map(|signal| signal.relevance)
+                .max_by(f64::total_cmp);
+            candidate.result.score = candidate
+                .signals
+                .values()
+                .map(|signal| signal.contribution)
+                .fold(0.0, saturating_score_add);
+            candidate.result.rank_signals = candidate.signals;
+            candidate.result
+        })
+        .collect::<Vec<_>>();
+    sort_ranked_results(&mut results);
+    results
+}
+
+fn sort_ranked_results(results: &mut [SearchResult]) {
+    results.sort_by(|a, b| {
+        b.score
+            .total_cmp(&a.score)
+            .then_with(|| b.engines.len().cmp(&a.engines.len()))
+            .then_with(|| {
+                b.query_match_score
+                    .unwrap_or_default()
+                    .total_cmp(&a.query_match_score.unwrap_or_default())
+            })
+            .then_with(|| a.normalized_url().cmp(&b.normalized_url()))
+            .then_with(|| a.title.cmp(&b.title))
+    });
 }
 
 fn normalized_relevance(relevance: Option<f64>) -> Option<f64> {
@@ -172,6 +268,12 @@ fn merge_results(existing: &mut SearchResult, new: SearchResult) {
         normalized_relevance(existing.relevance_score),
         normalized_relevance(new.relevance_score),
     ) {
+        (Some(existing), Some(new)) => Some(existing.max(new)),
+        (Some(existing), None) => Some(existing),
+        (None, Some(new)) => Some(new),
+        (None, None) => None,
+    };
+    existing.query_match_score = match (existing.query_match_score, new.query_match_score) {
         (Some(existing), Some(new)) => Some(existing.max(new)),
         (Some(existing), None) => Some(existing),
         (None, Some(new)) => Some(new),

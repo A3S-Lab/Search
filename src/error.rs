@@ -220,6 +220,16 @@ pub enum SearchError {
     #[error("HTTP request failed: {0}")]
     Http(#[from] reqwest::Error),
 
+    /// An HTTP endpoint returned a non-success status without exposing its
+    /// response body.
+    #[error("HTTP request failed with status {status}")]
+    HttpStatus {
+        /// Numeric HTTP status.
+        status: u16,
+        /// Bounded Retry-After delay, when supplied.
+        retry_after_seconds: Option<u64>,
+    },
+
     /// Failed to parse response.
     #[error("Failed to parse response: {0}")]
     Parse(String),
@@ -285,6 +295,17 @@ impl SearchError {
             Self::Http(e) if e.is_connect() => "http_connect",
             Self::Http(e) if e.is_decode() => "http_decode",
             Self::Http(_) => "http",
+            Self::HttpStatus { status: 429, .. } => "rate_limited",
+            Self::HttpStatus {
+                status: 401 | 403, ..
+            } => "permission_denied",
+            Self::HttpStatus { status: 404, .. } => "not_found",
+            Self::HttpStatus { status, .. }
+                if matches!(*status, 408 | 425 | 500 | 502 | 503 | 504) =>
+            {
+                "http_unavailable"
+            }
+            Self::HttpStatus { .. } => "http_status",
             Self::Parse(_) => "parse",
             Self::EngineSuspended(_, _) => "engine_suspended",
             Self::Timeout => "timeout",
@@ -315,6 +336,9 @@ impl SearchError {
     pub fn is_transient(&self) -> bool {
         match self {
             Self::Http(e) => e.is_timeout() || e.is_connect() || e.is_decode(),
+            Self::HttpStatus { status, .. } => {
+                *status == 429 || matches!(*status, 408 | 425 | 500 | 502 | 503 | 504)
+            }
             Self::Browser(msg) => {
                 let msg = msg.to_lowercase();
                 msg.contains("timeout")
@@ -341,7 +365,13 @@ impl SearchError {
     pub fn is_client_error(&self) -> bool {
         matches!(
             self,
-            Self::NotFound(_) | Self::PermissionDenied(_) | Self::InvalidQuery(_)
+            Self::NotFound(_)
+                | Self::PermissionDenied(_)
+                | Self::InvalidQuery(_)
+                | Self::HttpStatus {
+                    status: 400 | 401 | 403 | 404,
+                    ..
+                }
         ) || matches!(
             self,
             Self::Provider(error)
@@ -364,6 +394,13 @@ impl SearchError {
             Self::RateLimited(_) => 80,
             Self::Http(e) if e.is_timeout() => 85,
             Self::Http(e) if e.is_connect() => 75,
+            Self::HttpStatus { status: 429, .. } => 80,
+            Self::HttpStatus { status, .. }
+                if matches!(*status, 408 | 425 | 500 | 502 | 503 | 504) =>
+            {
+                70
+            }
+            Self::HttpStatus { .. } => 10,
             Self::Browser(msg) if msg.contains("timeout") => 80,
             Self::Browser(msg) if msg.contains("connection reset") => 70,
             Self::Provider(error) => match error.kind() {
@@ -391,6 +428,18 @@ impl SearchError {
             Self::UrlParse(_) => 20,
             Self::Proxy(_) => 30,
             Self::Other(_) => 25,
+        }
+    }
+
+    /// Returns bounded provider or HTTP retry context, when available.
+    pub const fn retry_after_seconds(&self) -> Option<u64> {
+        match self {
+            Self::Provider(error) => error.retry_after_seconds(),
+            Self::HttpStatus {
+                retry_after_seconds,
+                ..
+            } => *retry_after_seconds,
+            _ => None,
         }
     }
 }

@@ -56,6 +56,13 @@ pub enum ResultType {
     Suggestion,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RankSignal {
+    pub(crate) position: u32,
+    pub(crate) relevance: Option<f64>,
+    pub(crate) contribution: f64,
+}
+
 /// A single search result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -99,6 +106,13 @@ pub struct SearchResult {
     /// extract the page body.
     #[serde(default)]
     pub full_text: Option<String>,
+    /// Language-neutral overlap between the query and this result's visible
+    /// title, URL, and snippet. The value is in the inclusive `0.0..=1.0`
+    /// range and is absent for results that were not ranked against a query.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_match_score: Option<f64>,
+    #[serde(skip)]
+    pub(crate) rank_signals: BTreeMap<String, RankSignal>,
 }
 
 impl SearchResult {
@@ -122,6 +136,8 @@ impl SearchResult {
             favicon: None,
             images: Vec::new(),
             full_text: None,
+            query_match_score: None,
+            rank_signals: BTreeMap::new(),
         }
     }
 
@@ -366,6 +382,9 @@ pub struct EngineFailure {
     /// Whether retrying the same engine may succeed without configuration changes.
     #[serde(default)]
     pub transient: bool,
+    /// Provider- or circuit-advertised retry delay, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_after_seconds: Option<u64>,
 }
 
 impl EngineFailure {
@@ -381,6 +400,7 @@ impl EngineFailure {
             kind: kind.into(),
             message: message.into(),
             transient: false,
+            retry_after_seconds: None,
         }
     }
 
@@ -393,6 +413,90 @@ impl EngineFailure {
     /// Marks whether retrying the same engine may succeed.
     pub fn with_transient(mut self, transient: bool) -> Self {
         self.transient = transient;
+        self
+    }
+
+    /// Attaches a bounded retry delay.
+    pub fn with_retry_after(mut self, seconds: u64) -> Self {
+        self.retry_after_seconds = Some(seconds.min(86_400));
+        self
+    }
+}
+
+/// Typed terminal state for one engine execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineOutcomeKind {
+    /// The engine returned usable structured output.
+    Success,
+    /// The engine completed normally but returned no web or rich output.
+    Empty,
+    /// The engine executed and failed.
+    Failure,
+    /// The engine exceeded its orchestration timeout.
+    Timeout,
+    /// The engine was skipped because a circuit or local health gate was open.
+    CircuitOpen,
+}
+
+/// Observable result of one selected engine for one search request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct EngineOutcome {
+    /// Configured display name.
+    pub engine: String,
+    /// Stable engine shortcut used by shared circuit state.
+    pub shortcut: String,
+    /// Native provider identifier, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Terminal execution state.
+    pub kind: EngineOutcomeKind,
+    /// Number of ordinary web/media results returned by this engine.
+    pub result_count: usize,
+    /// End-to-end orchestration time spent on this engine attempt.
+    pub duration_ms: u64,
+    /// Structured failure or circuit-open reason, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<EngineFailure>,
+}
+
+impl EngineOutcome {
+    pub(crate) fn completed(
+        engine: impl Into<String>,
+        shortcut: impl Into<String>,
+        kind: EngineOutcomeKind,
+        result_count: usize,
+    ) -> Self {
+        Self {
+            engine: engine.into(),
+            shortcut: shortcut.into(),
+            provider: None,
+            kind,
+            result_count,
+            duration_ms: 0,
+            failure: None,
+        }
+    }
+
+    pub(crate) fn failed(
+        shortcut: impl Into<String>,
+        failure: EngineFailure,
+        kind: EngineOutcomeKind,
+    ) -> Self {
+        Self {
+            engine: failure.engine.clone(),
+            shortcut: shortcut.into(),
+            provider: failure.provider.clone(),
+            kind,
+            result_count: 0,
+            duration_ms: 0,
+            failure: Some(failure),
+        }
+    }
+
+    pub(crate) fn with_duration(mut self, duration: std::time::Duration) -> Self {
+        self.duration_ms = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
         self
     }
 }
@@ -417,6 +521,9 @@ pub struct SearchResults {
     /// Structured per-engine execution reports.
     #[serde(default)]
     reports: Vec<SearchReport>,
+    /// Typed outcome for every selected or circuit-skipped engine.
+    #[serde(default)]
+    outcomes: Vec<EngineOutcome>,
     /// Number of results.
     pub count: usize,
     /// Search duration in milliseconds.
@@ -511,6 +618,39 @@ impl SearchResults {
     /// Returns structured engine execution reports.
     pub fn reports(&self) -> &[SearchReport] {
         &self.reports
+    }
+
+    /// Records one engine outcome.
+    pub fn add_outcome(&mut self, outcome: EngineOutcome) {
+        self.outcomes.push(outcome);
+    }
+
+    /// Returns typed engine outcomes in deterministic selection order.
+    pub fn outcomes(&self) -> &[EngineOutcome] {
+        &self.outcomes
+    }
+
+    /// Merges another search tier through the canonical ranked-result merger.
+    pub fn merge(&mut self, mut other: SearchResults) {
+        let mut results = std::mem::take(&mut self.results);
+        results.append(&mut other.results);
+        self.results = crate::aggregator::merge_ranked_results(results);
+        self.count = self.results.len();
+
+        for suggestion in other.suggestions {
+            self.add_suggestion(suggestion);
+        }
+        for answer in other.answers {
+            self.add_answer(answer);
+        }
+        for image in other.images {
+            self.add_image(image);
+        }
+        self.errors.append(&mut other.errors);
+        self.failures.append(&mut other.failures);
+        self.reports.append(&mut other.reports);
+        self.outcomes.append(&mut other.outcomes);
+        self.duration_ms = self.duration_ms.saturating_add(other.duration_ms);
     }
 
     /// Sets the search duration.

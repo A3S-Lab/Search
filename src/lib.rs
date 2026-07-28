@@ -98,6 +98,7 @@
 //! ```
 
 mod aggregator;
+mod circuit;
 mod config;
 mod engine;
 mod enrich;
@@ -109,6 +110,7 @@ mod health;
 mod html_engine;
 pub mod metrics;
 pub mod proxy;
+mod quality;
 mod query;
 mod result;
 mod search;
@@ -123,6 +125,9 @@ pub mod browser;
 pub use a3s_use_browser;
 
 pub use aggregator::Aggregator;
+pub use circuit::{
+    CircuitBreaker, CircuitBreakerConfig, CircuitOpen, CircuitPermit, CircuitSnapshot, CircuitState,
+};
 pub use config::{EngineEntry, HealthEntry, ProviderEntry, ProviderSettings, SearchConfig};
 pub use engine::{Engine, EngineCategory, EngineConfig, EngineOutput};
 pub use enrich::enrich_full_text;
@@ -133,9 +138,14 @@ pub use fetcher_http::{HttpFetcher, PooledHttpFetcher};
 pub use health::{HealthConfig, HealthMonitor};
 pub use html_engine::{selector, HtmlEngine, HtmlParser};
 pub use metrics::{Metrics, MetricsSnapshot, TimingGuard};
+pub use quality::{
+    query_match_score, SearchCascade, SearchQuality, SearchQualityFloor, SearchTierDecision,
+    SearchTierReport,
+};
 pub use query::{SafeSearch, SearchQuery, TimeRange};
 pub use result::{
-    EngineFailure, ResultType, SearchImage, SearchReport, SearchResult, SearchResults, SearchUsage,
+    EngineFailure, EngineOutcome, EngineOutcomeKind, ResultType, SearchImage, SearchReport,
+    SearchResult, SearchResults, SearchUsage,
 };
 pub use search::Search;
 
