@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use scraper::Selector;
+use scraper::{Html, Selector};
 
 use crate::fetcher::PageFetcher;
 use crate::{Engine, EngineConfig, Result, SearchError, SearchQuery, SearchResult};
@@ -17,6 +17,58 @@ use crate::{Engine, EngineConfig, Result, SearchError, SearchQuery, SearchResult
 pub fn selector(css: &str) -> Result<Selector> {
     Selector::parse(css)
         .map_err(|e| SearchError::Parse(format!("Invalid CSS selector '{}': {:?}", css, e)))
+}
+
+/// Structural markers used to distinguish a real search response from an
+/// HTTP-success challenge, interstitial, or unrelated page.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SearchResponseSpec {
+    /// Human-readable engine name used in diagnostics.
+    pub engine: &'static str,
+    /// Selectors for result items that the parser understands.
+    pub result_selectors: &'static [&'static str],
+    /// Selectors for explicit empty states or an empty result container.
+    pub empty_selectors: &'static [&'static str],
+    /// Selectors for CAPTCHA, consent, verification, or other interruptions.
+    pub challenge_selectors: &'static [&'static str],
+}
+
+/// Validates the protocol-level structure of an HTML search response.
+///
+/// Challenge markers take precedence because some providers render an
+/// interstitial over a partially populated result document. A response is
+/// accepted only when it contains a known result item or a legitimate empty
+/// state; an unrelated 2xx page is reported as parser drift.
+pub(crate) fn validate_search_response(html: &str, spec: SearchResponseSpec) -> Result<()> {
+    let document = Html::parse_document(html);
+
+    if matches_any(&document, spec.challenge_selectors)? {
+        return Err(SearchError::Challenge(format!(
+            "{} returned a CAPTCHA, challenge, or consent page instead of search results",
+            spec.engine
+        )));
+    }
+
+    if matches_any(&document, spec.result_selectors)?
+        || matches_any(&document, spec.empty_selectors)?
+    {
+        return Ok(());
+    }
+
+    Err(SearchError::InvalidResponse(format!(
+        "{} response did not contain recognized result or empty-state structure",
+        spec.engine
+    )))
+}
+
+fn matches_any(document: &Html, selectors: &[&str]) -> Result<bool> {
+    for css in selectors {
+        let selector = selector(css)?;
+        if document.select(&selector).next().is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Engine-specific logic for HTML-scraping search engines.
@@ -106,5 +158,49 @@ mod tests {
         assert!(sel.is_err());
         let err = sel.unwrap_err().to_string();
         assert!(err.contains("Invalid CSS selector"));
+    }
+
+    const TEST_SPEC: SearchResponseSpec = SearchResponseSpec {
+        engine: "Test Search",
+        result_selectors: &[".result"],
+        empty_selectors: &[".no-results", "#results:empty"],
+        challenge_selectors: &["#challenge-form"],
+    };
+
+    #[test]
+    fn response_validation_accepts_results_and_explicit_empty_state() {
+        assert!(validate_search_response(
+            r#"<main><article class="result"></article></main>"#,
+            TEST_SPEC,
+        )
+        .is_ok());
+        assert!(
+            validate_search_response(r#"<main><p class="no-results"></p></main>"#, TEST_SPEC,)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn response_validation_prioritizes_challenge_over_stale_results() {
+        let error = validate_search_response(
+            r#"<main><article class="result"></article><form id="challenge-form"></form></main>"#,
+            TEST_SPEC,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), "challenge");
+        assert!(error.is_transient());
+    }
+
+    #[test]
+    fn response_validation_rejects_unrecognized_success_page() {
+        let error = validate_search_response(
+            r#"<html><body><main id="homepage"></main></body></html>"#,
+            TEST_SPEC,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), "invalid_response");
+        assert!(!error.is_transient());
     }
 }

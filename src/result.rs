@@ -435,6 +435,8 @@ pub enum EngineOutcomeKind {
     Failure,
     /// The engine exceeded its orchestration timeout.
     Timeout,
+    /// The engine was rejected by a bounded local concurrency policy.
+    Rejected,
     /// The engine was skipped because a circuit or local health gate was open.
     CircuitOpen,
 }

@@ -3,7 +3,9 @@
 //! This engine requires the `headless` feature because Baidu's search results
 //! page relies on JavaScript rendering that plain HTTP requests cannot handle.
 
-use crate::html_engine::{selector, HtmlEngine, HtmlParser};
+use crate::html_engine::{
+    selector, validate_search_response, HtmlEngine, HtmlParser, SearchResponseSpec,
+};
 use crate::{EngineCategory, EngineConfig, Result, SearchQuery, SearchResult};
 use scraper::Html;
 
@@ -43,6 +45,23 @@ impl HtmlParser for BaiduParser {
             url.push_str(&format!("&pn={}", (query.page - 1) * 10));
         }
         url
+    }
+
+    fn validate(&self, html: &str) -> Result<()> {
+        validate_search_response(
+            html,
+            SearchResponseSpec {
+                engine: "Baidu",
+                result_selectors: &["div.result", "div.c-container"],
+                empty_selectors: &["#content_left:empty", "#content_none", ".no-result"],
+                challenge_selectors: &[
+                    "script[src*=\"mkdjump\"]",
+                    "a[href*=\"/captcha/\"]",
+                    "iframe[src*=\"/captcha/\"]",
+                    "form[action*=\"/captcha/\"]",
+                ],
+            },
+        )
     }
 
     fn parse(&self, html: &str) -> Result<Vec<SearchResult>> {
@@ -133,6 +152,26 @@ mod tests {
         let parser = BaiduParser;
         let results = parser.parse("<html><body></body></html>").unwrap();
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_validate_classifies_result_empty_challenge_and_drift_fixtures() {
+        let parser = BaiduParser;
+        let result = r#"<main id="content_left"><div class="c-container"></div></main>"#;
+        let empty = r#"<main id="content_left"></main>"#;
+        let challenge =
+            r#"<script src="https://static.example/static/touch/js/mkdjump_v2.js"></script>"#;
+
+        assert!(parser.validate(result).is_ok());
+        assert!(parser.validate(empty).is_ok());
+        assert_eq!(parser.validate(challenge).unwrap_err().kind(), "challenge");
+        assert_eq!(
+            parser
+                .validate("<html><body><main id=homepage></main></body></html>")
+                .unwrap_err()
+                .kind(),
+            "invalid_response"
+        );
     }
 
     #[test]

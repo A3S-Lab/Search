@@ -33,6 +33,7 @@ impl HttpFetcher {
         Self {
             client: Client::builder()
                 .user_agent(DEFAULT_USER_AGENT)
+                .cookie_store(true)
                 .build()
                 .expect("Failed to create HTTP client"),
             metrics: None,
@@ -46,6 +47,7 @@ impl HttpFetcher {
         let client = Client::builder()
             .user_agent(DEFAULT_USER_AGENT)
             .proxy(proxy)
+            .cookie_store(true)
             .build()
             .map_err(|e| {
                 crate::SearchError::Other(format!("Failed to create HTTP client: {}", e))
@@ -166,6 +168,7 @@ impl PooledHttpFetcher {
 
         let mut builder = Client::builder()
             .user_agent(DEFAULT_USER_AGENT)
+            .cookie_store(true)
             .timeout(self.timeout);
 
         if proxy_config.is_some() {
@@ -414,6 +417,54 @@ mod tests {
         assert_eq!(error.kind(), "rate_limited");
         assert!(error.is_transient());
         assert_eq!(error.retry_after_seconds(), Some(17));
+    }
+
+    #[tokio::test]
+    async fn test_http_fetcher_preserves_set_cookie_during_redirect() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/search", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            for attempt in 0..4 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0u8; 4_096];
+                let bytes_read = stream.read(&mut request).unwrap();
+                let request = String::from_utf8_lossy(&request[..bytes_read]).to_ascii_lowercase();
+
+                if request.contains("cookie: search_session=ready") {
+                    stream
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                        )
+                        .unwrap();
+                    return true;
+                }
+
+                if attempt == 3 {
+                    stream
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nmissing",
+                        )
+                        .unwrap();
+                    return false;
+                }
+
+                stream
+                    .write_all(
+                        b"HTTP/1.1 302 Found\r\nLocation: /search\r\nSet-Cookie: search_session=ready; Path=/; HttpOnly\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    )
+                    .unwrap();
+            }
+            false
+        });
+
+        let body = HttpFetcher::new().fetch(&url).await.unwrap();
+        let cookie_was_sent = server.join().unwrap();
+
+        assert!(cookie_was_sent);
+        assert_eq!(body, "ok");
     }
 
     #[test]

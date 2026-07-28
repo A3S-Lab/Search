@@ -8,7 +8,7 @@ use tokio::time::{timeout, Duration};
 use tracing::{debug, warn};
 
 use crate::{
-    Aggregator, CircuitBreaker, CircuitPermit, Engine, EngineFailure, EngineOutcome,
+    Aggregator, Bulkhead, CircuitBreaker, CircuitPermit, Engine, EngineFailure, EngineOutcome,
     EngineOutcomeKind, HealthConfig, HealthMonitor, Metrics, Result, SearchError, SearchQuery,
     SearchResults,
 };
@@ -21,6 +21,7 @@ pub struct Search {
     health: Mutex<HealthMonitor>,
     metrics: Option<Arc<Metrics>>,
     circuit_breaker: Option<CircuitBreaker>,
+    bulkhead: Option<Bulkhead>,
 }
 
 impl Search {
@@ -33,6 +34,7 @@ impl Search {
             health: Mutex::new(HealthMonitor::default()),
             metrics: None,
             circuit_breaker: None,
+            bulkhead: None,
         }
     }
 
@@ -45,6 +47,7 @@ impl Search {
             health: Mutex::new(HealthMonitor::new(config)),
             metrics: None,
             circuit_breaker: None,
+            bulkhead: None,
         }
     }
 
@@ -64,6 +67,17 @@ impl Search {
     /// Sets or clears shared circuit state.
     pub fn set_circuit_breaker(&mut self, circuit_breaker: Option<CircuitBreaker>) {
         self.circuit_breaker = circuit_breaker;
+    }
+
+    /// Attaches shared, bounded per-engine concurrency isolation.
+    pub fn with_bulkhead(mut self, bulkhead: Bulkhead) -> Self {
+        self.bulkhead = Some(bulkhead);
+        self
+    }
+
+    /// Sets or clears shared per-engine concurrency isolation.
+    pub fn set_bulkhead(&mut self, bulkhead: Option<Bulkhead>) {
+        self.bulkhead = bulkhead;
     }
 
     /// Sets or clears the metrics registry used by this search instance.
@@ -117,6 +131,7 @@ impl Search {
                 let permit = attempt.permit;
                 let query = Arc::clone(&query);
                 let metrics = self.metrics.as_ref().map(Arc::clone);
+                let bulkhead = self.bulkhead.clone();
                 let timeout_duration = self
                     .timeout_override
                     .unwrap_or_else(|| Duration::from_secs(engine.config().timeout));
@@ -125,10 +140,38 @@ impl Search {
                     let name = engine.name().to_string();
                     let shortcut = engine.shortcut().to_string();
                     let engine_start = Instant::now();
+                    let _bulkhead_permit = match bulkhead {
+                        None => None,
+                        Some(bulkhead) => match bulkhead.acquire(&shortcut).await {
+                            Ok(permit) => Some(permit),
+                            Err(rejection) => {
+                                if let Some(permit) = permit {
+                                    permit.record_local_rejection();
+                                }
+                                if let Some(metrics) = metrics.as_ref() {
+                                    metrics.record_failure(rejection.failure_kind(), true);
+                                }
+                                let failure = EngineFailure::new(
+                                    name,
+                                    rejection.failure_kind(),
+                                    rejection.to_string(),
+                                )
+                                .with_transient(true);
+                                let outcome = EngineOutcome::failed(
+                                    shortcut,
+                                    failure.clone(),
+                                    EngineOutcomeKind::Rejected,
+                                )
+                                .with_duration(engine_start.elapsed());
+                                return Err((failure, false, outcome));
+                            }
+                        },
+                    };
                     match timeout(timeout_duration, engine.search_output(&query)).await {
                         Ok(Ok(output)) => {
+                            let engine_duration = engine_start.elapsed();
                             if let Some(metrics) = metrics.as_ref() {
-                                metrics.record_success(engine_start.elapsed());
+                                metrics.record_success(engine_duration);
                             }
                             debug!("Engine {} returned {} results", name, output.results.len());
                             let empty = output.results.is_empty()
@@ -137,9 +180,9 @@ impl Search {
                                 && output.images.is_empty();
                             if let Some(permit) = permit {
                                 if empty {
-                                    permit.record_empty();
+                                    permit.record_empty_with_duration(engine_duration);
                                 } else {
-                                    permit.record_success();
+                                    permit.record_success_with_duration(engine_duration);
                                 }
                             }
                             let mut outcome = EngineOutcome::completed(
@@ -152,7 +195,7 @@ impl Search {
                                 },
                                 output.results.len(),
                             )
-                            .with_duration(engine_start.elapsed());
+                            .with_duration(engine_duration);
                             outcome.provider = output
                                 .reports
                                 .iter()
@@ -160,6 +203,7 @@ impl Search {
                             Ok((name, output, outcome))
                         }
                         Ok(Err(e)) => {
+                            let engine_duration = engine_start.elapsed();
                             if let Some(metrics) = metrics.as_ref() {
                                 metrics.record_failure(e.kind(), e.is_transient());
                             }
@@ -174,17 +218,18 @@ impl Search {
                                 failure = failure.with_retry_after(seconds);
                             }
                             if let Some(permit) = permit {
-                                permit.record_failure(&failure);
+                                permit.record_failure_with_duration(&failure, engine_duration);
                             }
                             let outcome = EngineOutcome::failed(
                                 shortcut,
                                 failure.clone(),
                                 EngineOutcomeKind::Failure,
                             )
-                            .with_duration(engine_start.elapsed());
+                            .with_duration(engine_duration);
                             Err((failure, affects_health, outcome))
                         }
                         Err(_) => {
+                            let engine_duration = engine_start.elapsed();
                             if let Some(metrics) = metrics.as_ref() {
                                 metrics.record_failure(SearchError::Timeout.kind(), true);
                             }
@@ -192,14 +237,14 @@ impl Search {
                             let failure = EngineFailure::new(name, "timeout", "timed out")
                                 .with_transient(true);
                             if let Some(permit) = permit {
-                                permit.record_failure(&failure);
+                                permit.record_failure_with_duration(&failure, engine_duration);
                             }
                             let outcome = EngineOutcome::failed(
                                 shortcut,
                                 failure.clone(),
                                 EngineOutcomeKind::Timeout,
                             )
-                            .with_duration(engine_start.elapsed());
+                            .with_duration(engine_duration);
                             Err((failure, true, outcome))
                         }
                     }
@@ -388,6 +433,7 @@ mod tests {
     };
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::Notify;
 
     struct MockEngine {
         config: EngineConfig,
@@ -556,6 +602,44 @@ mod tests {
     struct SlowEngine {
         config: EngineConfig,
         delay: Duration,
+    }
+
+    struct BlockingEngine {
+        config: EngineConfig,
+        started: Arc<Notify>,
+        release: Arc<Notify>,
+    }
+
+    impl BlockingEngine {
+        fn new(name: &str, started: Arc<Notify>, release: Arc<Notify>) -> Self {
+            Self {
+                config: EngineConfig {
+                    name: name.to_string(),
+                    shortcut: name.to_string(),
+                    categories: vec![EngineCategory::General],
+                    ..Default::default()
+                },
+                started,
+                release,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Engine for BlockingEngine {
+        fn config(&self) -> &EngineConfig {
+            &self.config
+        }
+
+        async fn search(&self, _query: &SearchQuery) -> Result<Vec<SearchResult>> {
+            self.started.notify_one();
+            self.release.notified().await;
+            Ok(vec![SearchResult::new(
+                "https://example.com/result",
+                "Result",
+                "Content",
+            )])
+        }
     }
 
     impl SlowEngine {
@@ -732,6 +816,120 @@ mod tests {
         let json = serde_json::to_value(&results).unwrap();
         assert_eq!(json["outcomes"][0]["kind"], "timeout");
         assert!(json["outcomes"][0]["duration_ms"].as_u64().unwrap() >= 1);
+    }
+
+    #[tokio::test]
+    async fn shared_bulkhead_rejects_excess_search_instances_without_opening_circuit() {
+        let bulkhead = crate::Bulkhead::new(crate::BulkheadConfig {
+            max_concurrent: 1,
+            max_queued: 0,
+            max_queue_wait: Duration::ZERO,
+        });
+        let circuit = CircuitBreaker::default();
+        let started = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+
+        let mut first = Search::new()
+            .with_bulkhead(bulkhead.clone())
+            .with_circuit_breaker(circuit.clone());
+        first.add_engine(BlockingEngine::new(
+            "shared-engine",
+            Arc::clone(&started),
+            Arc::clone(&release),
+        ));
+        let first_task = tokio::spawn(async move {
+            first
+                .search(SearchQuery::new("first generic query"))
+                .await
+                .unwrap()
+        });
+        started.notified().await;
+
+        let mut second = Search::new()
+            .with_bulkhead(bulkhead.clone())
+            .with_circuit_breaker(circuit.clone());
+        second.add_engine(BlockingEngine::new(
+            "shared-engine",
+            Arc::new(Notify::new()),
+            Arc::new(Notify::new()),
+        ));
+        let rejected = second
+            .search(SearchQuery::new("second generic query"))
+            .await
+            .unwrap();
+
+        assert_eq!(rejected.failures()[0].kind, "bulkhead_saturated");
+        assert_eq!(rejected.outcomes()[0].kind, EngineOutcomeKind::Rejected);
+        assert_eq!(bulkhead.snapshot("shared-engine").in_flight, 1);
+        assert_eq!(
+            circuit.snapshot("shared-engine").state,
+            crate::CircuitState::Closed
+        );
+
+        release.notify_one();
+        assert_eq!(first_task.await.unwrap().items().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn bulkhead_rejection_returns_half_open_probe_without_ejecting_upstream() {
+        let bulkhead = crate::Bulkhead::new(crate::BulkheadConfig {
+            max_concurrent: 1,
+            max_queued: 0,
+            max_queue_wait: Duration::ZERO,
+        });
+        let circuit = CircuitBreaker::new(crate::CircuitBreakerConfig {
+            failure_threshold: 1,
+            transient_open_duration: Duration::ZERO,
+            open_jitter_ratio: 0.0,
+            window: None,
+            ..Default::default()
+        });
+        circuit.acquire("shared-engine").unwrap().record_failure(
+            &EngineFailure::new("shared-engine", "provider_transport", "offline")
+                .with_transient(true),
+        );
+
+        let started = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let mut occupying = Search::new().with_bulkhead(bulkhead.clone());
+        occupying.add_engine(BlockingEngine::new(
+            "shared-engine",
+            Arc::clone(&started),
+            Arc::clone(&release),
+        ));
+        let occupying_task = tokio::spawn(async move {
+            occupying
+                .search(SearchQuery::new("occupying query"))
+                .await
+                .unwrap()
+        });
+        started.notified().await;
+
+        let mut probing = Search::new()
+            .with_bulkhead(bulkhead)
+            .with_circuit_breaker(circuit.clone());
+        probing.add_engine(MockEngine::new(
+            "shared-engine",
+            vec![SearchResult::new(
+                "https://example.com/probe",
+                "Probe",
+                "Content",
+            )],
+        ));
+        let rejected = probing
+            .search(SearchQuery::new("probe query"))
+            .await
+            .unwrap();
+
+        assert_eq!(rejected.failures()[0].kind, "bulkhead_saturated");
+        assert_eq!(circuit.snapshot("shared-engine").ejection_count, 1);
+        circuit
+            .acquire("shared-engine")
+            .expect("local saturation must return the half-open probe")
+            .record_success();
+
+        release.notify_one();
+        assert_eq!(occupying_task.await.unwrap().items().len(), 1);
     }
 
     #[tokio::test]

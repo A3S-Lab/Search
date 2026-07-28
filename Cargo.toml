@@ -54,9 +54,10 @@ tracing.workspace = true
 # Async utilities
 async-trait.workspace = true
 futures.workspace = true
+fastrand = "2"
 
 # HTTP client
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "gzip", "brotli", "socks", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "gzip", "brotli", "socks", "stream", "cookies"] }
 httpdate = "1"
 
 # HTML parsing

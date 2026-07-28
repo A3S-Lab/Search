@@ -234,6 +234,16 @@ pub enum SearchError {
     #[error("Failed to parse response: {0}")]
     Parse(String),
 
+    /// A search endpoint returned an interactive challenge or interstitial
+    /// instead of a result page.
+    #[error("Search response blocked: {0}")]
+    Challenge(String),
+
+    /// A search endpoint returned a successful HTTP response whose structure
+    /// does not match either a result page or a legitimate empty state.
+    #[error("Invalid search response: {0}")]
+    InvalidResponse(String),
+
     /// Engine is temporarily suspended.
     #[error("Engine '{0}' is suspended until {1}")]
     EngineSuspended(String, String),
@@ -241,6 +251,11 @@ pub enum SearchError {
     /// Search timeout exceeded.
     #[error("Search timeout exceeded")]
     Timeout,
+
+    /// A transient operation failed but the shared retry budget denied
+    /// another attempt.
+    #[error("Retry budget exhausted after transient failure: {0}")]
+    RetryBudgetExhausted(String),
 
     /// No engines configured.
     #[error("No search engines configured")]
@@ -307,8 +322,11 @@ impl SearchError {
             }
             Self::HttpStatus { .. } => "http_status",
             Self::Parse(_) => "parse",
+            Self::Challenge(_) => "challenge",
+            Self::InvalidResponse(_) => "invalid_response",
             Self::EngineSuspended(_, _) => "engine_suspended",
             Self::Timeout => "timeout",
+            Self::RetryBudgetExhausted(_) => "retry_budget_exhausted",
             Self::NoEngines => "no_engines",
             Self::InvalidQuery(_) => "invalid_query",
             Self::UrlParse(_) => "url_parse",
@@ -351,6 +369,8 @@ impl SearchError {
             Self::Network(_) => true,
             Self::RateLimited(_) => true,
             Self::Timeout => true,
+            Self::RetryBudgetExhausted(_) => true,
+            Self::Challenge(_) => true,
             Self::Provider(error) => matches!(
                 error.kind(),
                 ProviderErrorKind::RateLimited
@@ -425,8 +445,11 @@ impl SearchError {
             Self::EngineSuspended(_, _) => 0,
             Self::NoEngines => 0,
             Self::Parse(_) => 20,
+            Self::Challenge(_) => 25,
+            Self::InvalidResponse(_) => 0,
             Self::UrlParse(_) => 20,
             Self::Proxy(_) => 30,
+            Self::RetryBudgetExhausted(_) => 0,
             Self::Other(_) => 25,
         }
     }

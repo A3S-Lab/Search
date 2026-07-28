@@ -1,6 +1,8 @@
 //! DuckDuckGo search engine implementation.
 
-use crate::html_engine::{selector, HtmlEngine, HtmlParser};
+use crate::html_engine::{
+    selector, validate_search_response, HtmlEngine, HtmlParser, SearchResponseSpec,
+};
 use crate::{EngineCategory, EngineConfig, Result, SearchQuery, SearchResult};
 use scraper::Html;
 
@@ -64,6 +66,22 @@ impl HtmlParser for DuckDuckGoParser {
             url.push_str(&format!("&df={}", df));
         }
         url
+    }
+
+    fn validate(&self, html: &str) -> Result<()> {
+        validate_search_response(
+            html,
+            SearchResponseSpec {
+                engine: "DuckDuckGo",
+                result_selectors: &[".result"],
+                empty_selectors: &["#links.results", ".serp__results", ".no-results"],
+                challenge_selectors: &[
+                    "#challenge-form",
+                    "[data-testid=\"anomaly-modal\"]",
+                    "form[action*=\"/anomaly.js\"]",
+                ],
+            },
+        )
     }
 
     fn parse(&self, html: &str) -> Result<Vec<SearchResult>> {
@@ -186,6 +204,27 @@ mod tests {
         let parser = DuckDuckGoParser;
         let results = parser.parse("<html><body></body></html>").unwrap();
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_validate_classifies_result_empty_challenge_and_drift_fixtures() {
+        let parser = DuckDuckGoParser;
+        let result =
+            r#"<main><div id="links" class="results"><div class="result"></div></div></main>"#;
+        let empty =
+            r#"<main><div id="links" class="results"><div class="no-results"></div></div></main>"#;
+        let challenge = r#"<form id="challenge-form" action="//duckduckgo.com/anomaly.js"></form>"#;
+
+        assert!(parser.validate(result).is_ok());
+        assert!(parser.validate(empty).is_ok());
+        assert_eq!(parser.validate(challenge).unwrap_err().kind(), "challenge");
+        assert_eq!(
+            parser
+                .validate("<html><body><main id=homepage></main></body></html>")
+                .unwrap_err()
+                .kind(),
+            "invalid_response"
+        );
     }
 
     #[test]

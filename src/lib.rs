@@ -98,6 +98,7 @@
 //! ```
 
 mod aggregator;
+mod bulkhead;
 mod circuit;
 mod config;
 mod engine;
@@ -113,6 +114,7 @@ pub mod proxy;
 mod quality;
 mod query;
 mod result;
+mod retry_budget;
 mod search;
 
 pub mod engines;
@@ -125,8 +127,13 @@ pub mod browser;
 pub use a3s_use_browser;
 
 pub use aggregator::Aggregator;
+pub use bulkhead::{
+    Bulkhead, BulkheadConfig, BulkheadPermit, BulkheadRejection, BulkheadRejectionKind,
+    BulkheadSnapshot,
+};
 pub use circuit::{
-    CircuitBreaker, CircuitBreakerConfig, CircuitOpen, CircuitPermit, CircuitSnapshot, CircuitState,
+    CircuitBreaker, CircuitBreakerConfig, CircuitOpen, CircuitPermit, CircuitSnapshot,
+    CircuitState, CircuitWindowConfig,
 };
 pub use config::{EngineEntry, HealthEntry, ProviderEntry, ProviderSettings, SearchConfig};
 pub use engine::{Engine, EngineCategory, EngineConfig, EngineOutput};
@@ -147,6 +154,7 @@ pub use result::{
     EngineFailure, EngineOutcome, EngineOutcomeKind, ResultType, SearchImage, SearchReport,
     SearchResult, SearchResults, SearchUsage,
 };
+pub use retry_budget::{RetryBudget, RetryBudgetConfig, RetryBudgetSnapshot};
 pub use search::Search;
 
 #[cfg(feature = "headless")]

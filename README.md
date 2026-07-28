@@ -14,7 +14,8 @@ request reports.
 - Anonymous AnySearch and keyless Tavily access, with optional bearer authentication
 - Provider-neutral `SearchProvider` protocol for downstream integrations
 - Parallel execution with isolated timeouts and partial-failure results
-- Shared closed/open/half-open circuit breaking with bounded `Retry-After`
+- Shared per-engine bulkheads and closed/open/half-open circuit breaking
+- Sliding failure/slow-call windows, bounded `Retry-After`, and retry budgets
 - Caller-driven, quality-gated API → HTTP/RSS → headless cascades
 - Deterministic URL deduplication, rich-field merging, duplicate evidence
   suppression, and consensus ranking
@@ -282,7 +283,7 @@ Use `--format json` for machine-readable evidence. The top-level object contains
 | `reports` | Provider request IDs, total counts, timings, usage, and bounded metadata |
 | `errors` | Legacy per-engine failure entries |
 | `failures` | Typed failures with stable kinds, transient status, and retry context |
-| `outcomes` | Success, empty, failure, timeout, or circuit-open state for each selected engine |
+| `outcomes` | Success, empty, failure, timeout, local rejection, or circuit-open state for each selected engine |
 | `count` | Number of displayed results |
 | `total_count` | Number of aggregated results before the display limit |
 | `duration_ms` | End-to-end orchestration duration |
@@ -316,29 +317,51 @@ rather than silently ignoring them.
 
 ## Reliability and quality-gated fallback
 
-`CircuitBreaker` is an optional shared registry. Clone one registry into every
-`Search` instance that belongs to the same isolation scope so unavailable
-engines are not retried by each new request:
+`Bulkhead` and `CircuitBreaker` are optional shared registries. Clone them into
+each `Search` instance in the same runtime so one overloaded or unavailable
+engine cannot consume unbounded local resources or be retried by every new
+request:
 
 ```rust,no_run
-use a3s_search::{CircuitBreaker, Search};
+use a3s_search::{Bulkhead, CircuitBreaker, Search};
 
+let bulkhead = Bulkhead::default();
 let circuit = CircuitBreaker::default();
-let first = Search::new().with_circuit_breaker(circuit.clone());
-let second = Search::new().with_circuit_breaker(circuit);
+let first = Search::new()
+    .with_bulkhead(bulkhead.clone())
+    .with_circuit_breaker(circuit.clone());
+let second = Search::new()
+    .with_bulkhead(bulkhead)
+    .with_circuit_breaker(circuit);
 ```
 
-Scope a registry to compatible credentials, endpoint configuration, and
+Bulkheads are keyed by normalized engine shortcut and enforce bounded in-flight
+and queued calls. Saturation and queue expiry produce typed `rejected` outcomes
+without incrementing upstream failure counters; a locally rejected half-open
+probe is returned immediately. Keep the bulkhead process- or runtime-scoped
+when those instances compete for the same local browser, socket, or provider
+capacity.
+
+Scope circuit state to compatible credentials, endpoint configuration, and
 network routing. Do not share terminal authentication or quota state between
-unrelated tenants. Recreate the registry when those inputs change.
+unrelated tenants. Recreate the circuit when those inputs change.
 
 The circuit uses closed, open, and half-open states. Quota, authentication,
 permission, and rate-limit failures open immediately; transient failures and
-structurally empty responses use configurable consecutive thresholds. A
-provider `Retry-After` value controls the bounded open interval. When the
-interval expires, exactly one concurrent request receives a probe permit.
-Request-scoped invalid-query failures neither claim recovery nor poison later
-queries.
+structurally empty responses use configurable consecutive thresholds. An
+optional count-based window also opens on intermittent failure rate or slow-call
+rate after a minimum sample size. Failed recovery probes increase the bounded
+open interval with exponential backoff and jitter. A provider `Retry-After`
+value supplies the base open interval. When that interval expires, exactly one
+concurrent request receives a probe permit. Request-scoped invalid-query
+failures neither claim recovery nor poison later queries.
+
+HTTP engines preserve standards-compliant cookies across redirects. Their HTML
+parsers validate provider protocol structure before extraction: CAPTCHA,
+verification, consent, and anti-bot interstitials become transient `challenge`
+failures; unrelated 2xx pages become `invalid_response`; recognized result and
+empty-state structures remain valid. These checks use engine page structure,
+not query topics, publishers, domains, or languages.
 
 `SearchCascade` provides a lazy tier gate rather than eagerly running every
 fallback. Callers execute a native API tier first, merge it with `push_tier`,
@@ -352,8 +375,10 @@ named-entity, or language exceptions.
 
 All executed tiers merge through `SearchResults::merge`, which applies the
 same URL normalization, provenance merge, and deterministic ranking path.
-`SearchCascade` deliberately does not retry or create browsers: the caller owns
-the total deadline, retry budget, tier composition, and lazy browser lifecycle.
+`SearchCascade` deliberately does not create browsers: the caller owns the
+end-to-end deadline, tier composition, and lazy browser lifecycle. Browser
+retries are bounded separately by a shared `RetryBudget` and total fetch
+deadline.
 
 ## Library usage
 
@@ -533,6 +558,13 @@ Search never depends on the A3S Use facade, Browser driver, or MCP surface.
 Release `a3s-use-browser` before tagging a Search version that depends on it;
 the Search release gate waits for the exact Browser crate version on crates.io.
 
+`BrowserFetcher` applies a total deadline across all render attempts, queueing,
+and retry sleeps. Transient failures use capped exponential backoff with full
+jitter, and every retry must consume a token from its `RetryBudget`. Share one
+budget across fetchers in the same runtime to prevent a broad browser or
+network incident from multiplying work across requests. Successful operations
+restore bounded credit.
+
 Providers may return `full_text` directly. For snippet-only results,
 `enrich_full_text` can fetch each result page and extract the main article body:
 
@@ -657,7 +689,9 @@ impl Search {
     pub fn with_health_config(config: HealthConfig) -> Self;
     pub fn with_metrics(self, metrics: Arc<Metrics>) -> Self;
     pub fn with_circuit_breaker(self, circuit_breaker: CircuitBreaker) -> Self;
+    pub fn with_bulkhead(self, bulkhead: Bulkhead) -> Self;
     pub fn set_circuit_breaker(&mut self, circuit_breaker: Option<CircuitBreaker>);
+    pub fn set_bulkhead(&mut self, bulkhead: Option<Bulkhead>);
     pub fn set_metrics(&mut self, metrics: Option<Arc<Metrics>>);
     pub fn metrics(&self) -> Option<Arc<Metrics>>;
     pub fn add_engine<E: Engine + 'static>(&mut self, engine: E);
@@ -770,16 +804,21 @@ pub enum WaitStrategy {
 
 With `headless`, `BrowserFetcher` adapts any
 `a3s_use_browser::PageRenderer`. It supports wait strategy, user agent,
-timeout, retries, and metrics. `BrowserPool` owns shared tab concurrency and
-provides `warm_up` and idempotent terminal `shutdown`. Its typed provider
-choices are discovered, managed, or explicit Chrome/Lightpanda executables;
-managed variants explicitly permit A3S Use to install the selected browser.
+per-attempt and total timeouts, capped jittered retries, a shared retry budget,
+and metrics. `BrowserPool` owns shared tab concurrency and provides `warm_up`
+and idempotent terminal `shutdown`. Its typed provider choices are discovered,
+managed, or explicit Chrome/Lightpanda executables; managed variants explicitly
+permit A3S Use to install the selected browser.
 
 ### Health, proxy, and metrics types
 
 `HealthConfig` exposes the compatibility per-instance failure threshold and
 suspension duration. `CircuitBreakerConfig` controls shared failure and empty
-thresholds plus transient, terminal, and maximum open durations.
+thresholds, transient/terminal/maximum open durations, recovery backoff, jitter,
+and an optional `CircuitWindowConfig` for recent failure and slow-call rates.
+`BulkheadConfig` controls per-engine in-flight capacity, bounded queue size, and
+queue wait. `RetryBudgetConfig` controls shared capacity, retry cost, and
+success credit; each type exposes a point-in-time snapshot.
 `ProxyConfig` contains host, port, protocol, and optional authentication;
 `ProxyPool` supports static or dynamic providers and round-robin or random
 selection. `Metrics` supports recording, snapshots, request counts, success

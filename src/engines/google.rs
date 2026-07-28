@@ -3,8 +3,10 @@
 //! This engine requires the `headless` feature because Google's search results
 //! page relies on JavaScript rendering that plain HTTP requests cannot handle.
 
-use crate::html_engine::{selector, HtmlEngine, HtmlParser};
-use crate::{EngineCategory, EngineConfig, Result, SearchError, SearchQuery, SearchResult};
+use crate::html_engine::{
+    selector, validate_search_response, HtmlEngine, HtmlParser, SearchResponseSpec,
+};
+use crate::{EngineCategory, EngineConfig, Result, SearchQuery, SearchResult};
 use scraper::Html;
 
 /// Google HTML parser with CAPTCHA detection.
@@ -61,13 +63,25 @@ impl HtmlParser for GoogleParser {
     }
 
     fn validate(&self, html: &str) -> Result<()> {
-        if html.contains("/sorry/index") || html.contains("recaptcha") {
-            return Err(SearchError::Other(
-                "Google returned a CAPTCHA page (bot detected). Try again later or use a proxy (-p)."
-                    .to_string(),
-            ));
-        }
-        Ok(())
+        validate_search_response(
+            html,
+            SearchResponseSpec {
+                engine: "Google",
+                result_selectors: &["div.g"],
+                empty_selectors: &[
+                    "#search:empty",
+                    "#search .no-results",
+                    "#topstuff .card-section",
+                ],
+                challenge_selectors: &[
+                    "a[href*=\"/sorry/\"]",
+                    "form[action*=\"/sorry/\"]",
+                    "iframe[src*=\"recaptcha\"]",
+                    "script[src*=\"recaptcha\"]",
+                    "form[action*=\"consent\"]",
+                ],
+            },
+        )
     }
 
     fn parse(&self, html: &str) -> Result<Vec<SearchResult>> {
@@ -284,6 +298,23 @@ mod tests {
             <div class="g"><a href="https://example.com"><h3>Test</h3></a></div>
         </body></html>"#;
         assert!(parser.validate(html).is_ok());
+    }
+
+    #[test]
+    fn test_validate_classifies_empty_consent_and_drift_fixtures() {
+        let parser = GoogleParser;
+        let empty = r#"<main id="search"></main>"#;
+        let consent = r#"<form action="https://consent.google.com/save"></form>"#;
+
+        assert!(parser.validate(empty).is_ok());
+        assert_eq!(parser.validate(consent).unwrap_err().kind(), "challenge");
+        assert_eq!(
+            parser
+                .validate("<html><body><main id=homepage></main></body></html>")
+                .unwrap_err()
+                .kind(),
+            "invalid_response"
+        );
     }
 
     #[tokio::test]
