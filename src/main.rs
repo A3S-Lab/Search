@@ -921,6 +921,52 @@ mod tests {
     }
 
     #[test]
+    fn test_json_output_preserves_typed_outcomes_and_retry_context() {
+        let results: SearchResults = serde_json::from_value(serde_json::json!({
+            "results": [],
+            "suggestions": [],
+            "answers": [],
+            "images": [],
+            "errors": [["Quota API", "quota exhausted"]],
+            "failures": [{
+                "engine": "Quota API",
+                "provider": "anysearch",
+                "kind": "circuit_open",
+                "message": "shared engine circuit is open",
+                "transient": true,
+                "retry_after_seconds": 30
+            }],
+            "reports": [],
+            "outcomes": [{
+                "engine": "Quota API",
+                "shortcut": "anysearch",
+                "provider": "anysearch",
+                "kind": "circuit_open",
+                "result_count": 0,
+                "duration_ms": 0,
+                "failure": {
+                    "engine": "Quota API",
+                    "provider": "anysearch",
+                    "kind": "circuit_open",
+                    "message": "shared engine circuit is open",
+                    "transient": true,
+                    "retry_after_seconds": 30
+                }
+            }],
+            "count": 0,
+            "duration_ms": 1
+        }))
+        .expect("typed search result fixture");
+
+        let output = json_output("unrelated query", &results, 10);
+
+        assert_eq!(output["outcomes"][0]["kind"], "circuit_open");
+        assert_eq!(output["outcomes"][0]["failure"]["retry_after_seconds"], 30);
+        assert_eq!(output["failures"][0]["kind"], "circuit_open");
+        assert_eq!(output["failures"][0]["retry_after_seconds"], 30);
+    }
+
+    #[test]
     fn test_truncate_str_short() {
         assert_eq!(truncate_str("hello", 150), "hello");
     }

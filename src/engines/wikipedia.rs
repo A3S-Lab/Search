@@ -95,7 +95,8 @@ impl Engine for Wikipedia {
             url.push_str(&format!("&sroffset={}", (query.page - 1) * 10));
         }
 
-        let response = self.fetcher.client().get(&url).send().await?;
+        let response =
+            crate::fetcher_http::checked_response(self.fetcher.client().get(&url).send().await?)?;
         let wiki_response: WikiResponse = response.json().await?;
 
         let results = wiki_response

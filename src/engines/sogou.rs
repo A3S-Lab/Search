@@ -1,6 +1,8 @@
 //! Sogou search engine implementation.
 
-use crate::html_engine::{selector, HtmlEngine, HtmlParser};
+use crate::html_engine::{
+    selector, validate_search_response, HtmlEngine, HtmlParser, SearchResponseSpec,
+};
 use crate::{EngineCategory, EngineConfig, Result, SearchQuery, SearchResult};
 use scraper::Html;
 
@@ -46,6 +48,22 @@ impl HtmlParser for SogouParser {
             url.push_str(&format!("&page={}", query.page));
         }
         url
+    }
+
+    fn validate(&self, html: &str) -> Result<()> {
+        validate_search_response(
+            html,
+            SearchResponseSpec {
+                engine: "Sogou",
+                result_selectors: &[".vrwrap", "div.rb"],
+                empty_selectors: &[
+                    ".js-page-results:empty",
+                    ".results .no-results",
+                    "#noresult_part",
+                ],
+                challenge_selectors: &["#seccodeForm", "script[src*=\"antispider\"]"],
+            },
+        )
     }
 
     fn parse(&self, html: &str) -> Result<Vec<SearchResult>> {
@@ -139,6 +157,26 @@ mod tests {
         let parser = SogouParser;
         let results = parser.parse("<html><body></body></html>").unwrap();
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_validate_classifies_result_empty_challenge_and_drift_fixtures() {
+        let parser = SogouParser;
+        let result = r#"<div class="js-page-results"><div class="results"><div class="vrwrap"></div></div></div>"#;
+        let empty = r#"<div class="js-page-results"></div>"#;
+        let challenge =
+            r#"<script src="static/js/antispider.min.js"></script><form id="seccodeForm"></form>"#;
+
+        assert!(parser.validate(result).is_ok());
+        assert!(parser.validate(empty).is_ok());
+        assert_eq!(parser.validate(challenge).unwrap_err().kind(), "challenge");
+        assert_eq!(
+            parser
+                .validate("<html><body><main id=homepage></main></body></html>")
+                .unwrap_err()
+                .kind(),
+            "invalid_response"
+        );
     }
 
     #[test]

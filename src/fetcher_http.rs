@@ -2,10 +2,11 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use async_trait::async_trait;
 use reqwest::Client;
+use reqwest::Response;
 use tracing::debug;
 
 use crate::fetcher::PageFetcher;
@@ -32,6 +33,7 @@ impl HttpFetcher {
         Self {
             client: Client::builder()
                 .user_agent(DEFAULT_USER_AGENT)
+                .cookie_store(true)
                 .build()
                 .expect("Failed to create HTTP client"),
             metrics: None,
@@ -45,6 +47,7 @@ impl HttpFetcher {
         let client = Client::builder()
             .user_agent(DEFAULT_USER_AGENT)
             .proxy(proxy)
+            .cookie_store(true)
             .build()
             .map_err(|e| {
                 crate::SearchError::Other(format!("Failed to create HTTP client: {}", e))
@@ -89,7 +92,7 @@ impl PageFetcher for HttpFetcher {
     async fn fetch(&self, url: &str) -> Result<String> {
         let start = Instant::now();
         let result = async {
-            let response = self.client.get(url).send().await?.error_for_status()?;
+            let response = checked_response(self.client.get(url).send().await?)?;
             let html = response.text().await?;
             Ok(html)
         }
@@ -165,6 +168,7 @@ impl PooledHttpFetcher {
 
         let mut builder = Client::builder()
             .user_agent(DEFAULT_USER_AGENT)
+            .cookie_store(true)
             .timeout(self.timeout);
 
         if proxy_config.is_some() {
@@ -196,7 +200,7 @@ impl PageFetcher for PooledHttpFetcher {
 
         let result = async {
             let client = self.client_for(proxy_config.as_ref())?;
-            let response = client.get(url).send().await?.error_for_status()?;
+            let response = checked_response(client.get(url).send().await?)?;
             let html = response.text().await?;
             Ok(html)
         }
@@ -204,6 +208,40 @@ impl PageFetcher for PooledHttpFetcher {
         record_fetch_metrics(&self.metrics, start, &result);
         result
     }
+}
+
+pub(crate) fn checked_response(response: Response) -> Result<Response> {
+    if response.status().is_success() {
+        return Ok(response);
+    }
+    let status = response.status().as_u16();
+    let retry_after_seconds = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(parse_retry_after)
+        .map(|seconds| seconds.min(86_400));
+    Err(SearchError::HttpStatus {
+        status,
+        retry_after_seconds,
+    })
+}
+
+fn parse_retry_after(value: &reqwest::header::HeaderValue) -> Option<u64> {
+    let value = value.to_str().ok()?.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(seconds);
+    }
+
+    let deadline = httpdate::parse_http_date(value).ok()?;
+    let delay = deadline
+        .duration_since(SystemTime::now())
+        .unwrap_or(Duration::ZERO);
+    Some(duration_ceiling_seconds(delay))
+}
+
+fn duration_ceiling_seconds(duration: Duration) -> u64 {
+    let millis = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
+    millis.saturating_add(999) / 1_000
 }
 
 fn record_fetch_metrics<T>(metrics: &Option<Arc<Metrics>>, start: Instant, result: &Result<T>) {
@@ -346,5 +384,95 @@ mod tests {
         let snapshot = metrics.snapshot().await;
         assert_eq!(snapshot.failures, 1);
         assert_eq!(snapshot.total_requests(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_http_fetcher_preserves_429_retry_after() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 2_048];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(
+                    b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 17\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+        });
+
+        let error = HttpFetcher::new().fetch(&url).await.unwrap_err();
+        server.join().unwrap();
+
+        assert!(matches!(
+            error,
+            SearchError::HttpStatus {
+                status: 429,
+                retry_after_seconds: Some(17)
+            }
+        ));
+        assert_eq!(error.kind(), "rate_limited");
+        assert!(error.is_transient());
+        assert_eq!(error.retry_after_seconds(), Some(17));
+    }
+
+    #[tokio::test]
+    async fn test_http_fetcher_preserves_set_cookie_during_redirect() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/search", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            for attempt in 0..4 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0u8; 4_096];
+                let bytes_read = stream.read(&mut request).unwrap();
+                let request = String::from_utf8_lossy(&request[..bytes_read]).to_ascii_lowercase();
+
+                if request.contains("cookie: search_session=ready") {
+                    stream
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                        )
+                        .unwrap();
+                    return true;
+                }
+
+                if attempt == 3 {
+                    stream
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nmissing",
+                        )
+                        .unwrap();
+                    return false;
+                }
+
+                stream
+                    .write_all(
+                        b"HTTP/1.1 302 Found\r\nLocation: /search\r\nSet-Cookie: search_session=ready; Path=/; HttpOnly\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    )
+                    .unwrap();
+            }
+            false
+        });
+
+        let body = HttpFetcher::new().fetch(&url).await.unwrap();
+        let cookie_was_sent = server.join().unwrap();
+
+        assert!(cookie_was_sent);
+        assert_eq!(body, "ok");
+    }
+
+    #[test]
+    fn retry_after_accepts_http_date_and_bounds_distant_deadlines() {
+        let value = reqwest::header::HeaderValue::from_static("Thu, 31 Dec 2099 23:59:59 GMT");
+        assert_eq!(
+            parse_retry_after(&value).map(|seconds| seconds.min(86_400)),
+            Some(86_400)
+        );
     }
 }

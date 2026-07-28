@@ -1,6 +1,8 @@
 //! 360 Search engine implementation.
 
-use crate::html_engine::{selector, HtmlEngine, HtmlParser};
+use crate::html_engine::{
+    selector, validate_search_response, HtmlEngine, HtmlParser, SearchResponseSpec,
+};
 use crate::{EngineCategory, EngineConfig, Result, SearchQuery, SearchResult};
 use scraper::Html;
 
@@ -46,6 +48,22 @@ impl HtmlParser for So360Parser {
             url.push_str(&format!("&pn={}", query.page));
         }
         url
+    }
+
+    fn validate(&self, html: &str) -> Result<()> {
+        validate_search_response(
+            html,
+            SearchResponseSpec {
+                engine: "360 Search",
+                result_selectors: &["li.res-list"],
+                empty_selectors: &["#main .result:empty", ".no-results", ".no-result"],
+                challenge_selectors: &[
+                    "form[action*=\"verify\"]",
+                    "iframe[src*=\"captcha\"]",
+                    "script[src*=\"captcha\"]",
+                ],
+            },
+        )
     }
 
     fn parse(&self, html: &str) -> Result<Vec<SearchResult>> {
@@ -139,6 +157,26 @@ mod tests {
         let parser = So360Parser;
         let results = parser.parse("<html><body></body></html>").unwrap();
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_validate_classifies_result_empty_challenge_and_drift_fixtures() {
+        let parser = So360Parser;
+        let result =
+            r#"<main id="main"><div class="result"><li class="res-list"></li></div></main>"#;
+        let empty = r#"<main id="main"><div class="result"></div></main>"#;
+        let challenge = r#"<main><form action="/verify"></form></main>"#;
+
+        assert!(parser.validate(result).is_ok());
+        assert!(parser.validate(empty).is_ok());
+        assert_eq!(parser.validate(challenge).unwrap_err().kind(), "challenge");
+        assert_eq!(
+            parser
+                .validate("<html><body><main id=homepage></main></body></html>")
+                .unwrap_err()
+                .kind(),
+            "invalid_response"
+        );
     }
 
     #[test]

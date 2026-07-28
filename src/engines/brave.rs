@@ -1,6 +1,8 @@
 //! Brave search engine implementation.
 
-use crate::html_engine::{selector, HtmlEngine, HtmlParser};
+use crate::html_engine::{
+    selector, validate_search_response, HtmlEngine, HtmlParser, SearchResponseSpec,
+};
 use crate::{EngineCategory, EngineConfig, Result, SearchQuery, SearchResult};
 use scraper::Html;
 
@@ -52,6 +54,26 @@ impl HtmlParser for BraveParser {
             SafeSearch::Strict => url.push_str("&safesearch=strict"),
         }
         url
+    }
+
+    fn validate(&self, html: &str) -> Result<()> {
+        validate_search_response(
+            html,
+            SearchResponseSpec {
+                engine: "Brave",
+                result_selectors: &[r#"div.snippet[data-type="web"]"#],
+                empty_selectors: &[
+                    "#results:empty",
+                    "#results .no-results",
+                    "[data-testid=\"no-results\"]",
+                ],
+                challenge_selectors: &[
+                    "form[action*=\"challenge\"]",
+                    "iframe[src*=\"captcha\"]",
+                    "[data-testid*=\"captcha\"]",
+                ],
+            },
+        )
     }
 
     fn parse(&self, html: &str) -> Result<Vec<SearchResult>> {
@@ -144,6 +166,25 @@ mod tests {
         let parser = BraveParser;
         let results = parser.parse("<html><body></body></html>").unwrap();
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_validate_classifies_result_empty_challenge_and_drift_fixtures() {
+        let parser = BraveParser;
+        let result = r#"<main id="search-page"><div id="results"><div class="snippet" data-type="web"></div></div></main>"#;
+        let empty = r#"<main id="search-page"><div id="results"><div class="no-results"></div></div></main>"#;
+        let challenge = r#"<main><iframe src="/captcha/challenge"></iframe></main>"#;
+
+        assert!(parser.validate(result).is_ok());
+        assert!(parser.validate(empty).is_ok());
+        assert_eq!(parser.validate(challenge).unwrap_err().kind(), "challenge");
+        assert_eq!(
+            parser
+                .validate("<html><body><main id=homepage></main></body></html>")
+                .unwrap_err()
+                .kind(),
+            "invalid_response"
+        );
     }
 
     #[test]
