@@ -1,5 +1,7 @@
 use super::*;
 use crate::Aggregator;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 fn result(url: &str, title: &str, content: &str) -> SearchResult {
     SearchResult::new(url, title, content)
@@ -54,6 +56,73 @@ fn multi_term_alignment_rejects_generic_word_and_boilerplate_matches() {
 
     assert!(query_match_score(query, &generic) < 0.18);
     assert!(query_match_score(query, &specific) >= 0.18);
+}
+
+#[test]
+fn default_floor_rejects_partial_capacity_and_weak_set_averages() {
+    let query = "distributed tracing baggage propagation sampling specification";
+    let floor = SearchQualityFloor::for_limit(5);
+    let aggregate =
+        |results| Aggregator::new().aggregate_for_query(query, vec![("api".to_string(), results)]);
+    let urls = [
+        "https://one.example/article",
+        "https://two.example/article",
+        "https://three.example/article",
+        "https://four.example/article",
+        "https://five.example/article",
+    ];
+
+    let shallow = aggregate(
+        urls.iter()
+            .map(|url| {
+                result(
+                    url,
+                    "Distributed tracing overview",
+                    "An introduction to distributed tracing",
+                )
+            })
+            .collect(),
+    );
+    let shallow_quality = SearchQuality::evaluate(query, &shallow, floor.min_query_match);
+    assert_eq!(shallow_quality.usable_result_count, 5);
+    assert_eq!(shallow_quality.unique_host_count, 5);
+    assert_eq!(shallow_quality.aligned_result_count, 0);
+    assert!(!floor.is_met(&shallow_quality));
+
+    let mixed = aggregate(
+        urls.iter()
+            .enumerate()
+            .map(|(index, url)| {
+                if index < 3 {
+                    result(
+                        url,
+                        "Distributed tracing baggage",
+                        "Distributed tracing baggage guidance",
+                    )
+                } else {
+                    result(url, "Unrelated article", "General introduction")
+                }
+            })
+            .collect(),
+    );
+    let mixed_quality = SearchQuality::evaluate(query, &mixed, floor.min_query_match);
+    assert_eq!(mixed_quality.aligned_result_count, 3);
+    assert!(mixed_quality.mean_query_match < floor.min_mean_query_match);
+    assert!(!floor.is_met(&mixed_quality));
+
+    let strong = aggregate(
+        urls.iter()
+            .map(|url| {
+                result(
+                    url,
+                    "Distributed tracing baggage propagation specification",
+                    "Sampling requirements for distributed tracing baggage propagation",
+                )
+            })
+            .collect(),
+    );
+    let strong_quality = SearchQuality::evaluate(query, &strong, floor.min_query_match);
+    assert!(floor.is_met(&strong_quality));
 }
 
 #[test]
@@ -158,6 +227,233 @@ fn cascade_runs_lower_tier_only_until_quality_floor_is_met() {
     assert_eq!(cascade.push_tier("http", http), SearchTierDecision::Stop);
     assert!(!cascade.needs_next_tier());
     assert_eq!(cascade.reports().len(), 2);
+}
+
+#[tokio::test]
+async fn lazy_cascade_does_not_initialize_http_or_headless_after_api_quality() {
+    let floor = SearchQualityFloor {
+        min_usable_results: 2,
+        min_unique_hosts: 2,
+        min_contributing_engines: 1,
+        min_aligned_results: 2,
+        min_consensus_results: 0,
+        min_query_match: 0.2,
+        min_mean_query_match: 0.0,
+    };
+    let query = "distributed tracing sampling specification";
+    let aggregator = Aggregator::new();
+    let api_results = aggregator.aggregate_for_query(
+        query,
+        vec![(
+            "api".to_string(),
+            vec![
+                result(
+                    "https://reference.example/tracing",
+                    "Distributed tracing specification",
+                    "Sampling semantics and propagation rules",
+                ),
+                result(
+                    "https://guide.example/sampling",
+                    "Tracing sampling guide",
+                    "Distributed trace sampling specification",
+                ),
+            ],
+        )],
+    );
+    let api_calls = Arc::new(AtomicUsize::new(0));
+    let http_calls = Arc::new(AtomicUsize::new(0));
+    let headless_calls = Arc::new(AtomicUsize::new(0));
+    let mut cascade = SearchCascade::new(SearchQuery::new(query), floor);
+
+    let calls = Arc::clone(&api_calls);
+    assert_eq!(
+        cascade
+            .run_tier_if_needed("api", || async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                api_results
+            })
+            .await,
+        Some(SearchTierDecision::Stop)
+    );
+
+    let calls = Arc::clone(&http_calls);
+    assert_eq!(
+        cascade
+            .run_tier_if_needed("http", || async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                SearchResults::new()
+            })
+            .await,
+        None
+    );
+    let calls = Arc::clone(&headless_calls);
+    assert_eq!(
+        cascade
+            .run_tier_if_needed("headless", || async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                SearchResults::new()
+            })
+            .await,
+        None
+    );
+
+    assert_eq!(api_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(http_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(headless_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(cascade.reports().len(), 1);
+}
+
+#[tokio::test]
+async fn lazy_cascade_runs_http_after_api_failure_but_stops_before_headless() {
+    let floor = SearchQualityFloor {
+        min_usable_results: 2,
+        min_unique_hosts: 2,
+        min_contributing_engines: 1,
+        min_aligned_results: 2,
+        min_consensus_results: 0,
+        min_query_match: 0.2,
+        min_mean_query_match: 0.0,
+    };
+    let query = "malaria vaccine position paper";
+    let mut api_failure = SearchResults::new();
+    api_failure.add_failure(
+        crate::EngineFailure::new("api", "provider_quota", "quota exhausted").with_transient(false),
+    );
+    let http_results = Aggregator::new().aggregate_for_query(
+        query,
+        vec![(
+            "http".to_string(),
+            vec![
+                result(
+                    "https://health.example/malaria-vaccine",
+                    "Malaria vaccine position paper",
+                    "Evidence and recommendation",
+                ),
+                result(
+                    "https://policy.example/vaccine-paper",
+                    "Vaccine position paper",
+                    "Malaria evidence review",
+                ),
+            ],
+        )],
+    );
+    let api_calls = Arc::new(AtomicUsize::new(0));
+    let http_calls = Arc::new(AtomicUsize::new(0));
+    let headless_calls = Arc::new(AtomicUsize::new(0));
+    let mut cascade = SearchCascade::new(SearchQuery::new(query), floor);
+
+    let calls = Arc::clone(&api_calls);
+    assert_eq!(
+        cascade
+            .run_tier_if_needed("api", || async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                api_failure
+            })
+            .await,
+        Some(SearchTierDecision::Continue)
+    );
+    let calls = Arc::clone(&http_calls);
+    assert_eq!(
+        cascade
+            .run_tier_if_needed("http", || async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                http_results
+            })
+            .await,
+        Some(SearchTierDecision::Stop)
+    );
+    let calls = Arc::clone(&headless_calls);
+    assert_eq!(
+        cascade
+            .run_tier_if_needed("headless", || async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                SearchResults::new()
+            })
+            .await,
+        None
+    );
+
+    assert_eq!(api_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(http_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(headless_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(cascade.reports().len(), 2);
+}
+
+#[tokio::test]
+async fn lazy_cascade_reaches_headless_only_after_two_insufficient_tiers() {
+    let floor = SearchQualityFloor {
+        min_usable_results: 3,
+        min_unique_hosts: 3,
+        min_contributing_engines: 1,
+        min_aligned_results: 2,
+        min_consensus_results: 0,
+        min_query_match: 0.2,
+        min_mean_query_match: 0.0,
+    };
+    let query = "cross border rail capacity assessment";
+    let aggregator = Aggregator::new();
+    let api_results = aggregator.aggregate_for_query(
+        query,
+        vec![(
+            "api".to_string(),
+            vec![result(
+                "https://index.example/rail",
+                "Rail index",
+                "General transport links",
+            )],
+        )],
+    );
+    let http_results = aggregator.aggregate_for_query(
+        query,
+        vec![(
+            "http".to_string(),
+            vec![result(
+                "https://brief.example/capacity",
+                "Rail capacity brief",
+                "Cross border capacity summary",
+            )],
+        )],
+    );
+    let headless_results = aggregator.aggregate_for_query(
+        query,
+        vec![(
+            "headless".to_string(),
+            vec![
+                result(
+                    "https://assessment.example/rail-capacity",
+                    "Cross border rail capacity assessment",
+                    "Methods and findings",
+                ),
+                result(
+                    "https://evidence.example/cross-border-rail",
+                    "Cross border rail evidence",
+                    "Capacity assessment results",
+                ),
+            ],
+        )],
+    );
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut cascade = SearchCascade::new(SearchQuery::new(query), floor);
+
+    for (tier, results) in [
+        ("api", api_results),
+        ("http", http_results),
+        ("headless", headless_results),
+    ] {
+        let calls = Arc::clone(&calls);
+        cascade
+            .run_tier_if_needed(tier, || async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                results
+            })
+            .await
+            .expect("each insufficient predecessor must activate the next tier");
+    }
+
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    assert!(!cascade.needs_next_tier());
+    assert_eq!(cascade.reports().len(), 3);
+    assert_eq!(cascade.reports()[2].decision, SearchTierDecision::Stop);
 }
 
 #[test]

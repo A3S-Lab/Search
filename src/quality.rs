@@ -1,6 +1,7 @@
 //! Domain-agnostic result quality and tier-cascade decisions.
 
 use std::collections::HashSet;
+use std::future::Future;
 
 use serde::{Deserialize, Serialize};
 
@@ -108,8 +109,8 @@ impl SearchQualityFloor {
             min_contributing_engines: usize::from(target > 0),
             min_aligned_results: target.div_ceil(2),
             min_consensus_results: 0,
-            min_query_match: 0.18,
-            min_mean_query_match: 0.0,
+            min_query_match: 0.35,
+            min_mean_query_match: 0.30,
         }
     }
 
@@ -191,6 +192,26 @@ impl SearchCascade {
             decision,
         });
         decision
+    }
+
+    /// Executes and merges one tier only while the quality floor is unmet.
+    ///
+    /// The closure is not invoked after an earlier tier has satisfied the
+    /// floor, so callers can keep expensive transports such as headless
+    /// browsers uninitialized on the healthy fast path.
+    pub async fn run_tier_if_needed<F, Fut>(
+        &mut self,
+        tier: impl Into<String>,
+        run: F,
+    ) -> Option<SearchTierDecision>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = SearchResults>,
+    {
+        if !self.needs_next_tier() {
+            return None;
+        }
+        Some(self.push_tier(tier, run().await))
     }
 
     /// Returns the quality of all tiers merged so far.

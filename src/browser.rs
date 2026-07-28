@@ -240,6 +240,10 @@ mod tests {
         delay: Duration,
     }
 
+    struct StaticHtmlRenderer {
+        html: String,
+    }
+
     #[async_trait]
     impl PageRenderer for DelayedRenderer {
         async fn render(&self, request: RenderRequest) -> UseResult<RenderedPage> {
@@ -252,6 +256,21 @@ mod tests {
                 content_type: Some("text/html".to_string()),
                 html: "<main>late</main>".to_string(),
                 elapsed_ms: u64::try_from(self.delay.as_millis()).unwrap_or(u64::MAX),
+                artifacts: Vec::new(),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl PageRenderer for StaticHtmlRenderer {
+        async fn render(&self, request: RenderRequest) -> UseResult<RenderedPage> {
+            Ok(RenderedPage {
+                requested_url: request.url.clone(),
+                final_url: request.url,
+                status: Some(200),
+                content_type: Some("text/html".to_string()),
+                html: self.html.clone(),
+                elapsed_ms: 1,
                 artifacts: Vec::new(),
             })
         }
@@ -317,6 +336,44 @@ mod tests {
                 if css == "main" && *timeout_ms == 1_500
         ));
         assert_eq!(metrics.total_requests(), 1);
+    }
+
+    #[tokio::test]
+    async fn browser_fetcher_and_google_engine_produce_structured_results() {
+        use crate::engines::Google;
+        use crate::{Engine, SearchQuery};
+
+        let renderer = Arc::new(StaticHtmlRenderer {
+            html: r#"
+                <html>
+                  <body>
+                    <div class="g">
+                      <a href="https://reference.example/async-traits">
+                        <h3>Async functions in traits</h3>
+                      </a>
+                      <div class="VwiC3b">Language reference and examples.</div>
+                    </div>
+                  </body>
+                </html>
+            "#
+            .to_string(),
+        });
+        let fetcher: Arc<dyn crate::PageFetcher> = Arc::new(
+            BrowserFetcher::new(renderer)
+                .with_retries(0, 0)
+                .with_total_timeout(Duration::from_secs(1)),
+        );
+        let engine = Google::new(fetcher);
+
+        let results = engine
+            .search(&SearchQuery::new("async functions in traits"))
+            .await
+            .expect("rendered Google response should parse");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Async functions in traits");
+        assert_eq!(results[0].url, "https://reference.example/async-traits");
+        assert_eq!(results[0].content, "Language reference and examples.");
     }
 
     #[tokio::test]

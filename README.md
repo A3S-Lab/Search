@@ -364,8 +364,11 @@ empty-state structures remain valid. These checks use engine page structure,
 not query topics, publishers, domains, or languages.
 
 `SearchCascade` provides a lazy tier gate rather than eagerly running every
-fallback. Callers execute a native API tier first, merge it with `push_tier`,
-and run HTTP/RSS or headless tiers only while `needs_next_tier()` is true. The
+fallback. `run_tier_if_needed` does not invoke its async closure after an
+earlier tier satisfies the floor, so callers can construct HTTP/RSS engines or
+headless browser pools inside the closure without paying for them on the
+healthy API path. `push_tier` and `needs_next_tier` remain available when a
+caller needs to manage execution separately. The
 quality floor is caller-configurable and uses only generic signals: usable
 result count, normalized host diversity, contributing engines, independent
 engine consensus, per-result Unicode query/text alignment, and mean alignment.
@@ -374,8 +377,11 @@ titles and URLs more weight than snippets, preventing one generic word or page
 boilerplate from satisfying a longer query. Queries without multiple word
 boundaries fall back to normalized Unicode character n-grams.
 The default floor does not force consensus; research callers can require it
-without embedding publisher or topic rules. The mechanism contains no host,
-named-entity, or language exceptions.
+without embedding publisher or topic rules. `for_limit` asks for at most five
+usable results, up to three normalized hosts, at least half of the target
+results with query alignment of `0.35` or higher, and mean alignment of at
+least `0.30`. The mechanism contains no host, named-entity, topic, publisher,
+or language exceptions.
 
 All executed tiers merge through `SearchResults::merge`, which applies the
 same URL normalization, provenance merge, and deterministic ranking path.
