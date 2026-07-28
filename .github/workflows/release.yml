@@ -42,6 +42,36 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Wait for the independently published Browser crate
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(python3 - <<'PY'
+          import pathlib
+          import tomllib
+
+          manifest = tomllib.loads(pathlib.Path("Cargo.toml").read_text())
+          requirement = manifest["dependencies"]["a3s-use-browser"]["version"]
+          if not requirement.startswith("=") or len(requirement) == 1:
+              raise SystemExit(
+                  "a3s-use-browser must use an exact '=x.y.z' release version"
+              )
+          print(requirement[1:])
+          PY
+          )
+          for attempt in $(seq 1 30); do
+            if curl --retry 3 --retry-all-errors --retry-delay 2 -fsSL \
+              -A "a3s-search-release-check/1.0" \
+              "https://crates.io/api/v1/crates/a3s-use-browser/${version}" >/dev/null; then
+              echo "a3s-use-browser ${version} is available"
+              exit 0
+            fi
+            echo "Waiting for a3s-use-browser ${version} on crates.io (${attempt}/30)"
+            sleep 10
+          done
+          echo "a3s-use-browser ${version} must be published before A3S Search" >&2
+          exit 1
+
       - name: Format check
         run: cargo fmt -- --check
 

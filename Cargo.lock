@@ -10,7 +10,7 @@ checksum = "d2dc4eb3b0dd1b11efa0ad9bf397c97fd1d16e3eb4f9ca43872df069560d0b69"
 
 [[package]]
 name = "a3s-search"
-version = "2.1.0"
+version = "2.1.1"
 dependencies = [
  "a3s-acl",
  "a3s-updater",
@@ -54,7 +54,7 @@ dependencies = [
 [[package]]
 name = "a3s-use-browser"
 version = "0.3.0"
-source = "git+https://github.com/A3S-Lab/Browser?rev=b0461b6a6d95484d92f65b2bf86fea14dea39c69#b0461b6a6d95484d92f65b2bf86fea14dea39c69"
+source = "git+https://github.com/A3S-Lab/Browser?rev=1830c7b6896b0a38637eba2b61a386bf8a36eada#1830c7b6896b0a38637eba2b61a386bf8a36eada"
 dependencies = [
  "a3s-use-core",
  "async-trait",

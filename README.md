@@ -480,6 +480,8 @@ With the `headless` feature, Search adapts the typed
 browser discovery, managed installation, process lifecycle, and tab limits;
 Search owns only URL-to-HTML adaptation, wait conditions, retries, and metrics.
 Search never depends on the A3S Use facade, Browser driver, or MCP surface.
+Release `a3s-use-browser` before tagging a Search version that depends on it;
+the Search release gate waits for the exact Browser crate version on crates.io.
 
 Providers may return `full_text` directly. For snippet-only results,
 `enrich_full_text` can fetch each result page and extract the main article body:
