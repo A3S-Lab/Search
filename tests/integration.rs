@@ -532,7 +532,7 @@ mod lightpanda_tests {
 
     /// Find the Lightpanda binary without triggering an auto-download.
     ///
-    /// Check order is owned by A3S Use: environment, PATH, then its managed cache.
+    /// Check order is owned by A3S Browser: environment, PATH, then its managed cache.
     /// Returns `None` if the binary is not locally available.
     fn find_lp_binary() -> Option<std::path::PathBuf> {
         detect_lightpanda()
@@ -809,7 +809,7 @@ mod lightpanda_tests {
             .with_wait(WaitStrategy::Load)
             .with_user_agent(custom_ua);
 
-        // A3S Use applies the override before navigating the initial document.
+        // A3S Browser applies the override before navigating the initial document.
         let result = fetcher.fetch("https://example.com").await;
         assert!(
             result.is_ok(),

@@ -10,7 +10,7 @@ checksum = "d2dc4eb3b0dd1b11efa0ad9bf397c97fd1d16e3eb4f9ca43872df069560d0b69"
 
 [[package]]
 name = "a3s-search"
-version = "2.1.0"
+version = "2.1.1"
 dependencies = [
  "a3s-acl",
  "a3s-updater",
@@ -53,9 +53,8 @@ dependencies = [
 
 [[package]]
 name = "a3s-use-browser"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a2402bdf7821c201de3d01a3f3155f3097563afeb3d6c9195a03978872e5f76"
+version = "0.3.0"
+source = "git+https://github.com/A3S-Lab/Browser?rev=1830c7b6896b0a38637eba2b61a386bf8a36eada#1830c7b6896b0a38637eba2b61a386bf8a36eada"
 dependencies = [
  "a3s-use-core",
  "async-trait",
@@ -75,13 +74,17 @@ dependencies = [
 
 [[package]]
 name = "a3s-use-core"
-version = "0.1.2"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26b023e7ac799aafe5eba517f08c7419b2990aa4acb099ecf14e73a8de7bab17"
+checksum = "0b7a972deb8d62b14f980bd38109c6305bee19c6187bc415f259cc695a60c722"
 dependencies = [
+ "olpc-cjson",
+ "semver",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.19",
+ "url",
 ]
 
 [[package]]
@@ -1656,6 +1659,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "olpc-cjson"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "696183c9b5fe81a7715d074fd632e8bd46f4ccc0231a3ed7fc580a80de5f7083"
+dependencies = [
+ "serde",
+ "serde_json",
+ "unicode-normalization",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2862,6 +2876,15 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8"
+dependencies = [
+ "tinyvec",
+]
 
 [[package]]
 name = "unicode-segmentation"
