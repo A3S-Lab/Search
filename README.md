@@ -369,6 +369,10 @@ and run HTTP/RSS or headless tiers only while `needs_next_tier()` is true. The
 quality floor is caller-configurable and uses only generic signals: usable
 result count, normalized host diversity, contributing engines, independent
 engine consensus, per-result Unicode query/text alignment, and mean alignment.
+Multi-term alignment measures length-weighted query-unit coverage and gives
+titles and URLs more weight than snippets, preventing one generic word or page
+boilerplate from satisfying a longer query. Queries without multiple word
+boundaries fall back to normalized Unicode character n-grams.
 The default floor does not force consensus; research callers can require it
 without embedding publisher or topic rules. The mechanism contains no host,
 named-entity, or language exceptions.
