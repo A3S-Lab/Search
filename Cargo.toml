@@ -19,7 +19,7 @@ tokio-test = "0.4"
 
 [package]
 name = "a3s-search"
-version = "2.1.1"
+version = "2.1.2"
 edition.workspace = true
 license.workspace = true
 repository = "https://github.com/A3S-Lab/Search"
