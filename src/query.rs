@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::EngineCategory;
 
 /// Safe search level.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum SafeSearch {
     /// No filtering.
     #[default]
@@ -17,7 +17,7 @@ pub enum SafeSearch {
 }
 
 /// Time range filter for search results.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TimeRange {
     Day,
     Week,
@@ -26,7 +26,7 @@ pub enum TimeRange {
 }
 
 /// A search query with all parameters.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SearchQuery {
     /// The search terms.
     pub query: String,

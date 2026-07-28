@@ -100,6 +100,7 @@
 mod aggregator;
 mod bulkhead;
 mod circuit;
+mod coalescer;
 mod config;
 mod engine;
 mod enrich;
@@ -135,6 +136,7 @@ pub use circuit::{
     CircuitBreaker, CircuitBreakerConfig, CircuitOpen, CircuitPermit, CircuitSnapshot,
     CircuitState, CircuitWindowConfig,
 };
+pub use coalescer::{SearchCoalescer, SearchCoalescerConfig, SearchCoalescerSnapshot};
 pub use config::{EngineEntry, HealthEntry, ProviderEntry, ProviderSettings, SearchConfig};
 pub use engine::{Engine, EngineCategory, EngineConfig, EngineOutput};
 pub use enrich::enrich_full_text;

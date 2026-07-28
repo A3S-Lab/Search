@@ -7,10 +7,11 @@ use futures::future::join_all;
 use tokio::time::{timeout, Duration};
 use tracing::{debug, warn};
 
+use crate::coalescer::{SearchCoalescingAdmission, SearchRequestKey};
 use crate::{
     Aggregator, Bulkhead, CircuitBreaker, CircuitPermit, Engine, EngineFailure, EngineOutcome,
-    EngineOutcomeKind, HealthConfig, HealthMonitor, Metrics, Result, SearchError, SearchQuery,
-    SearchResults,
+    EngineOutcomeKind, HealthConfig, HealthMonitor, Metrics, Result, SearchCoalescer, SearchError,
+    SearchQuery, SearchResults,
 };
 
 /// Meta search engine that orchestrates searches across multiple engines.
@@ -22,6 +23,7 @@ pub struct Search {
     metrics: Option<Arc<Metrics>>,
     circuit_breaker: Option<CircuitBreaker>,
     bulkhead: Option<Bulkhead>,
+    request_coalescer: Option<SearchCoalescer>,
 }
 
 impl Search {
@@ -35,6 +37,7 @@ impl Search {
             metrics: None,
             circuit_breaker: None,
             bulkhead: None,
+            request_coalescer: None,
         }
     }
 
@@ -48,6 +51,7 @@ impl Search {
             metrics: None,
             circuit_breaker: None,
             bulkhead: None,
+            request_coalescer: None,
         }
     }
 
@@ -78,6 +82,21 @@ impl Search {
     /// Sets or clears shared per-engine concurrency isolation.
     pub fn set_bulkhead(&mut self, bulkhead: Option<Bulkhead>) {
         self.bulkhead = bulkhead;
+    }
+
+    /// Attaches a shared registry that collapses identical concurrent searches.
+    ///
+    /// Completed flights are removed immediately, so this does not cache
+    /// results. Share one registry only inside a compatible tenant,
+    /// credential, endpoint, proxy, safe-search, freshness, and policy scope.
+    pub fn with_request_coalescer(mut self, coalescer: SearchCoalescer) -> Self {
+        self.request_coalescer = Some(coalescer);
+        self
+    }
+
+    /// Sets or clears shared in-flight request coalescing.
+    pub fn set_request_coalescer(&mut self, coalescer: Option<SearchCoalescer>) {
+        self.request_coalescer = coalescer;
     }
 
     /// Sets or clears the metrics registry used by this search instance.
@@ -118,6 +137,35 @@ impl Search {
             return Err(SearchError::InvalidQuery("Query cannot be empty".into()));
         }
 
+        let Some(coalescer) = self.request_coalescer.as_ref() else {
+            return self.execute_search(query).await;
+        };
+        let key = SearchRequestKey::new(
+            query.clone(),
+            self.engines.iter().map(|engine| engine.config()),
+            self.timeout_override,
+        );
+
+        loop {
+            match coalescer.acquire(key.clone()) {
+                SearchCoalescingAdmission::Leader(leader) => {
+                    let result = self.execute_search(query.clone()).await;
+                    if let Ok(results) = &result {
+                        leader.complete(results.clone());
+                    }
+                    return result;
+                }
+                SearchCoalescingAdmission::Follower(flight) => {
+                    if let Some(results) = flight.wait().await {
+                        return Ok(results);
+                    }
+                }
+                SearchCoalescingAdmission::Bypass => return self.execute_search(query).await,
+            }
+        }
+    }
+
+    async fn execute_search(&self, query: SearchQuery) -> Result<SearchResults> {
         let start = Instant::now();
         let query = Arc::new(query);
 
@@ -1333,3 +1381,7 @@ mod tests {
         assert_eq!(health.failure_count("engine1"), 0);
     }
 }
+
+#[cfg(test)]
+#[path = "search/coalescing_tests.rs"]
+mod coalescing_tests;

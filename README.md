@@ -16,6 +16,7 @@ request reports.
 - Parallel execution with isolated timeouts and partial-failure results
 - Shared per-engine bulkheads and closed/open/half-open circuit breaking
 - Sliding failure/slow-call windows, bounded `Retry-After`, and retry budgets
+- Bounded, cancellation-safe coalescing for identical in-flight requests
 - Caller-driven, quality-gated API → HTTP/RSS → headless cascades
 - Deterministic URL deduplication, rich-field merging, duplicate evidence
   suppression, and consensus ranking
@@ -317,22 +318,25 @@ rather than silently ignoring them.
 
 ## Reliability and quality-gated fallback
 
-`Bulkhead` and `CircuitBreaker` are optional shared registries. Clone them into
-each `Search` instance in the same runtime so one overloaded or unavailable
-engine cannot consume unbounded local resources or be retried by every new
-request:
+`Bulkhead`, `CircuitBreaker`, and `SearchCoalescer` are optional shared
+registries. Clone them into each compatible `Search` instance in the same
+runtime so one overloaded or unavailable engine cannot consume unbounded local
+resources or be retried independently by every new request:
 
 ```rust,no_run
-use a3s_search::{Bulkhead, CircuitBreaker, Search};
+use a3s_search::{Bulkhead, CircuitBreaker, Search, SearchCoalescer};
 
 let bulkhead = Bulkhead::default();
 let circuit = CircuitBreaker::default();
+let coalescer = SearchCoalescer::default();
 let first = Search::new()
     .with_bulkhead(bulkhead.clone())
-    .with_circuit_breaker(circuit.clone());
+    .with_circuit_breaker(circuit.clone())
+    .with_request_coalescer(coalescer.clone());
 let second = Search::new()
     .with_bulkhead(bulkhead)
-    .with_circuit_breaker(circuit);
+    .with_circuit_breaker(circuit)
+    .with_request_coalescer(coalescer);
 ```
 
 Bulkheads are keyed by normalized engine shortcut and enforce bounded in-flight
@@ -345,6 +349,18 @@ capacity.
 Scope circuit state to compatible credentials, endpoint configuration, and
 network routing. Do not share terminal authentication or quota state between
 unrelated tenants. Recreate the circuit when those inputs change.
+
+The coalescer collapses only overlapping requests with identical query
+controls, configured engine identities, ranking weights, and timeout policy.
+It removes each flight immediately after completion, so sequential requests
+remain fresh and no positive or negative result cache is implied. Its distinct
+in-flight map is bounded; excess distinct requests bypass coalescing and remain
+subject to the normal bulkhead. If a leader is cancelled, followers are woken
+and exactly one can take over rather than waiting forever. Scope a coalescer to
+compatible tenant, credential, endpoint, proxy, safe-search, freshness, and
+policy boundaries because opaque engine credentials are deliberately not part
+of the request identity. `SearchCoalescerSnapshot` exposes current flights and
+leader, shared, bypassed, and abandoned request counts.
 
 The circuit uses closed, open, and half-open states. Quota, authentication,
 permission, and rate-limit failures open immediately; transient failures and
@@ -700,8 +716,10 @@ impl Search {
     pub fn with_metrics(self, metrics: Arc<Metrics>) -> Self;
     pub fn with_circuit_breaker(self, circuit_breaker: CircuitBreaker) -> Self;
     pub fn with_bulkhead(self, bulkhead: Bulkhead) -> Self;
+    pub fn with_request_coalescer(self, coalescer: SearchCoalescer) -> Self;
     pub fn set_circuit_breaker(&mut self, circuit_breaker: Option<CircuitBreaker>);
     pub fn set_bulkhead(&mut self, bulkhead: Option<Bulkhead>);
+    pub fn set_request_coalescer(&mut self, coalescer: Option<SearchCoalescer>);
     pub fn set_metrics(&mut self, metrics: Option<Arc<Metrics>>);
     pub fn metrics(&self) -> Option<Arc<Metrics>>;
     pub fn add_engine<E: Engine + 'static>(&mut self, engine: E);
@@ -828,7 +846,9 @@ thresholds, transient/terminal/maximum open durations, recovery backoff, jitter,
 and an optional `CircuitWindowConfig` for recent failure and slow-call rates.
 `BulkheadConfig` controls per-engine in-flight capacity, bounded queue size, and
 queue wait. `RetryBudgetConfig` controls shared capacity, retry cost, and
-success credit; each type exposes a point-in-time snapshot.
+success credit. `SearchCoalescerConfig` bounds distinct in-flight request
+identities without retaining completed results; each type exposes a
+point-in-time snapshot.
 `ProxyConfig` contains host, port, protocol, and optional authentication;
 `ProxyPool` supports static or dynamic providers and round-robin or random
 selection. `Metrics` supports recording, snapshots, request counts, success
