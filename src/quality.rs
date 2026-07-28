@@ -219,23 +219,68 @@ impl SearchCascade {
     }
 }
 
-/// Measures how much of a query is represented by a result using normalized
-/// Unicode character n-grams. This works without stop-word lists, host rules,
-/// named-entity routing, or language-specific tokenizers.
+/// Measures how much of a query is represented by a result without topic,
+/// publisher, or language-specific rules.
+///
+/// Multi-term queries use length-weighted term coverage so one generic word
+/// cannot satisfy a longer request. Queries that do not expose multiple word
+/// boundaries use normalized Unicode character n-grams. In both cases the
+/// title and URL carry more weight than the snippet, where incidental matches
+/// and page boilerplate are more common.
 pub fn query_match_score(query: &str, result: &SearchResult) -> f64 {
-    let query = normalized_characters(query);
-    if query.is_empty() {
+    const TITLE_URL_WEIGHT: f64 = 0.75;
+    const SNIPPET_WEIGHT: f64 = 1.0 - TITLE_URL_WEIGHT;
+
+    let query_units = normalized_query_units(query);
+    let query_characters = normalized_characters(query);
+    if query_characters.is_empty() {
         return 0.0;
     }
-    let visible = normalized_characters(&format!(
-        "{} {} {}",
-        result.title, result.url, result.content
-    ));
+
+    let field_score = |visible: &str| {
+        if query_units.len() > 1 {
+            query_unit_coverage(&query_units, visible)
+        } else {
+            character_gram_coverage(&query_characters, visible)
+        }
+    };
+    let headline_score = field_score(&format!("{} {}", result.title, result.url));
+    let snippet_score = field_score(&result.content);
+    TITLE_URL_WEIGHT.mul_add(headline_score, SNIPPET_WEIGHT * snippet_score)
+}
+
+fn normalized_query_units(value: &str) -> Vec<Vec<char>> {
+    let mut seen = HashSet::new();
+    value
+        .split(|character: char| !character.is_alphanumeric())
+        .filter_map(|unit| {
+            let normalized = normalized_characters(unit);
+            (!normalized.is_empty() && seen.insert(normalized.clone())).then_some(normalized)
+        })
+        .collect()
+}
+
+fn query_unit_coverage(query_units: &[Vec<char>], visible: &str) -> f64 {
+    let visible = normalized_characters(visible);
+    let total_weight = query_units.iter().map(Vec::len).sum::<usize>();
+    if visible.is_empty() || total_weight == 0 {
+        return 0.0;
+    }
+    let matched_weight = query_units
+        .iter()
+        .filter(|unit| contains_characters(&visible, unit))
+        .map(Vec::len)
+        .sum::<usize>();
+    matched_weight as f64 / total_weight as f64
+}
+
+fn character_gram_coverage(query: &[char], visible: &str) -> f64 {
+    let visible = normalized_characters(visible);
     if visible.is_empty() {
         return 0.0;
     }
     let gram_size = query.len().min(3);
-    let query_grams = character_grams(&query, gram_size);
+    let query_grams = character_grams(query, gram_size);
     let visible_grams = character_grams(&visible, gram_size);
     if query_grams.is_empty() {
         return 0.0;
@@ -245,6 +290,14 @@ pub fn query_match_score(query: &str, result: &SearchResult) -> f64 {
         .filter(|gram| visible_grams.contains(*gram))
         .count();
     matched as f64 / query_grams.len() as f64
+}
+
+fn contains_characters(haystack: &[char], needle: &[char]) -> bool {
+    !needle.is_empty()
+        && needle.len() <= haystack.len()
+        && haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
 }
 
 fn normalized_characters(value: &str) -> Vec<char> {

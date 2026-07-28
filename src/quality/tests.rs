@@ -39,6 +39,46 @@ fn query_alignment_is_domain_and_language_neutral() {
 }
 
 #[test]
+fn multi_term_alignment_rejects_generic_word_and_boilerplate_matches() {
+    let query = "global renewable energy outlook IEA IRENA World Bank policy reports";
+    let generic = result(
+        "https://dictionary.example/global",
+        "GLOBAL Definition & Meaning",
+        "A word used for the whole world. Send a report if this entry has a problem.",
+    );
+    let specific = result(
+        "https://evidence.example/world-energy-outlook",
+        "World Energy Outlook - IEA",
+        "Renewable energy policy report with IRENA and World Bank evidence.",
+    );
+
+    assert!(query_match_score(query, &generic) < 0.18);
+    assert!(query_match_score(query, &specific) >= 0.18);
+}
+
+#[test]
+fn repeated_query_terms_do_not_inflate_alignment() {
+    let once = query_match_score(
+        "distributed tracing sampling specification",
+        &result(
+            "https://example.test/tracing",
+            "Distributed tracing specification",
+            "Sampling semantics",
+        ),
+    );
+    let repeated = query_match_score(
+        "distributed distributed tracing sampling specification",
+        &result(
+            "https://example.test/tracing",
+            "Distributed tracing specification",
+            "Sampling semantics",
+        ),
+    );
+
+    assert_eq!(once, repeated);
+}
+
+#[test]
 fn query_aware_aggregation_demotes_low_alignment_capacity() {
     let aggregator = Aggregator::new();
     let ranked = aggregator.aggregate_for_query(
