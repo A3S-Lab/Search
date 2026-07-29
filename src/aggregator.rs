@@ -81,6 +81,7 @@ impl Aggregator {
         let mut url_map: HashMap<String, Candidate> = HashMap::new();
 
         for (engine_name, results) in engine_results {
+            let results = deduplicate_engine_results(results);
             let native_relevance = calibrated_native_relevance(&results);
             for ((position, mut result), relevance_percentile) in
                 results.into_iter().enumerate().zip(native_relevance)
@@ -141,6 +142,23 @@ impl Aggregator {
     fn engine_weight(&self, engine: &str) -> f64 {
         self.engine_weights.get(engine).copied().unwrap_or(1.0)
     }
+}
+
+fn deduplicate_engine_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
+    let mut unique = Vec::<SearchResult>::with_capacity(results.len());
+    let mut positions = HashMap::<String, usize>::with_capacity(results.len());
+
+    for result in results {
+        let normalized = result.normalized_url();
+        if let Some(index) = positions.get(&normalized).copied() {
+            merge_results(&mut unique[index], result);
+        } else {
+            positions.insert(normalized, unique.len());
+            unique.push(result);
+        }
+    }
+
+    unique
 }
 
 pub(crate) fn merge_ranked_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
@@ -448,6 +466,66 @@ mod tests {
             aggregated.items()[0].normalized_url(),
             "shared.example/specification"
         );
+    }
+
+    #[test]
+    fn provider_local_duplicates_do_not_consume_rank_positions() {
+        let query = "bounded transport recovery";
+        let primary = || {
+            SearchResult::new(
+                "https://primary.example/recovery?utm_source=provider",
+                "Bounded transport recovery",
+                "Normative recovery behavior and limits",
+            )
+            .with_relevance_score(0.9)
+        };
+        let independent = || {
+            SearchResult::new(
+                "https://independent.example/recovery",
+                "Bounded transport recovery analysis",
+                "Independent analysis of recovery limits",
+            )
+            .with_relevance_score(0.7)
+        };
+
+        let without_duplicate = Aggregator::new().aggregate_for_query(
+            query,
+            vec![("provider".to_string(), vec![primary(), independent()])],
+        );
+        let with_duplicate = Aggregator::new().aggregate_for_query(
+            query,
+            vec![(
+                "provider".to_string(),
+                vec![
+                    primary(),
+                    SearchResult::new(
+                        "http://www.primary.example/recovery/",
+                        "Bounded transport recovery specification",
+                        "Normative recovery behavior, examples, and limits",
+                    )
+                    .with_relevance_score(0.8),
+                    independent(),
+                ],
+            )],
+        );
+
+        let baseline = without_duplicate.items();
+        let repeated = with_duplicate.items();
+        assert_eq!(baseline.len(), repeated.len());
+        assert_eq!(
+            baseline
+                .iter()
+                .map(SearchResult::normalized_url)
+                .collect::<Vec<_>>(),
+            repeated
+                .iter()
+                .map(SearchResult::normalized_url)
+                .collect::<Vec<_>>()
+        );
+        for (baseline, repeated) in baseline.iter().zip(repeated) {
+            assert_eq!(baseline.score, repeated.score);
+            assert_eq!(baseline.positions, repeated.positions);
+        }
     }
 
     #[test]

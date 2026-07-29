@@ -331,6 +331,10 @@ one-based position `p` contributes `(k + 1) / (k + p)`, multiplied by the
 configured engine weight and bounded query-alignment and native-relevance
 factors. Contributions from independent engines are added after normalized URL
 deduplication, so repeated evidence can outrank an isolated first position.
+Duplicates returned by one engine are collapsed before rank positions and
+provider-local relevance percentiles are assigned. Tracking parameters,
+HTTP/HTTPS aliases, or repeated provider rows therefore cannot consume rank
+positions or imitate cross-engine consensus.
 
 Provider-native relevance values are not comparable across APIs. Each engine
 response is therefore calibrated to a local percentile before it contributes
@@ -354,7 +358,29 @@ cargo test --locked --test quality_eval ranking_quality_report \
 
 The fixtures live only under `tests/`; they are not compiled into the library
 or used by the runtime ranker. They establish a reproducible regression floor,
-not a substitute for live-provider evaluation.
+not a substitute for live-provider evaluation. The same gate applies
+metamorphic transformations for provider input order, opaque provider names,
+provider-local score scales, and repeated canonical rows. Those transformations
+test general ranking invariants without adding topic-specific runtime logic. A
+separate query-alignment matrix runs 100 transformed trials across 20 scripts
+and request shapes to guard the Unicode, whitespace, case, punctuation, and
+field-weighting paths.
+
+Before a release is treated as broadly quality-qualified, evaluate a separately
+maintained holdout with at least 40 fully judged cases. The holdout must remain
+outside the repository and must not reuse public case IDs or queries:
+
+```bash
+A3S_SEARCH_QUALITY_HOLDOUT=/secure/search-quality-holdout-v1.json \
+  cargo test --locked --test quality_eval \
+  independent_holdout_meets_the_predeclared_quality_floor \
+  -- --ignored --nocapture --exact
+```
+
+The command applies predeclared nDCG@10, material-result MRR, Recall@10,
+per-case nDCG, and duplicate-ratio floors. Its machine-readable output binds
+the report to the external corpus SHA-256. Passing the public corpus alone is
+never release evidence for the holdout gate.
 
 ## Reliability and quality-gated fallback
 
@@ -958,6 +984,27 @@ A3S_SEARCH_LIVE_SOAK_INTERVAL_SECONDS=10 \
   cargo test --release --test soak public_http_low_rate_soak \
   -- --ignored --nocapture --exact
 ```
+
+The built-in corpus rotates eight multilingual stability probes. A release
+candidate should instead use an external, bounded JSON corpus so the long soak
+does not repeatedly exercise a small public set. Only run it at a rate allowed
+by every configured public engine:
+
+```bash
+A3S_SEARCH_LIVE_SOAK_QUERY_CORPUS=/secure/live-soak-queries-v1.json \
+A3S_SEARCH_LIVE_SOAK_SECONDS=86400 \
+A3S_SEARCH_LIVE_SOAK_INTERVAL_SECONDS=60 \
+  cargo test --release --test soak public_http_low_rate_soak \
+  -- --ignored --nocapture --exact
+```
+
+The external file uses `{"version":1,"queries":[{"query":"...","language":"en"}]}`,
+is limited to one MiB, and must contain at least four distinct ASCII and
+non-ASCII queries. The report records its SHA-256 and query count without
+printing the queries. Resource checks establish their baseline after the first
+network warm-up, reject sustained descriptor growth during the soak, then drop
+the complete `Search` instance and verify that connection-pool descriptors are
+released. Expected keep-alive sockets are therefore not mistaken for leaks.
 
 Both commands emit one JSON report line suitable for retaining with release
 evidence. Environment variables can also adjust worker count, duplicate group

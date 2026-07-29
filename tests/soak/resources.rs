@@ -70,6 +70,10 @@ pub(super) fn summarize_resources(samples: &[(u64, usize)]) -> ResourceSummary {
     }
 }
 
+pub(super) fn resource_snapshot() -> Option<(u64, usize)> {
+    Some((rss_kib()?, fd_count()?))
+}
+
 fn tail_rss_slope(samples: &[(u64, usize)]) -> f64 {
     let tail = &samples[samples.len() / 2..];
     if tail.len() < 2 {

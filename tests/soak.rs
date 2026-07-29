@@ -5,6 +5,7 @@ mod harness;
 #[path = "soak/resources.rs"]
 mod resources;
 
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -14,11 +15,33 @@ use a3s_search::{
     Bulkhead, CircuitBreaker, EngineOutcomeKind, Search, SearchCoalescer, SearchQuery,
 };
 use futures::future::join_all;
+use serde::Deserialize;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use tokio::sync::Barrier;
 
 use harness::{SoakConfig, SoakCounters, SoakRuntime};
-use resources::{sample_resources, summarize_resources};
+use resources::{resource_snapshot, sample_resources, summarize_resources};
+
+const LIVE_SOAK_QUERY_CORPUS_ENV: &str = "A3S_SEARCH_LIVE_SOAK_QUERY_CORPUS";
+const MAX_LIVE_SOAK_QUERY_CORPUS_BYTES: usize = 1024 * 1024;
+
+#[derive(Debug, Deserialize)]
+struct LiveSoakQueryCorpus {
+    version: u32,
+    queries: Vec<LiveSoakQuery>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LiveSoakQuery {
+    query: String,
+    language: String,
+}
+
+struct LoadedLiveSoakQueries {
+    identity: String,
+    queries: Vec<LiveSoakQuery>,
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[ignore = "long-running deterministic stability soak; run explicitly"]
@@ -296,12 +319,16 @@ async fn public_http_low_rate_soak() {
     search.add_engine(DuckDuckGo::new());
     search.add_engine(Wikipedia::new());
     search.add_engine(Sogou::new());
-    let queries = [
-        ("distributed systems reliability", "en"),
-        ("公共卫生数据质量", "zh"),
-        ("renewable energy storage research", "en"),
-        ("软件供应链安全", "zh"),
-    ];
+    let query_corpus = load_live_soak_queries();
+    let prewarm_resources = resource_snapshot();
+    let warmup_started = Instant::now();
+    let warmup = tokio::time::timeout(
+        Duration::from_secs(15),
+        search.search(soak_search_query(&query_corpus.queries[0])),
+    )
+    .await;
+    assert!(warmup.is_ok(), "public search warm-up exceeded its bound");
+    let warmup_latency_ms = warmup_started.elapsed().as_millis() as u64;
     let deadline = Instant::now() + duration;
     let resource_running = Arc::new(AtomicBool::new(true));
     let resource_samples = Arc::new(Mutex::new(Vec::new()));
@@ -319,12 +346,12 @@ async fn public_http_low_rate_soak() {
     let mut latency_ms = Vec::new();
 
     while Instant::now() < deadline {
-        let (query, language) = queries[attempts as usize % queries.len()];
+        let query = &query_corpus.queries[attempts as usize % query_corpus.queries.len()];
         attempts += 1;
         let started = Instant::now();
         match tokio::time::timeout(
             Duration::from_secs(15),
-            search.search(SearchQuery::new(query).with_language(language)),
+            search.search(soak_search_query(query)),
         )
         .await
         {
@@ -347,6 +374,10 @@ async fn public_http_low_rate_soak() {
     resource_running.store(false, Ordering::Release);
     sampler.await.expect("resource sampler panicked");
     let resources = summarize_resources(&resource_samples.lock().unwrap());
+    let coalescer_in_flight = coalescer.snapshot().in_flight;
+    drop(search);
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let released_resources = resource_snapshot();
     latency_ms.sort_unstable();
     let p95 = latency_ms
         .get(latency_ms.len().saturating_mul(95).saturating_sub(1) / 100)
@@ -357,6 +388,9 @@ async fn public_http_low_rate_soak() {
         json!({
             "duration_seconds": duration.as_secs(),
             "interval_seconds": interval.as_secs(),
+            "query_corpus": query_corpus.identity,
+            "query_count": query_corpus.queries.len(),
+            "warmup_latency_ms": warmup_latency_ms,
             "attempts": attempts,
             "completed": completed,
             "outer_timeouts": outer_timeouts,
@@ -364,8 +398,16 @@ async fn public_http_low_rate_soak() {
             "engine_failures": failures,
             "circuit_open": circuit_open,
             "p95_latency_ms": p95,
-            "coalescer_in_flight": coalescer.snapshot().in_flight,
-            "resources": resources,
+            "coalescer_in_flight": coalescer_in_flight,
+            "steady_state_resources": resources,
+            "prewarm_resources": prewarm_resources.map(|(rss_kib, file_descriptors)| json!({
+                "rss_kib": rss_kib,
+                "file_descriptors": file_descriptors,
+            })),
+            "released_resources": released_resources.map(|(rss_kib, file_descriptors)| json!({
+                "rss_kib": rss_kib,
+                "file_descriptors": file_descriptors,
+            })),
         })
     );
     assert!(attempts >= 2, "live soak did not execute enough requests");
@@ -374,15 +416,103 @@ async fn public_http_low_rate_soak() {
         outer_timeouts, 0,
         "public search exceeded the orchestration bound"
     );
-    assert_eq!(
-        coalescer.snapshot().in_flight,
-        0,
-        "live flight registry did not drain"
-    );
+    assert_eq!(coalescer_in_flight, 0, "live flight registry did not drain");
     assert!(
         resources.fd_growth <= 8,
-        "live soak leaked file descriptors"
+        "live soak file descriptors kept growing after connection-pool warm-up"
     );
+    if let (Some((_, before)), Some((_, released))) = (prewarm_resources, released_resources) {
+        assert!(
+            released <= before.saturating_add(8),
+            "live soak retained file descriptors after Search was dropped: {before} -> {released}"
+        );
+    }
+}
+
+fn soak_search_query(query: &LiveSoakQuery) -> SearchQuery {
+    SearchQuery::new(query.query.clone()).with_language(query.language.clone())
+}
+
+fn load_live_soak_queries() -> LoadedLiveSoakQueries {
+    let loaded = match std::env::var_os(LIVE_SOAK_QUERY_CORPUS_ENV) {
+        Some(path) => {
+            let path = std::path::PathBuf::from(path);
+            let size = std::fs::metadata(&path)
+                .expect("inspect live-soak query corpus")
+                .len();
+            assert!(
+                size <= MAX_LIVE_SOAK_QUERY_CORPUS_BYTES as u64,
+                "live-soak query corpus exceeds the one-MiB limit"
+            );
+            let bytes = std::fs::read(path).expect("read live-soak query corpus");
+            let corpus = serde_json::from_slice::<LiveSoakQueryCorpus>(&bytes)
+                .expect("live-soak query corpus must be valid JSON");
+            assert_eq!(corpus.version, 1, "unsupported live-soak corpus version");
+            LoadedLiveSoakQueries {
+                identity: format!("sha256:{:x}", Sha256::digest(&bytes)),
+                queries: corpus.queries,
+            }
+        }
+        None => LoadedLiveSoakQueries {
+            identity: "builtin-multilingual-v1".to_string(),
+            queries: builtin_live_soak_queries(),
+        },
+    };
+    validate_live_soak_queries(&loaded.queries);
+    loaded
+}
+
+fn builtin_live_soak_queries() -> Vec<LiveSoakQuery> {
+    vec![
+        live_soak_query("distributed systems reliability", "en"),
+        live_soak_query("公共卫生数据质量", "zh-CN"),
+        live_soak_query("renewable energy storage research", "en"),
+        live_soak_query("软件供应链安全", "zh-CN"),
+        live_soak_query("evaluación de transporte público", "es"),
+        live_soak_query("متطلبات سلامة تخزين الطاقة", "ar"),
+        live_soak_query("都市インフラ保守計画", "ja"),
+        live_soak_query("산업 안전 데이터 품질", "ko"),
+    ]
+}
+
+fn live_soak_query(query: &str, language: &str) -> LiveSoakQuery {
+    LiveSoakQuery {
+        query: query.to_string(),
+        language: language.to_string(),
+    }
+}
+
+fn validate_live_soak_queries(queries: &[LiveSoakQuery]) {
+    assert!(
+        queries.len() >= 4,
+        "live-soak query corpus must contain at least four queries"
+    );
+    assert!(
+        queries.iter().any(|query| query.query.is_ascii())
+            && queries.iter().any(|query| !query.query.is_ascii()),
+        "live-soak query corpus must include ASCII and non-ASCII queries"
+    );
+    let mut unique = HashSet::new();
+    for query in queries {
+        let normalized = query.query.trim().to_lowercase();
+        assert!(!normalized.is_empty(), "live-soak query cannot be blank");
+        assert!(
+            normalized.chars().count() <= 500,
+            "live-soak query exceeds 500 characters"
+        );
+        assert!(unique.insert(normalized), "duplicate live-soak query");
+        assert!(
+            !query.language.trim().is_empty() && query.language.len() <= 35,
+            "live-soak language must be a bounded non-empty tag"
+        );
+    }
+}
+
+#[test]
+fn builtin_live_soak_query_corpus_is_bounded_and_diverse() {
+    let queries = builtin_live_soak_queries();
+    validate_live_soak_queries(&queries);
+    assert_eq!(queries.len(), 8);
 }
 
 fn env_u64(name: &str, default: u64) -> u64 {
