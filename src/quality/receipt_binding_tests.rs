@@ -10,7 +10,7 @@ fn complete_receipt_binding_has_a_frozen_domain_separated_digest() {
 
     assert_eq!(
         binding.sha256,
-        "68da4db1339a3363077b3682a5ddce3722262d93edaa9277870618a9528a3a93"
+        "9aab7ef48bef6a2eda16baca1359d5c8f4abda52bddde9f446d335205f057e45"
     );
     binding
         .validate(&outcome.receipt)

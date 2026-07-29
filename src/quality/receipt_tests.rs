@@ -162,10 +162,10 @@ fn receipt_round_trips_through_its_versioned_json_schema() {
             "contributing_engine_count": 1,
             "consensus_result_count": 0,
             "aligned_result_count": 1,
-            "mean_query_match": 1.0
+            "mean_query_match": 0.95
           },
           "result_set": {
-            "sha256": "fd1aff8bbaa4ddb5db090b7c3b8249e6af6911469cdee430888e3e71260a666e"
+            "sha256": "7c1342ed154b2880e5c56ec94f45a472ccac1e03ef468be2a21e24c0f9147454"
           },
           "configured_tiers": ["tier-0", "tier-1"],
           "executed_tiers": [
@@ -177,7 +177,7 @@ fn receipt_round_trips_through_its_versioned_json_schema() {
                 "contributing_engine_count": 1,
                 "consensus_result_count": 0,
                 "aligned_result_count": 1,
-                "mean_query_match": 1.0
+                "mean_query_match": 0.95
               },
               "decision": "continue"
             },
@@ -189,7 +189,7 @@ fn receipt_round_trips_through_its_versioned_json_schema() {
                 "contributing_engine_count": 1,
                 "consensus_result_count": 0,
                 "aligned_result_count": 1,
-                "mean_query_match": 1.0
+                "mean_query_match": 0.95
               },
               "decision": "continue"
             }

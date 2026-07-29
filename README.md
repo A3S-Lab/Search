@@ -456,9 +456,10 @@ quality floor is caller-configurable and uses only generic signals: usable
 result count, normalized host diversity, contributing engines, independent
 engine consensus, per-result Unicode query/text alignment, and mean alignment.
 Multi-term alignment measures length-weighted query-unit coverage and gives
-titles and URLs more weight than snippets, preventing one generic word or page
-boilerplate from satisfying a longer query. Queries without multiple word
-boundaries fall back to normalized Unicode character n-grams.
+visible titles and snippets authority over a weak URL signal, preventing a
+query-shaped path, one generic word, or page boilerplate from satisfying a
+longer query. Queries without multiple word boundaries fall back to normalized
+Unicode character n-grams.
 The default floor does not force consensus; research callers can require it
 without embedding publisher or topic rules. `for_limit` asks for at most five
 usable results, up to three normalized hosts, at least half of the target
@@ -494,7 +495,9 @@ validation and a matching digest do not prove that a plan was committed before
 execution, that a tier ran, or who produced the record. Trusted evidence must
 therefore authenticate the complete receipt binding through an independent
 signature, digest log, or equivalent authority and validate the receipt against
-the returned results.
+the returned results. The crate enables exact finite-float parsing for its
+supported `serde_json` round trip so receipt-bound ranking values retain their
+IEEE-754 identity.
 
 ```rust,no_run
 use a3s_search::{SearchCascade, SearchQualityFloor, SearchQuery, SearchResults};
