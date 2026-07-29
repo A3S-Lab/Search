@@ -1,0 +1,393 @@
+//! Opt-in endurance tests for the public search reliability contracts.
+
+#[path = "soak/harness.rs"]
+mod harness;
+#[path = "soak/resources.rs"]
+mod resources;
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use a3s_search::engines::{DuckDuckGo, Sogou, Wikipedia};
+use a3s_search::{
+    Bulkhead, CircuitBreaker, EngineOutcomeKind, Search, SearchCoalescer, SearchQuery,
+};
+use futures::future::join_all;
+use serde_json::json;
+use tokio::sync::Barrier;
+
+use harness::{SoakConfig, SoakCounters, SoakRuntime};
+use resources::{sample_resources, summarize_resources};
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[ignore = "long-running deterministic stability soak; run explicitly"]
+async fn deterministic_reliability_soak() {
+    let config = SoakConfig::from_env();
+    let runtime = SoakRuntime::new();
+    let counters = Arc::new(SoakCounters::default());
+    let deadline = Instant::now() + config.duration;
+    let barrier = Arc::new(Barrier::new(config.workers));
+    let keep_running = Arc::new(AtomicBool::new(true));
+    let resource_running = Arc::new(AtomicBool::new(true));
+    let resource_samples = Arc::new(Mutex::new(Vec::new()));
+    let sampler = tokio::spawn(sample_resources(
+        Arc::clone(&resource_running),
+        Arc::clone(&resource_samples),
+        config.resource_warmup,
+    ));
+
+    let mut workers = Vec::with_capacity(config.workers);
+    for worker_id in 0..config.workers {
+        let runtime = runtime.clone();
+        let counters = Arc::clone(&counters);
+        let barrier = Arc::clone(&barrier);
+        let keep_running = Arc::clone(&keep_running);
+        workers.push(tokio::spawn(async move {
+            let mut wave = 0_u64;
+            loop {
+                let elected = barrier.wait().await;
+                if elected.is_leader() {
+                    keep_running.store(Instant::now() < deadline, Ordering::Release);
+                }
+                barrier.wait().await;
+                if !keep_running.load(Ordering::Acquire) {
+                    break;
+                }
+
+                let group = worker_id / config.duplicate_group_size;
+                let query = SearchQuery::new(format!("generic soak wave {wave} group {group}"));
+                counters.requests.fetch_add(1, Ordering::Relaxed);
+                let started = Instant::now();
+                match tokio::time::timeout(config.request_timeout, runtime.run_query(query)).await {
+                    Ok(observation) => counters.record(observation, started.elapsed()),
+                    Err(_) => {
+                        counters.deadline_timeouts.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+                wave = wave.saturating_add(1);
+            }
+        }));
+    }
+
+    let cancellation = tokio::spawn(run_cancellation_soak(
+        runtime.clone(),
+        Arc::clone(&counters),
+        deadline,
+    ));
+    let join_budget = config.duration.saturating_add(Duration::from_secs(10));
+    let worker_results = tokio::time::timeout(join_budget, join_all(workers))
+        .await
+        .expect("workers did not drain after the soak deadline");
+    for result in worker_results {
+        result.expect("soak worker panicked");
+    }
+    cancellation.await.expect("cancellation soak task panicked");
+
+    runtime.force_recovery().await;
+    resource_running.store(false, Ordering::Release);
+    sampler.await.expect("resource sampler panicked");
+    let resources = summarize_resources(&resource_samples.lock().unwrap());
+    let coalescer = runtime.coalescer.snapshot();
+    let api_bulkhead = runtime.bulkhead.snapshot("soak_api");
+    let http_bulkhead = runtime.bulkhead.snapshot("soak_http");
+    let headless_bulkhead = runtime.bulkhead.snapshot("soak_headless");
+    let cancellation_bulkhead = runtime.bulkhead.snapshot("soak_cancellation");
+
+    let requests = counters.requests.load(Ordering::Relaxed);
+    let completed = counters.completed.load(Ordering::Relaxed);
+    let deadline_timeouts = counters.deadline_timeouts.load(Ordering::Relaxed);
+    let quality_failures = counters.quality_failures.load(Ordering::Relaxed);
+    let api_only = counters.api_only.load(Ordering::Relaxed);
+    let http_fallback = counters.http_fallback.load(Ordering::Relaxed);
+    let headless_fallback = counters.headless_fallback.load(Ordering::Relaxed);
+    let cancellation_attempts = counters.cancellation_attempts.load(Ordering::Relaxed);
+    let cancellation_recovered = counters.cancellation_recovered.load(Ordering::Relaxed);
+    let cancellation_failures = counters.cancellation_failures.load(Ordering::Relaxed);
+
+    println!(
+        "SOAK_REPORT={}",
+        json!({
+            "version": env!("CARGO_PKG_VERSION"),
+            "duration_seconds": config.duration.as_secs(),
+            "workers": config.workers,
+            "requests": requests,
+            "completed": completed,
+            "deadline_timeouts": deadline_timeouts,
+            "quality_failures": quality_failures,
+            "paths": {
+                "api_only": api_only,
+                "http_fallback": http_fallback,
+                "headless_fallback": headless_fallback,
+            },
+            "outcomes": {
+                "circuit_open": counters.circuit_open.load(Ordering::Relaxed),
+                "bulkhead_rejected": counters.rejected.load(Ordering::Relaxed),
+            },
+            "latency_ms": {
+                "p50": counters.latency.percentile_ms(0.50),
+                "p95": counters.latency.percentile_ms(0.95),
+                "p99": counters.latency.percentile_ms(0.99),
+                "max": counters.latency.max_ms(),
+            },
+            "engine_calls": {
+                "api": runtime.api_probe.calls(),
+                "http": runtime.http_probe.calls(),
+                "headless": runtime.headless_probe.calls(),
+                "cancellation": runtime.cancellation_probe.calls(),
+            },
+            "max_engine_concurrency": {
+                "api": runtime.api_probe.max_in_flight(),
+                "http": runtime.http_probe.max_in_flight(),
+                "headless": runtime.headless_probe.max_in_flight(),
+                "cancellation": runtime.cancellation_probe.max_in_flight(),
+            },
+            "coalescing": {
+                "in_flight": coalescer.in_flight,
+                "leaders": coalescer.leader_requests,
+                "shared": coalescer.shared_requests,
+                "bypassed": coalescer.bypassed_requests,
+                "abandoned": coalescer.abandoned_requests,
+            },
+            "cancellation": {
+                "attempts": cancellation_attempts,
+                "recovered": cancellation_recovered,
+                "failures": cancellation_failures,
+            },
+            "resources": resources,
+        })
+    );
+
+    assert!(
+        requests >= config.workers as u64 * 10,
+        "insufficient soak load"
+    );
+    assert_eq!(completed, requests, "not every request completed");
+    assert_eq!(deadline_timeouts, 0, "request deadline was exceeded");
+    assert_eq!(
+        quality_failures, 0,
+        "fallback exhausted below the quality floor"
+    );
+    assert!(api_only > 0, "healthy API path was never observed");
+    assert!(http_fallback > 0, "HTTP fallback was never observed");
+    assert!(
+        headless_fallback > 0,
+        "headless fallback was never observed"
+    );
+    assert!(
+        headless_fallback < completed,
+        "headless ran for every request"
+    );
+    assert!(
+        counters.circuit_open.load(Ordering::Relaxed) > 0,
+        "circuit never opened"
+    );
+    assert!(
+        coalescer.shared_requests > 0,
+        "no concurrent request was coalesced"
+    );
+    assert_eq!(
+        coalescer.in_flight, 0,
+        "coalesced flights leaked after drain"
+    );
+    assert_eq!(
+        coalescer.bypassed_requests, 0,
+        "coalescer capacity was unexpectedly exhausted"
+    );
+    assert!(
+        cancellation_attempts > 0,
+        "cancellation path was never exercised"
+    );
+    assert_eq!(
+        cancellation_failures, 0,
+        "a cancelled leader stranded a follower"
+    );
+    assert_eq!(cancellation_recovered, cancellation_attempts);
+    for probe in [
+        &runtime.api_probe,
+        &runtime.http_probe,
+        &runtime.headless_probe,
+        &runtime.cancellation_probe,
+    ] {
+        assert!(probe.max_in_flight() <= runtime.max_concurrent);
+    }
+    for snapshot in [
+        api_bulkhead,
+        http_bulkhead,
+        headless_bulkhead,
+        cancellation_bulkhead,
+    ] {
+        assert_eq!(snapshot.in_flight, 0, "bulkhead permit leaked after drain");
+        assert_eq!(snapshot.queued, 0, "bulkhead queue did not drain");
+    }
+    assert!(
+        resources.rss_growth_kib <= config.max_rss_growth_kib as i64,
+        "RSS growth exceeded the soak threshold: {resources:?}"
+    );
+    if resources.samples >= 120 {
+        assert!(
+            resources.tail_rss_slope_kib_per_minute <= config.max_tail_rss_slope_kib_per_minute,
+            "tail RSS slope indicates a slow leak: {resources:?}"
+        );
+    }
+    assert!(
+        resources.fd_growth <= config.max_fd_growth as isize,
+        "file descriptor growth exceeded the soak threshold: {resources:?}"
+    );
+}
+
+async fn run_cancellation_soak(
+    runtime: SoakRuntime,
+    counters: Arc<SoakCounters>,
+    deadline: Instant,
+) {
+    let mut sequence = 0_u64;
+    while Instant::now() + Duration::from_millis(100) < deadline {
+        counters
+            .cancellation_attempts
+            .fetch_add(1, Ordering::Relaxed);
+        let query = SearchQuery::new(format!("cancellation flight {sequence}"));
+        let shared_before = runtime.coalescer.snapshot().shared_requests;
+        let leader_search = Arc::new(runtime.cancellation_search());
+        let follower_search = Arc::new(runtime.cancellation_search());
+        let leader_query = query.clone();
+        let leader = tokio::spawn(async move { leader_search.search(leader_query).await });
+        tokio::time::sleep(Duration::from_millis(2)).await;
+        let follower = tokio::spawn(async move { follower_search.search(query).await });
+        for _ in 0..1_000 {
+            if runtime.coalescer.snapshot().shared_requests > shared_before {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        let joined = runtime.coalescer.snapshot().shared_requests > shared_before;
+        leader.abort();
+        let _ = leader.await;
+        let recovered = tokio::time::timeout(Duration::from_secs(1), follower).await;
+        match recovered {
+            Ok(Ok(Ok(results))) if joined && results.items().len() == 5 => {
+                counters
+                    .cancellation_recovered
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {
+                counters
+                    .cancellation_failures
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        sequence = sequence.saturating_add(1);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "low-rate public network soak; run explicitly"]
+async fn public_http_low_rate_soak() {
+    let duration = Duration::from_secs(env_u64("A3S_SEARCH_LIVE_SOAK_SECONDS", 300).max(1));
+    let interval = Duration::from_secs(env_u64("A3S_SEARCH_LIVE_SOAK_INTERVAL_SECONDS", 10));
+    let circuit = CircuitBreaker::default();
+    let bulkhead = Bulkhead::default();
+    let coalescer = SearchCoalescer::default();
+    let mut search = Search::new()
+        .with_circuit_breaker(circuit.clone())
+        .with_bulkhead(bulkhead.clone())
+        .with_request_coalescer(coalescer.clone());
+    search.add_engine(DuckDuckGo::new());
+    search.add_engine(Wikipedia::new());
+    search.add_engine(Sogou::new());
+    let queries = [
+        ("distributed systems reliability", "en"),
+        ("公共卫生数据质量", "zh"),
+        ("renewable energy storage research", "en"),
+        ("软件供应链安全", "zh"),
+    ];
+    let deadline = Instant::now() + duration;
+    let resource_running = Arc::new(AtomicBool::new(true));
+    let resource_samples = Arc::new(Mutex::new(Vec::new()));
+    let sampler = tokio::spawn(sample_resources(
+        Arc::clone(&resource_running),
+        Arc::clone(&resource_samples),
+        Duration::ZERO,
+    ));
+    let mut attempts = 0_u64;
+    let mut completed = 0_u64;
+    let mut outer_timeouts = 0_u64;
+    let mut nonempty = 0_u64;
+    let mut failures = 0_u64;
+    let mut circuit_open = 0_u64;
+    let mut latency_ms = Vec::new();
+
+    while Instant::now() < deadline {
+        let (query, language) = queries[attempts as usize % queries.len()];
+        attempts += 1;
+        let started = Instant::now();
+        match tokio::time::timeout(
+            Duration::from_secs(15),
+            search.search(SearchQuery::new(query).with_language(language)),
+        )
+        .await
+        {
+            Ok(Ok(results)) => {
+                completed += 1;
+                nonempty += u64::from(!results.items().is_empty());
+                failures += results.failures().len() as u64;
+                circuit_open += results
+                    .outcomes()
+                    .iter()
+                    .filter(|outcome| outcome.kind == EngineOutcomeKind::CircuitOpen)
+                    .count() as u64;
+                latency_ms.push(started.elapsed().as_millis() as u64);
+            }
+            Ok(Err(_)) => completed += 1,
+            Err(_) => outer_timeouts += 1,
+        }
+        tokio::time::sleep(interval.min(deadline.saturating_duration_since(Instant::now()))).await;
+    }
+    resource_running.store(false, Ordering::Release);
+    sampler.await.expect("resource sampler panicked");
+    let resources = summarize_resources(&resource_samples.lock().unwrap());
+    latency_ms.sort_unstable();
+    let p95 = latency_ms
+        .get(latency_ms.len().saturating_mul(95).saturating_sub(1) / 100)
+        .copied()
+        .unwrap_or(0);
+    println!(
+        "LIVE_SOAK_REPORT={}",
+        json!({
+            "duration_seconds": duration.as_secs(),
+            "interval_seconds": interval.as_secs(),
+            "attempts": attempts,
+            "completed": completed,
+            "outer_timeouts": outer_timeouts,
+            "nonempty": nonempty,
+            "engine_failures": failures,
+            "circuit_open": circuit_open,
+            "p95_latency_ms": p95,
+            "coalescer_in_flight": coalescer.snapshot().in_flight,
+            "resources": resources,
+        })
+    );
+    assert!(attempts >= 2, "live soak did not execute enough requests");
+    assert_eq!(completed, attempts, "a public search did not complete");
+    assert_eq!(
+        outer_timeouts, 0,
+        "public search exceeded the orchestration bound"
+    );
+    assert_eq!(
+        coalescer.snapshot().in_flight,
+        0,
+        "live flight registry did not drain"
+    );
+    assert!(
+        resources.fd_growth <= 8,
+        "live soak leaked file descriptors"
+    );
+}
+
+fn env_u64(name: &str, default: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
+}

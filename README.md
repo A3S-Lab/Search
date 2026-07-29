@@ -893,6 +893,35 @@ authentication, response adaptation, error sanitization, and CLI evidence.
 Live provider smoke tests are separate because they depend on external service
 availability.
 
+### Stability soak tests
+
+Long-running stability tests are opt-in and use only public library contracts.
+The deterministic soak injects rotating API throttling, empty HTTP responses,
+healthy recovery, concurrent duplicate requests, and leader cancellation while
+checking fallback paths, circuit recovery, bulkhead limits, latency, RSS, file
+descriptors, and complete queue/flight drainage:
+
+```bash
+A3S_SEARCH_SOAK_SECONDS=1800 \
+  cargo test --release --test soak deterministic_reliability_soak \
+  -- --ignored --nocapture --exact
+```
+
+The low-rate public-network soak is intentionally separate so an upstream
+challenge or empty result is recorded as provider evidence rather than confused
+with a deterministic product regression:
+
+```bash
+A3S_SEARCH_LIVE_SOAK_SECONDS=600 \
+A3S_SEARCH_LIVE_SOAK_INTERVAL_SECONDS=10 \
+  cargo test --release --test soak public_http_low_rate_soak \
+  -- --ignored --nocapture --exact
+```
+
+Both commands emit one JSON report line suitable for retaining with release
+evidence. Environment variables can also adjust worker count, duplicate group
+size, request deadline, and RSS or file-descriptor growth thresholds.
+
 ## A3S ecosystem
 
 ```text
