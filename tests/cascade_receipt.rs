@@ -42,6 +42,22 @@ fn downstream_callers_can_finish_serialize_and_validate_a_lazy_cascade() {
     let encoded = serde_json::to_vec(&outcome).expect("encode public outcome");
     let decoded: SearchCascadeOutcomeV1 =
         serde_json::from_slice(&encoded).expect("decode public outcome");
+    assert_eq!(
+        outcome.results.items()[0].score.to_bits(),
+        decoded.results.items()[0].score.to_bits(),
+        "caller-visible ranking score must be bit-stable across JSON"
+    );
+    assert_eq!(
+        outcome.results.items()[0]
+            .query_match_score
+            .expect("query alignment")
+            .to_bits(),
+        decoded.results.items()[0]
+            .query_match_score
+            .expect("decoded query alignment")
+            .to_bits(),
+        "caller-visible query alignment must be bit-stable across JSON"
+    );
     decoded.validate().expect("validate public outcome");
 
     let query_binding = SearchQueryBindingV1::new(SearchQuery::new(query));

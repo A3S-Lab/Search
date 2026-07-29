@@ -253,12 +253,14 @@ impl SearchCascade {
 ///
 /// Multi-term queries use length-weighted term coverage so one generic word
 /// cannot satisfy a longer request. Queries that do not expose multiple word
-/// boundaries use normalized Unicode character n-grams. In both cases the
-/// title and URL carry more weight than the snippet, where incidental matches
-/// and page boilerplate are more common.
+/// boundaries use normalized Unicode character n-grams. In both cases visible
+/// title and snippet text drive alignment. The URL is only a weak auxiliary
+/// signal, so a query-shaped path cannot substitute for provider-visible
+/// result text.
 pub fn query_match_score(query: &str, result: &SearchResult) -> f64 {
-    const TITLE_URL_WEIGHT: f64 = 0.75;
-    const SNIPPET_WEIGHT: f64 = 1.0 - TITLE_URL_WEIGHT;
+    const TITLE_WEIGHT: f64 = 0.50;
+    const SNIPPET_WEIGHT: f64 = 0.45;
+    const URL_WEIGHT: f64 = 1.0 - TITLE_WEIGHT - SNIPPET_WEIGHT;
 
     let query_units = normalized_query_units(query);
     let query_characters = normalized_characters(query);
@@ -273,9 +275,13 @@ pub fn query_match_score(query: &str, result: &SearchResult) -> f64 {
             character_gram_coverage(&query_characters, visible)
         }
     };
-    let headline_score = field_score(&format!("{} {}", result.title, result.url));
+    let title_score = field_score(&result.title);
     let snippet_score = field_score(&result.content);
-    TITLE_URL_WEIGHT.mul_add(headline_score, SNIPPET_WEIGHT * snippet_score)
+    let url_score = field_score(&result.url);
+    TITLE_WEIGHT.mul_add(
+        title_score,
+        SNIPPET_WEIGHT.mul_add(snippet_score, URL_WEIGHT * url_score),
+    )
 }
 
 fn normalized_query_units(value: &str) -> Vec<Vec<char>> {
