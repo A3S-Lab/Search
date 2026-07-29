@@ -475,6 +475,55 @@ end-to-end deadline, tier composition, and lazy browser lifecycle. Browser
 retries are bounded separately by a shared `RetryBudget` and total fetch
 deadline.
 
+Call `finish_with_tier_plan` when the caller needs a durable account of its
+declared tier plan and reported executed prefix. The returned V1 receipt binds
+every typed `SearchQuery` control and every caller-visible field of the ordered
+final `SearchResults` with separate domain-separated SHA-256 identities. The
+result identity includes rich results, ranking fields, full text, engine
+provenance, failures, reports, outcomes, and timing metadata; receipt validation
+recomputes it from the returned container. The receipt also records the final
+generic quality decision, whether the caller-reported plan is incomplete or
+fully traversed below the floor, and counts validated against the canonically
+merged results. Tier identifiers remain opaque caller-owned strings; Search
+does not infer transport, provider, topic, publisher, site, or language policy
+from them.
+
+`SearchCascadeOutcomeV1::receipt_binding` returns a domain-separated canonical
+SHA-256 over every receipt field without relying on JSON serialization. The
+binding detects coherent plan, policy, query, quality, state, or count
+substitution when compared with a trusted expected digest. Structural
+validation and a matching digest do not prove that a plan was committed before
+execution, that a tier ran, or who produced the record. Trusted evidence must
+therefore authenticate the complete receipt binding through an independent
+signature, digest log, or equivalent authority and validate the receipt against
+the returned results.
+
+```rust,no_run
+use a3s_search::{SearchCascade, SearchQualityFloor, SearchQuery, SearchResults};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cascade = SearchCascade::new(
+        SearchQuery::new("portable research query"),
+        SearchQualityFloor::for_limit(5),
+    );
+
+    cascade
+        .run_tier_if_needed("tier-0", || async { SearchResults::new() })
+        .await;
+    cascade
+        .run_tier_if_needed("tier-1", || async { SearchResults::new() })
+        .await;
+
+    let outcome = cascade.finish_with_tier_plan(["tier-0", "tier-1"])?;
+    outcome.validate()?;
+    let receipt_binding = outcome.receipt_binding()?;
+    assert_eq!(receipt_binding.sha256.len(), 64);
+    assert!(outcome.receipt.exhausted_below_floor);
+    Ok(())
+}
+```
+
 ## Library usage
 
 Run the built-in providers directly:
