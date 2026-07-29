@@ -14,6 +14,7 @@ use sha2::{Digest, Sha256};
 
 const CORPUS: &str = include_str!("fixtures/search_quality_v1.json");
 const HOLDOUT_PATH_ENV: &str = "A3S_SEARCH_QUALITY_HOLDOUT";
+const HOLDOUT_SHA256_ENV: &str = "A3S_SEARCH_QUALITY_HOLDOUT_SHA256";
 const HOLDOUT_MIN_CASES: usize = 40;
 const HOLDOUT_MIN_MEAN_NDCG_AT_10: f64 = 0.80;
 const HOLDOUT_MIN_MEAN_MRR_AT_GRADE_2: f64 = 0.85;
@@ -201,6 +202,17 @@ fn corpus_sha256(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
+fn required_holdout_sha256() -> String {
+    let value = std::env::var(HOLDOUT_SHA256_ENV)
+        .unwrap_or_else(|_| panic!("set {HOLDOUT_SHA256_ENV} before opening the sealed holdout"));
+    let value = value.strip_prefix("sha256:").unwrap_or(&value);
+    assert!(
+        value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "{HOLDOUT_SHA256_ENV} must contain one SHA-256 digest"
+    );
+    value.to_ascii_lowercase()
+}
+
 #[test]
 fn versioned_quality_corpus_is_well_formed() {
     let corpus = corpus();
@@ -304,6 +316,12 @@ fn independent_holdout_meets_the_predeclared_quality_floor() {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| panic!("set {HOLDOUT_PATH_ENV} to the sealed holdout JSON path"));
     let bytes = std::fs::read(&path).expect("read sealed search-quality holdout");
+    let holdout_sha256 = corpus_sha256(&bytes);
+    assert_eq!(
+        holdout_sha256,
+        required_holdout_sha256(),
+        "holdout bytes do not match the precommitted SHA-256"
+    );
     let holdout = parse_corpus(&bytes);
     validate_corpus(&holdout, HOLDOUT_MIN_CASES);
 
@@ -363,7 +381,7 @@ fn independent_holdout_meets_the_predeclared_quality_floor() {
         json!({
             "corpus_version": holdout.version,
             "corpus_file": Path::new(&path).file_name().and_then(|name| name.to_str()),
-            "corpus_sha256": corpus_sha256(&bytes),
+            "corpus_sha256": holdout_sha256,
             "ranker": "default",
             "thresholds": {
                 "minimum_cases": HOLDOUT_MIN_CASES,

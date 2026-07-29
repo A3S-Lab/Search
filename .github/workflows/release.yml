@@ -5,42 +5,64 @@ on:
     tags:
       - "v*"
 
-# Prevent duplicate runs
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # ───────────────────────────────────────────────
-  # Gate: CI checks
-  # ───────────────────────────────────────────────
-  ci:
-    name: CI
+  classify:
+    name: Classify release
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      stable: ${{ steps.release.outputs.stable }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
-      - name: Validate release tag and package version
+      - name: Validate release identity
+        id: release
+        shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          PACKAGE_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          if [ "$PACKAGE_VERSION" != "$VERSION" ]; then
-            echo "Tag version ($VERSION) does not match Cargo.toml version ($PACKAGE_VERSION)" >&2
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          package_version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "$package_version" != "$version" ]; then
+            echo "Tag version ($version) does not match Cargo.toml version ($package_version)" >&2
             exit 1
           fi
+          case "$version" in
+            *-*) stable=false ;;
+            *) stable=true ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "stable=$stable" >> "$GITHUB_OUTPUT"
+
+  ci:
+    name: CI
+    needs: classify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
+          toolchain: 1.96.0
           components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2 peeled commit
 
       - name: Wait for the independently published Browser crate
         shell: bash
@@ -73,7 +95,7 @@ jobs:
           exit 1
 
       - name: Format check
-        run: cargo fmt -- --check
+        run: cargo fmt --all -- --check
 
       - name: Clippy
         run: |
@@ -96,12 +118,50 @@ jobs:
       - name: Package verification
         run: cargo package --locked
 
+  commercial-search-gates:
+    name: Stable release evidence (blocked)
+    if: needs.classify.outputs.stable == 'true'
+    needs: [classify, ci]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse candidate-repository commercial certification
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Stable publication requires an external pinned verifier" >&2
+          echo "bound to the exact frozen .crate bytes and raw campaign receipts." >&2
+          echo "Tracking: https://github.com/A3S-Lab/Search/issues/8" >&2
+          exit 1
+
+  commercial-release-gate:
+    name: Stable release gate
+    if: always() && !cancelled()
+    needs: [classify, ci, commercial-search-gates]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all applicable evidence
+        env:
+          CLASSIFY_RESULT: ${{ needs.classify.result }}
+          CI_RESULT: ${{ needs.ci.result }}
+          COMMERCIAL_RESULT: ${{ needs.commercial-search-gates.result }}
+          STABLE: ${{ needs.classify.outputs.stable }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$CLASSIFY_RESULT" = success
+          test "$CI_RESULT" = success
+          if [ "$STABLE" = true ]; then
+            test "$COMMERCIAL_RESULT" = success
+          else
+            test "$COMMERCIAL_RESULT" = skipped
+          fi
+
   # ───────────────────────────────────────────────
   # Build CLI binary for 4 platforms
   # ───────────────────────────────────────────────
   build-cli:
     name: Build / ${{ matrix.name }}
-    needs: ci
+    needs: commercial-release-gate
     strategy:
       fail-fast: false
       matrix:
@@ -123,14 +183,18 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
+          toolchain: 1.96.0
           targets: ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2 peeled commit
 
       - name: Install cross toolchain
         if: matrix.cross
@@ -155,7 +219,7 @@ jobs:
           echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cli-${{ matrix.name }}
           path: ${{ env.ARCHIVE }}
@@ -164,46 +228,37 @@ jobs:
   # Publish core crate to crates.io
   # ───────────────────────────────────────────────
   publish-crate:
-    name: Publish Crate
-    needs: ci
+    name: Crate publication evidence (blocked)
+    needs: commercial-release-gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Publish
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
+      - name: Refuse credentialed candidate publication
+        shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          if curl --retry 5 --retry-all-errors --retry-delay 5 -fsSL \
-            -A "a3s-search-release-check/1.0" \
-            "https://crates.io/api/v1/crates/a3s-search/${VERSION}" >/dev/null; then
-            echo "a3s-search ${VERSION} is already published on crates.io; skipping cargo publish."
-            exit 0
-          fi
-          cargo publish --locked
+          set -euo pipefail
+          echo "Crate publication remains disabled until a trusted job can upload" >&2
+          echo "the exact externally attested frozen .crate without executing candidate code." >&2
+          echo "Tracking: https://github.com/A3S-Lab/Search/issues/8" >&2
+          exit 1
 
   # ───────────────────────────────────────────────
   # Create GitHub Release with CLI binaries
   # ───────────────────────────────────────────────
   github-release:
     name: GitHub Release
-    needs: [publish-crate, build-cli]
+    needs: [classify, publish-crate, build-cli]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: cli-*
           path: artifacts
@@ -233,13 +288,19 @@ jobs:
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STABLE: ${{ needs.classify.outputs.stable }}
         run: |
+          if [ "$STABLE" = true ]; then
+            PRERELEASE_FLAG="--prerelease=false"
+          else
+            PRERELEASE_FLAG="--prerelease"
+          fi
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release edit "$GITHUB_REF_NAME" \
               --title "$GITHUB_REF_NAME" \
               --notes-file /tmp/release-notes.md \
               --draft=false \
-              --prerelease=false \
+              $PRERELEASE_FLAG \
               --verify-tag
             gh release upload "$GITHUB_REF_NAME" \
               artifacts/*.tar.gz artifacts/checksums.txt \
@@ -248,6 +309,7 @@ jobs:
             gh release create "$GITHUB_REF_NAME" \
               --title "$GITHUB_REF_NAME" \
               --notes-file /tmp/release-notes.md \
+              $PRERELEASE_FLAG \
               --verify-tag \
               artifacts/*.tar.gz artifacts/checksums.txt
           fi
@@ -257,11 +319,12 @@ jobs:
   # ───────────────────────────────────────────────
   update-homebrew:
     name: Homebrew
-    needs: github-release
+    if: needs.classify.outputs.stable == 'true'
+    needs: [classify, github-release]
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: cli-*
           path: artifacts
@@ -282,7 +345,7 @@ jobs:
           done
 
       - name: Checkout homebrew-tap
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: A3S-Lab/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
