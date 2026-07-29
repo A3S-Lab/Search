@@ -7,6 +7,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::{SearchQuery, SearchResult, SearchResults};
 
+mod receipt;
+
+pub use receipt::{
+    SearchCascadeCounts, SearchCascadeOutcomeV1, SearchCascadeReceiptBindingV1,
+    SearchCascadeReceiptError, SearchCascadeReceiptV1, SearchQueryBindingV1,
+    SearchResultsBindingV1, SEARCH_CASCADE_RECEIPT_V1_SCHEMA,
+};
+
 /// Observable, topic-neutral quality signals for one combined result set.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -351,3 +359,11 @@ fn normalized_alignment(value: f64) -> Option<f64> {
 #[cfg(test)]
 #[path = "quality/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "quality/receipt_tests.rs"]
+mod receipt_tests;
+
+#[cfg(test)]
+#[path = "quality/receipt_binding_tests.rs"]
+mod receipt_binding_tests;
