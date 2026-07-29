@@ -372,15 +372,17 @@ outside the repository and must not reuse public case IDs or queries:
 
 ```bash
 A3S_SEARCH_QUALITY_HOLDOUT=/secure/search-quality-holdout-v1.json \
+A3S_SEARCH_QUALITY_HOLDOUT_SHA256=<precommitted-sha256> \
   cargo test --locked --test quality_eval \
   independent_holdout_meets_the_predeclared_quality_floor \
   -- --ignored --nocapture --exact
 ```
 
 The command applies predeclared nDCG@10, material-result MRR, Recall@10,
-per-case nDCG, and duplicate-ratio floors. Its machine-readable output binds
-the report to the external corpus SHA-256. Passing the public corpus alone is
-never release evidence for the holdout gate.
+per-case nDCG, and duplicate-ratio floors. The evaluator verifies the holdout
+bytes against the SHA-256 committed before the corpus is opened, then binds
+that digest into the machine-readable report. Passing the public corpus alone
+is never release evidence for the holdout gate.
 
 ## Reliability and quality-gated fallback
 
@@ -946,11 +948,11 @@ Run checks from the `a3s-search` repository root:
 
 ```bash
 cargo fmt --all -- --check
-cargo test --no-default-features
-cargo test --all-features
-cargo clippy --all-targets --no-default-features -- -D warnings
-cargo clippy --all-targets --all-features -- -D warnings
-RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
+cargo test --no-default-features --locked
+cargo test --all-features --locked
+cargo clippy --all-targets --no-default-features --locked -- -D warnings
+cargo clippy --all-targets --all-features --locked -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --locked
 cargo package --locked
 scripts/test-release-package.sh
 ```
@@ -960,55 +962,92 @@ authentication, response adaptation, error sanitization, and CLI evidence.
 Live provider smoke tests are separate because they depend on external service
 availability.
 
-### Stability soak tests
+### Reliability stress and live canary
 
-Long-running stability tests are opt-in and use only public library contracts.
-The deterministic soak injects rotating API throttling, empty HTTP responses,
-healthy recovery, concurrent duplicate requests, and leader cancellation while
-checking fallback paths, circuit recovery, bulkhead limits, latency, RSS, file
-descriptors, and complete queue/flight drainage:
+The deterministic stress test is opt-in and uses only public library contracts.
+It injects rotating API throttling, empty HTTP responses, healthy recovery,
+concurrent duplicate requests, and leader cancellation while checking lazy
+fallback, circuit recovery, bulkhead limits, latency, RSS, file descriptors,
+and complete queue/flight drainage. This is where forced API → HTTP/RSS →
+headless failures are exercised without manufacturing public traffic:
 
 ```bash
-A3S_SEARCH_SOAK_SECONDS=1800 \
+A3S_SEARCH_SOAK_SECONDS=300 \
   cargo test --release --test soak deterministic_reliability_soak \
   -- --ignored --nocapture --exact
 ```
 
-The low-rate public-network soak is intentionally separate so an upstream
-challenge or empty result is recorded as provider evidence rather than confused
-with a deterministic product regression:
+The live check is a bounded, one-pass canary rather than a duration-based soak.
+It executes every case in a precommitted corpus exactly once, at the slowest
+cadence declared by the opaque provider policies. A corpus must contain at
+least 40 distinct cases. There is no 24-hour requirement and repeated queries
+cannot be counted as additional independent evidence.
+
+The canary requires an independently built deployment driver, an all-features
+candidate binary, their precommitted SHA-256 identities, a sealed query corpus,
+a tier manifest, and a new absolute path for the append-only receipt log:
 
 ```bash
-A3S_SEARCH_LIVE_SOAK_SECONDS=600 \
-A3S_SEARCH_LIVE_SOAK_INTERVAL_SECONDS=10 \
-  cargo test --release --test soak public_http_low_rate_soak \
+A3S_SEARCH_EVALUATED_COMMIT=<full-40-character-commit> \
+A3S_SEARCH_LIVE_CANARY_DRIVER=/secure/search-canary-driver \
+A3S_SEARCH_LIVE_CANARY_DRIVER_SHA256=sha256:<driver-digest> \
+A3S_SEARCH_LIVE_CANARY_CANDIDATE_BIN=/secure/a3s-search \
+A3S_SEARCH_LIVE_CANARY_CANDIDATE_SHA256=sha256:<candidate-digest> \
+A3S_SEARCH_LIVE_CANARY_QUERY_CORPUS=/secure/search-canary-cases.json \
+A3S_SEARCH_LIVE_CANARY_QUERY_CORPUS_SHA256=sha256:<corpus-digest> \
+A3S_SEARCH_LIVE_CANARY_TIER_MANIFEST=/secure/search-canary-tiers.json \
+A3S_SEARCH_LIVE_CANARY_TIER_MANIFEST_SHA256=sha256:<manifest-digest> \
+A3S_SEARCH_LIVE_CANARY_RECEIPT_LOG=/secure/new-search-canary-receipts.jsonl \
+  cargo test --release --all-features --locked --test soak \
+  sealed_live_tiered_canary_meets_release_floor \
   -- --ignored --nocapture --exact
 ```
 
-The built-in corpus rotates eight multilingual stability probes. A release
-candidate should instead use an external, bounded JSON corpus so the long soak
-does not repeatedly exercise a small public set. Only run it at a rate allowed
-by every configured public engine:
+All four artifact paths must identify regular non-symlink files. The two sealed
+campaign files are limited to one MiB and bind the same bounded campaign ID.
+The corpus shape is:
 
-```bash
-A3S_SEARCH_LIVE_SOAK_QUERY_CORPUS=/secure/live-soak-queries-v1.json \
-A3S_SEARCH_LIVE_SOAK_SECONDS=86400 \
-A3S_SEARCH_LIVE_SOAK_INTERVAL_SECONDS=60 \
-  cargo test --release --test soak public_http_low_rate_soak \
-  -- --ignored --nocapture --exact
+```json
+{
+  "version": 1,
+  "campaign_id": "opaque-campaign-id",
+  "queries": [
+    { "id": "opaque-case-id", "query": "...", "language": null }
+  ]
+}
 ```
 
-The external file uses `{"version":1,"queries":[{"query":"...","language":"en"}]}`,
-is limited to one MiB, and must contain at least four distinct ASCII and
-non-ASCII queries. The report records its SHA-256 and query count without
-printing the queries. Resource checks establish their baseline after the first
-network warm-up, reject sustained descriptor growth during the soak, then drop
-the complete `Search` instance and verify that connection-pool descriptors are
-released. Expected keep-alive sockets are therefore not mistaken for leaks.
+The manifest declares exactly one `api`, `http_rss`, and `headless` capability
+in that order. Deployment profiles and provider scopes are lowercase opaque
+`sha256:` identities; each scope declares its minimum request interval. The
+driver protocol preserves per-tier outcomes, calls, retries, `Retry-After`, and
+process-tree resource samples without putting provider names into the gate.
 
-Both commands emit one JSON report line suitable for retaining with release
-evidence. Environment variables can also adjust worker count, duplicate group
-size, request deadline, and RSS or file-descriptor growth thresholds.
+The canary rejects eager fallback, a missing required tier, terminal receipts
+that suppress an available fallback, retries that do not follow a serial
+retryable failure on the same scope, `Retry-After` or provider-cadence breaches,
+receipt or result-provenance inconsistencies, latency tails, excessive fallback,
+and resource growth. It recomputes generic query-match quality after clearing
+candidate-supplied scores. Raw attempt receipts are appended and flushed before
+evaluation, and the final report binds the receipt-log digest. Driver,
+candidate, corpus, and manifest paths are rehashed before and after every
+attempt and again after driver shutdown; any persistent identity change fails
+the campaign.
+
+Those path checks assume a trusted driver and controlled, non-adversarial
+artifact storage. They detect accidental or persistent replacement but do not
+prove which bytes were opened between a digest check and execution. The
+external verifier must freeze the evaluated artifacts with a read-only mount,
+content-addressed object, or equivalent descriptor-based execution before it
+can attest the exact bytes.
+
+This repository-side ignored test is useful evidence but cannot authorize its
+own release. Registry publication remains fail-closed for every tag, and stable
+release evidence remains blocked until an external pinned verifier checks the
+exact frozen `.crate` and a trusted uploader can publish those exact bytes
+without executing candidate code. See
+[Search issue #8](https://github.com/A3S-Lab/Search/issues/8). Longer-term
+stability belongs in rolling production SLOs, not a 24-hour release soak.
 
 ## A3S ecosystem
 
