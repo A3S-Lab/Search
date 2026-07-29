@@ -2,8 +2,9 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use crate::ranking::calibrated_native_relevance;
 use crate::result::RankSignal;
-use crate::{query_match_score, SearchResult, SearchResults};
+use crate::{query_match_score, RankingConfig, SearchResult, SearchResults};
 
 #[derive(Debug)]
 struct Candidate {
@@ -16,12 +17,29 @@ struct Candidate {
 pub struct Aggregator {
     /// Engine weights for scoring.
     engine_weights: HashMap<String, f64>,
+    ranking: RankingConfig,
 }
 
 impl Aggregator {
     /// Creates a new aggregator.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Uses a typed, domain-neutral rank-fusion policy.
+    pub fn with_ranking_config(mut self, ranking: RankingConfig) -> Self {
+        self.ranking = ranking.sanitized();
+        self
+    }
+
+    /// Replaces the rank-fusion policy for later aggregations.
+    pub fn set_ranking_config(&mut self, ranking: RankingConfig) {
+        self.ranking = ranking.sanitized();
+    }
+
+    /// Returns the effective rank-fusion policy.
+    pub fn ranking_config(&self) -> RankingConfig {
+        self.ranking
     }
 
     /// Sets the weight for an engine.
@@ -63,15 +81,20 @@ impl Aggregator {
         let mut url_map: HashMap<String, Candidate> = HashMap::new();
 
         for (engine_name, results) in engine_results {
-            for (position, mut result) in results.into_iter().enumerate() {
+            let native_relevance = calibrated_native_relevance(&results);
+            for ((position, mut result), relevance_percentile) in
+                results.into_iter().enumerate().zip(native_relevance)
+            {
                 let normalized = result.normalized_url();
                 let position = (position + 1) as u32;
                 let relevance = normalized_relevance(result.relevance_score);
                 let query_match = query.map(|query| query_match_score(query, &result));
-                let alignment_weight = query_match.map(|score| 0.2 + 0.8 * score).unwrap_or(1.0);
-                let contribution =
-                    self.engine_weight(&engine_name) * relevance.unwrap_or(1.0) * alignment_weight
-                        / f64::from(position);
+                let contribution = saturating_product([
+                    self.engine_weight(&engine_name),
+                    self.ranking.reciprocal_rank_score(position),
+                    self.ranking.query_alignment_factor(query_match),
+                    self.ranking.native_relevance_factor(relevance_percentile),
+                ]);
                 let signal = RankSignal {
                     position,
                     relevance,
@@ -244,6 +267,17 @@ fn saturating_score_add(total: f64, contribution: f64) -> f64 {
     }
 }
 
+fn saturating_product(values: [f64; 4]) -> f64 {
+    values.into_iter().fold(1.0, |product, value| {
+        let next = product * value;
+        if next.is_finite() {
+            next
+        } else {
+            f64::MAX
+        }
+    })
+}
+
 fn merge_results(existing: &mut SearchResult, new: SearchResult) {
     if better_url(&new.url, &existing.url) {
         existing.url = new.url.clone();
@@ -376,6 +410,110 @@ mod tests {
 
         // The result found by both engines should be first
         assert_eq!(aggregated.items()[0].engines.len(), 2);
+    }
+
+    #[test]
+    fn repeated_mid_rank_evidence_outweighs_isolated_first_positions() {
+        let query = "durable replay protocol";
+        let aligned = |url: &str, label: &str| {
+            SearchResult::new(
+                url,
+                format!("Durable replay protocol {label}"),
+                "Durable replay protocol evidence",
+            )
+        };
+        let aggregated = Aggregator::new().aggregate_for_query(
+            query,
+            vec![
+                (
+                    "first".to_string(),
+                    vec![
+                        aligned("https://isolated-first.example", "field note"),
+                        aligned("https://index-first.example", "index"),
+                        aligned("https://shared.example/specification", "specification"),
+                    ],
+                ),
+                (
+                    "second".to_string(),
+                    vec![
+                        aligned("https://isolated-second.example", "field note"),
+                        aligned("https://index-second.example", "index"),
+                        aligned("https://shared.example/specification", "specification"),
+                    ],
+                ),
+            ],
+        );
+
+        assert_eq!(
+            aggregated.items()[0].normalized_url(),
+            "shared.example/specification"
+        );
+    }
+
+    #[test]
+    fn provider_native_score_scales_do_not_penalize_cross_engine_consensus() {
+        let query = "bounded transport recovery";
+        let primary = || {
+            SearchResult::new(
+                "https://primary.example/recovery",
+                "Bounded transport recovery",
+                "Normative recovery behavior and limits",
+            )
+        };
+        let aggregated = Aggregator::new().aggregate_for_query(
+            query,
+            vec![
+                (
+                    "narrow-scale".to_string(),
+                    vec![
+                        primary().with_relevance_score(0.22),
+                        SearchResult::new(
+                            "https://secondary.example/recovery",
+                            "Bounded transport recovery analysis",
+                            "Independent recovery analysis",
+                        )
+                        .with_relevance_score(0.18),
+                    ],
+                ),
+                (
+                    "unscored".to_string(),
+                    vec![SearchResult::new(
+                        "https://overview.example/recovery",
+                        "Bounded transport recovery overview",
+                        "A brief overview",
+                    )],
+                ),
+                (
+                    "wide-scale".to_string(),
+                    vec![
+                        SearchResult::new(
+                            "https://other.example/transport",
+                            "Transport notes",
+                            "Partial notes",
+                        )
+                        .with_relevance_score(0.98),
+                        SearchResult::new(
+                            "https://other.example/retries",
+                            "Retry notes",
+                            "Generic retries",
+                        )
+                        .with_relevance_score(0.97),
+                        SearchResult::new(
+                            "https://other.example/timeouts",
+                            "Timeout notes",
+                            "Generic timeouts",
+                        )
+                        .with_relevance_score(0.96),
+                        primary().with_relevance_score(0.95),
+                    ],
+                ),
+            ],
+        );
+
+        assert_eq!(
+            aggregated.items()[0].normalized_url(),
+            "primary.example/recovery"
+        );
     }
 
     #[test]
@@ -524,9 +662,8 @@ mod tests {
             .find(|result| result.normalized_url() == "example.com")
             .unwrap();
 
-        // first: 2.0 * 0.5 / 1 = 1.0
-        // second: 0.5 * 0.8 / 2 = 0.2
-        assert!((result.score - 1.2).abs() < f64::EPSILON);
+        let expected = 2.0 + 0.5 * RankingConfig::default().reciprocal_rank_score(2);
+        assert!((result.score - expected).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -608,8 +745,9 @@ mod tests {
             .iter()
             .find(|result| result.url.contains("low"))
             .unwrap();
-        assert_eq!(high.score, 1.0);
-        assert_eq!(low.score, 0.0);
+        assert_eq!(high.relevance_score, Some(1.0));
+        assert_eq!(low.relevance_score, Some(0.0));
+        assert!(high.score > low.score);
     }
 
     #[test]

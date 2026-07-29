@@ -175,6 +175,12 @@ health {
   suspend_seconds = 60
 }
 
+ranking {
+  rrf_rank_constant       = 60
+  query_alignment_weight  = 0.8
+  native_relevance_weight = 0.2
+}
+
 provider "anysearch" {
   enabled = true
   weight = 1.0
@@ -253,6 +259,8 @@ Configuration rules:
 - Integral numeric settings are range-checked without saturation. Fractional,
   negative, out-of-range, zero timeout, zero weight, and duplicate engine
   configurations are rejected instead of silently coerced.
+- `ranking.rrf_rank_constant` must be finite and in `0..=1000000`; both
+  ranking weights must be finite and in `0..=1`.
 - `chunks_per_source` requires Tavily `search_depth = "advanced"`.
 - With Tavily `auto_parameters = true`, omit `search_depth` and `topic` to let
   Tavily select them. Explicit values override automatic selection as documented.
@@ -316,6 +324,38 @@ with the individual errors. Each outcome includes the engine identity, result
 count, and attempt duration. Treat those failures as part of the evidence
 rather than silently ignoring them.
 
+## Rank fusion and quality evidence
+
+The default aggregator uses weighted reciprocal-rank fusion. A result at
+one-based position `p` contributes `(k + 1) / (k + p)`, multiplied by the
+configured engine weight and bounded query-alignment and native-relevance
+factors. Contributions from independent engines are added after normalized URL
+deduplication, so repeated evidence can outrank an isolated first position.
+
+Provider-native relevance values are not comparable across APIs. Each engine
+response is therefore calibrated to a local percentile before it contributes
+to ranking. Missing native scores, and responses with only one distinct score,
+are neutral. The raw value remains available as result evidence but is never
+multiplied directly across providers.
+
+`RankingConfig` exposes the three generic controls for library callers and the
+same values are available through the ACL `ranking` block. The implementation
+contains no query-topic, host, publisher, named-entity, or language branches.
+
+The versioned offline quality corpus verifies nDCG@10, first material-result
+rank, recall, host diversity, cross-engine consensus, and duplicate rate. Run
+the regression gate and print the machine-readable evidence report with:
+
+```bash
+cargo test --locked --test quality_eval
+cargo test --locked --test quality_eval ranking_quality_report \
+  -- --ignored --nocapture --exact
+```
+
+The fixtures live only under `tests/`; they are not compiled into the library
+or used by the runtime ranker. They establish a reproducible regression floor,
+not a substitute for live-provider evaluation.
+
 ## Reliability and quality-gated fallback
 
 `Bulkhead`, `CircuitBreaker`, and `SearchCoalescer` are optional shared
@@ -351,7 +391,8 @@ network routing. Do not share terminal authentication or quota state between
 unrelated tenants. Recreate the circuit when those inputs change.
 
 The coalescer collapses only overlapping requests with identical query
-controls, configured engine identities, ranking weights, and timeout policy.
+controls, configured engine identities and weights, rank-fusion policy, and
+timeout policy.
 It removes each flight immediately after completion, so sequential requests
 remain fresh and no positive or negative result cache is implied. Its distinct
 in-flight map is bounded; excess distinct requests bypass coalescing and remain

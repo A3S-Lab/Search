@@ -114,6 +114,7 @@ pub mod metrics;
 pub mod proxy;
 mod quality;
 mod query;
+mod ranking;
 mod result;
 mod retry_budget;
 mod search;
@@ -152,6 +153,7 @@ pub use quality::{
     SearchTierReport,
 };
 pub use query::{SafeSearch, SearchQuery, TimeRange};
+pub use ranking::RankingConfig;
 pub use result::{
     EngineFailure, EngineOutcome, EngineOutcomeKind, ResultType, SearchImage, SearchReport,
     SearchResult, SearchResults, SearchUsage,

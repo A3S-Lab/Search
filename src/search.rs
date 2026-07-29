@@ -10,8 +10,8 @@ use tracing::{debug, warn};
 use crate::coalescer::{SearchCoalescingAdmission, SearchRequestKey};
 use crate::{
     Aggregator, Bulkhead, CircuitBreaker, CircuitPermit, Engine, EngineFailure, EngineOutcome,
-    EngineOutcomeKind, HealthConfig, HealthMonitor, Metrics, Result, SearchCoalescer, SearchError,
-    SearchQuery, SearchResults,
+    EngineOutcomeKind, HealthConfig, HealthMonitor, Metrics, RankingConfig, Result,
+    SearchCoalescer, SearchError, SearchQuery, SearchResults,
 };
 
 /// Meta search engine that orchestrates searches across multiple engines.
@@ -59,6 +59,22 @@ impl Search {
     pub fn with_metrics(mut self, metrics: Arc<Metrics>) -> Self {
         self.metrics = Some(metrics);
         self
+    }
+
+    /// Uses a typed, domain-neutral rank-fusion policy.
+    pub fn with_ranking_config(mut self, ranking: RankingConfig) -> Self {
+        self.aggregator.set_ranking_config(ranking);
+        self
+    }
+
+    /// Replaces the rank-fusion policy for later searches.
+    pub fn set_ranking_config(&mut self, ranking: RankingConfig) {
+        self.aggregator.set_ranking_config(ranking);
+    }
+
+    /// Returns the effective rank-fusion policy.
+    pub fn ranking_config(&self) -> RankingConfig {
+        self.aggregator.ranking_config()
     }
 
     /// Attaches shared circuit state that may be reused by other `Search`
@@ -143,6 +159,7 @@ impl Search {
         let key = SearchRequestKey::new(
             query.clone(),
             self.engines.iter().map(|engine| engine.config()),
+            self.aggregator.ranking_config(),
             self.timeout_override,
         );
 
