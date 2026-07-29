@@ -40,7 +40,7 @@ use a3s_acl::ast::{Document, Value};
 use a3s_acl::parse;
 
 use crate::providers::ProviderEngine;
-use crate::{Engine, EngineConfig, HealthConfig, SearchError};
+use crate::{Engine, EngineConfig, HealthConfig, RankingConfig, SearchError};
 
 mod provider;
 
@@ -54,6 +54,9 @@ const MAX_ACL_EXACT_INTEGER: f64 = 9_007_199_254_740_991.0;
 pub struct SearchConfig {
     /// Default timeout in seconds for all engines.
     pub timeout: u64,
+
+    /// Domain-neutral rank-fusion policy.
+    pub ranking: RankingConfig,
 
     /// Health monitor configuration.
     pub health: Option<HealthEntry>,
@@ -93,6 +96,7 @@ impl SearchConfig {
     pub fn new() -> Self {
         Self {
             timeout: 10,
+            ranking: RankingConfig::default(),
             health: None,
             engines: HashMap::new(),
             providers: HashMap::new(),
@@ -125,6 +129,7 @@ impl SearchConfig {
     fn from_document(doc: &Document) -> crate::Result<Self> {
         let Self {
             mut timeout,
+            mut ranking,
             mut health,
             mut engines,
             mut providers,
@@ -165,6 +170,36 @@ impl SearchConfig {
                             .transpose()?
                             .unwrap_or(60),
                     });
+                }
+                "ranking" => {
+                    let defaults = RankingConfig::default();
+                    let candidate = RankingConfig {
+                        rrf_rank_constant: block
+                            .attributes
+                            .get("rrf_rank_constant")
+                            .map(|value| value_as_f64(value, "ranking.rrf_rank_constant"))
+                            .transpose()?
+                            .unwrap_or(defaults.rrf_rank_constant),
+                        query_alignment_weight: block
+                            .attributes
+                            .get("query_alignment_weight")
+                            .map(|value| value_as_f64(value, "ranking.query_alignment_weight"))
+                            .transpose()?
+                            .unwrap_or(defaults.query_alignment_weight),
+                        native_relevance_weight: block
+                            .attributes
+                            .get("native_relevance_weight")
+                            .map(|value| value_as_f64(value, "ranking.native_relevance_weight"))
+                            .transpose()?
+                            .unwrap_or(defaults.native_relevance_weight),
+                    };
+                    if !candidate.is_valid() {
+                        return Err(config_value_error(
+                            "ranking",
+                            "a finite rank constant in 0..=1000000 and finite weights in 0..=1",
+                        ));
+                    }
+                    ranking = candidate;
                 }
                 "engine" => {
                     // Engine blocks have the engine shortcut as a label
@@ -236,6 +271,7 @@ impl SearchConfig {
 
         Ok(Self {
             timeout,
+            ranking,
             health,
             engines,
             providers,
@@ -415,6 +451,7 @@ mod tests {
         let config = SearchConfig::new();
 
         assert_eq!(config.timeout, 10);
+        assert_eq!(config.ranking, RankingConfig::default());
         assert!(config.health.is_none());
         assert!(config.engines.is_empty());
         assert!(config.providers.is_empty());
@@ -471,6 +508,24 @@ mod tests {
         assert_eq!(config.engines.len(), 1);
         assert!(config.engines["ddg"].enabled);
         assert_eq!(config.engines["ddg"].weight, 1.0); // default
+    }
+
+    #[test]
+    fn ranking_policy_is_typed_and_configurable() {
+        let config = SearchConfig::parse(
+            r#"
+            ranking {
+                rrf_rank_constant       = 42
+                query_alignment_weight  = 0.7
+                native_relevance_weight = 0.1
+            }
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.ranking.rrf_rank_constant, 42.0);
+        assert_eq!(config.ranking.query_alignment_weight, 0.7);
+        assert_eq!(config.ranking.native_relevance_weight, 0.1);
     }
 
     #[test]
@@ -710,6 +765,13 @@ mod tests {
             r#"health { max_failures = 1.5 }"#,
             r#"health { max_failures = "3" }"#,
             r#"health { suspend_seconds = -1 }"#,
+            r#"ranking { rrf_rank_constant = -1 }"#,
+            r#"ranking { rrf_rank_constant = 1000001 }"#,
+            r#"ranking { rrf_rank_constant = "60" }"#,
+            r#"ranking { query_alignment_weight = -0.1 }"#,
+            r#"ranking { query_alignment_weight = 1.1 }"#,
+            r#"ranking { native_relevance_weight = -0.1 }"#,
+            r#"ranking { native_relevance_weight = 1.1 }"#,
             r#"engine "ddg" { enabled = "true" }"#,
             r#"engine "ddg" { weight = 0 }"#,
             r#"engine "ddg" { weight = -1 }"#,

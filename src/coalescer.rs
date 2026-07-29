@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use tokio::sync::Notify;
 
-use crate::{EngineConfig, SearchQuery, SearchResults};
+use crate::{EngineConfig, RankingConfig, SearchQuery, SearchResults};
 
 /// Capacity policy for an in-flight search coalescer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +72,7 @@ struct Inner {
 pub(crate) struct SearchRequestKey {
     query: SearchQuery,
     engines: Vec<EngineFingerprint>,
+    ranking: RankingFingerprint,
     timeout_override: Option<Duration>,
 }
 
@@ -85,6 +86,23 @@ struct EngineFingerprint {
     enabled: bool,
     paging: bool,
     safesearch: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct RankingFingerprint {
+    rrf_rank_constant_bits: u64,
+    query_alignment_weight_bits: u64,
+    native_relevance_weight_bits: u64,
+}
+
+impl From<RankingConfig> for RankingFingerprint {
+    fn from(config: RankingConfig) -> Self {
+        Self {
+            rrf_rank_constant_bits: canonical_f64_bits(config.rrf_rank_constant),
+            query_alignment_weight_bits: canonical_f64_bits(config.query_alignment_weight),
+            native_relevance_weight_bits: canonical_f64_bits(config.native_relevance_weight),
+        }
+    }
 }
 
 impl From<&EngineConfig> for EngineFingerprint {
@@ -106,13 +124,23 @@ impl SearchRequestKey {
     pub(crate) fn new<'a>(
         query: SearchQuery,
         engines: impl IntoIterator<Item = &'a EngineConfig>,
+        ranking: RankingConfig,
         timeout_override: Option<Duration>,
     ) -> Self {
         Self {
             query,
             engines: engines.into_iter().map(EngineFingerprint::from).collect(),
+            ranking: ranking.into(),
             timeout_override,
         }
+    }
+}
+
+fn canonical_f64_bits(value: f64) -> u64 {
+    if value == 0.0 {
+        0.0_f64.to_bits()
+    } else {
+        value.to_bits()
     }
 }
 

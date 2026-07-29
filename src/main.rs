@@ -283,6 +283,9 @@ async fn run_search(args: SearchArgs) -> Result<()> {
     } else {
         Search::new()
     };
+    if let Some(config) = config.as_ref() {
+        search.set_ranking_config(config.ranking);
+    }
 
     if let Some(timeout) = args.timeout {
         search.set_timeout(Duration::from_secs(timeout));

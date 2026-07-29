@@ -7,7 +7,8 @@ use async_trait::async_trait;
 
 use super::*;
 use crate::{
-    EngineConfig, SafeSearch, SearchCoalescer, SearchCoalescerConfig, SearchQuery, SearchResult,
+    EngineConfig, RankingConfig, SafeSearch, SearchCoalescer, SearchCoalescerConfig, SearchQuery,
+    SearchResult,
 };
 
 struct CountingEngine {
@@ -117,6 +118,36 @@ async fn engine_configuration_is_part_of_the_coalescing_identity() {
     let first = configured_search(coalescer.clone(), first_engine);
     let second = configured_search(coalescer.clone(), second_engine);
     let query = SearchQuery::new("same query, different policy");
+
+    let (first_result, second_result) =
+        tokio::join!(first.search(query.clone()), second.search(query));
+
+    assert!(first_result.is_ok());
+    assert!(second_result.is_ok());
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    let snapshot = coalescer.snapshot();
+    assert_eq!(snapshot.leader_requests, 2);
+    assert_eq!(snapshot.shared_requests, 0);
+}
+
+#[tokio::test]
+async fn ranking_policy_is_part_of_the_coalescing_identity() {
+    let coalescer = SearchCoalescer::default();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let first = configured_search(
+        coalescer.clone(),
+        CountingEngine::new(Arc::clone(&calls), Duration::from_millis(25)),
+    );
+    let second_policy = RankingConfig {
+        rrf_rank_constant: 20.0,
+        ..RankingConfig::default()
+    };
+    let second = configured_search(
+        coalescer.clone(),
+        CountingEngine::new(Arc::clone(&calls), Duration::from_millis(25)),
+    )
+    .with_ranking_config(second_policy);
+    let query = SearchQuery::new("same query, different ranking policy");
 
     let (first_result, second_result) =
         tokio::join!(first.search(query.clone()), second.search(query));
