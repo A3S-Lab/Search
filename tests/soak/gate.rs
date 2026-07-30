@@ -17,10 +17,10 @@ impl LiveCanaryPolicy {
                 .upstream_calls
                 .saturating_add(measurements.retry_attempts),
         );
-        let http_escalation =
-            RateEstimate::new(measurements.http_escalations, measurements.attempts);
-        let headless_escalation =
-            RateEstimate::new(measurements.headless_escalations, measurements.attempts);
+        let second_tier_escalation =
+            RateEstimate::new(measurements.second_tier_escalations, measurements.attempts);
+        let final_tier_escalation =
+            RateEstimate::new(measurements.final_tier_escalations, measurements.attempts);
         let retry_amplification = (measurements.upstream_calls > 0).then(|| {
             measurements
                 .upstream_calls
@@ -77,8 +77,8 @@ impl LiveCanaryPolicy {
         {
             violations.push("engine-attempt accounting is internally inconsistent".to_string());
         }
-        if measurements.headless_escalations > measurements.http_escalations
-            || measurements.http_escalations > measurements.attempts
+        if measurements.final_tier_escalations > measurements.second_tier_escalations
+            || measurements.second_tier_escalations > measurements.attempts
         {
             violations.push("tier-escalation accounting is internally inconsistent".to_string());
         }
@@ -134,15 +134,15 @@ impl LiveCanaryPolicy {
         );
         check_rate_upper_bound(
             &mut violations,
-            "HTTP escalation rate",
-            http_escalation,
-            self.maximum_http_escalation_rate_ucb,
+            "second-tier escalation rate",
+            second_tier_escalation,
+            self.maximum_second_tier_escalation_rate_ucb,
         );
         check_rate_upper_bound(
             &mut violations,
-            "headless escalation rate",
-            headless_escalation,
-            self.maximum_headless_escalation_rate_ucb,
+            "final-tier escalation rate",
+            final_tier_escalation,
+            self.maximum_final_tier_escalation_rate_ucb,
         );
         if measurements.rate_limit_compliance_violations > 0 {
             violations.push(format!(
@@ -200,8 +200,8 @@ impl LiveCanaryPolicy {
             terminal_failures,
             circuit_open,
             rate_limited,
-            http_escalation,
-            headless_escalation,
+            second_tier_escalation,
+            final_tier_escalation,
             retry_amplification,
             violations,
         }
@@ -238,8 +238,8 @@ pub(super) struct LiveCanaryMeasurements {
     pub retry_attempts: u64,
     pub rate_limited_outcomes: u64,
     pub circuit_open: u64,
-    pub http_escalations: u64,
-    pub headless_escalations: u64,
+    pub second_tier_escalations: u64,
+    pub final_tier_escalations: u64,
     pub rate_limit_compliance_violations: u64,
     pub receipt_integrity_violations: u64,
     pub p95_latency_ms: u64,
@@ -260,8 +260,8 @@ pub(super) struct LiveCanaryGateReport {
     pub terminal_failures: RateEstimate,
     pub circuit_open: RateEstimate,
     pub rate_limited: RateEstimate,
-    pub http_escalation: RateEstimate,
-    pub headless_escalation: RateEstimate,
+    pub second_tier_escalation: RateEstimate,
+    pub final_tier_escalation: RateEstimate,
     pub retry_amplification: Option<f64>,
     pub violations: Vec<String>,
 }
@@ -329,8 +329,8 @@ mod tests {
             upstream_calls: 100,
             retry_attempts: 2,
             circuit_open: 2,
-            http_escalations: 5,
-            headless_escalations: 1,
+            second_tier_escalations: 5,
+            final_tier_escalations: 1,
             p95_latency_ms: 2_000,
             p99_latency_ms: 8_000,
             resource_samples: 40,
@@ -383,8 +383,8 @@ mod tests {
         measurements.retry_attempts = 50;
         measurements.circuit_open = 50;
         measurements.rate_limited_outcomes = 30;
-        measurements.http_escalations = 30;
-        measurements.headless_escalations = 20;
+        measurements.second_tier_escalations = 30;
+        measurements.final_tier_escalations = 20;
         measurements.rate_limit_compliance_violations = 1;
         measurements.receipt_integrity_violations = 1;
         measurements.resource_samples = 1;
@@ -408,8 +408,8 @@ mod tests {
             "retry amplification",
             "circuit-open rate",
             "rate-limited outcome rate",
-            "HTTP escalation rate",
-            "headless escalation rate",
+            "second-tier escalation rate",
+            "final-tier escalation rate",
             "provider rate-limit compliance",
             "receipt-integrity",
             "resource timeline",

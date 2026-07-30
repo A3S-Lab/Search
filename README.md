@@ -17,11 +17,11 @@ request reports.
 - Shared per-engine bulkheads and closed/open/half-open circuit breaking
 - Sliding failure/slow-call windows, bounded `Retry-After`, and retry budgets
 - Bounded, cancellation-safe coalescing for identical in-flight requests
-- Caller-driven, quality-gated API → HTTP/RSS → headless cascades
+- Caller-ordered, quality-gated lazy cascades with verifiable execution receipts
 - Deterministic URL deduplication, rich-field merging, duplicate evidence
   suppression, and consensus ranking
 - Typed ACL configuration with redacted credential sources
-- Conventional HTTP, RSS, and optional A3S Browser engines
+- Headless A3S Browser discovery by default, plus conventional HTTP and RSS engines
 - Query answers, suggestions, images, full text, favicons, relevance, usage, and reports
 - Bounded provider responses and sanitized provider errors
 - Bundled Codex Skill in every release archive
@@ -44,14 +44,17 @@ a3s-search = "2"
 tokio = { version = "1", features = ["full"] }
 ```
 
-Optional features:
+Cargo features:
 
 | Feature | Purpose |
 | --- | --- |
-| `headless` | Enable A3S Browser rendering for Google, Baidu, and JavaScript pages |
-| `lightpanda` | Add the Lightpanda backend; implies `headless` |
+| `headless` (default) | Enable A3S Browser rendering for Google, Baidu, and JavaScript pages |
+| `lightpanda` (default) | Add the Lightpanda backend; implies `headless` |
 
-Provider APIs do not require either browser feature.
+Provider APIs do not require either browser feature. Build with
+`--no-default-features` only when the host intentionally cannot run a browser;
+the CLI then starts with its HTTP/RSS tier before trying configured or built-in
+API providers.
 
 ## CLI quick start
 
@@ -60,6 +63,20 @@ List engines and provider readiness:
 ```bash
 a3s-search engines
 ```
+
+Without an explicit engine list or ACL source configuration, the CLI executes
+this lazy cascade:
+
+```text
+headless (Google) → HTTP/RSS (DuckDuckGo, Brave, Bing, Wikipedia) → API providers
+```
+
+It stops as soon as the generic quality floor is met. All tiers share one
+20-second end-to-end deadline by default, and the first browser attempt is
+bounded to at most five seconds so a challenge or unavailable runtime degrades
+quickly. An explicit `--engines` list runs only those sources; it is never
+silently expanded. Enabled ACL sources replace the built-in plan when the CLI
+list is absent. `--timeout` overrides the shared deadline.
 
 Search both native providers without an API key:
 
@@ -275,9 +292,11 @@ Configuration rules:
 - Tavily domain filters accept bare DNS names only and normalize international
   names to their ASCII representation.
 - An include-domain and exclude-domain list cannot contain the same domain.
-- If `--engines` is absent, enabled ACL engines and providers are selected.
+- If `--engines` is absent, enabled ACL engines and providers replace the
+  built-in cascade; an ACL file with no source declarations leaves the built-in
+  cascade intact.
 - Explicit `--engines` selection still respects `enabled = false`.
-- `--timeout` overrides configured orchestration timeouts.
+- `--timeout` overrides the configured shared end-to-end deadline.
 
 ## Structured evidence and partial failures
 
@@ -296,6 +315,8 @@ Use `--format json` for machine-readable evidence. The top-level object contains
 | `count` | Number of displayed results |
 | `total_count` | Number of aggregated results before the display limit |
 | `duration_ms` | End-to-end orchestration duration |
+| `cascade_receipt` | Configured tier plan, executed prefix, generic quality decision, and identities bound to the final results |
+| `cascade_receipt_binding` | Domain-separated SHA-256 binding for the complete receipt |
 
 Each result can preserve `engines`, `score`, `relevance_score`, `published_date`,
 `full_text`, `favicon`, and result-level `images`.
@@ -452,8 +473,8 @@ not query topics, publishers, domains, or languages.
 fallback. `run_tier_if_needed` does not invoke its async closure after an
 earlier tier satisfies the floor, so callers can construct HTTP/RSS engines or
 headless browser pools inside the closure without paying for them on the
-healthy API path. `push_tier` and `needs_next_tier` remain available when a
-caller needs to manage execution separately. The
+healthy earlier-tier path. `push_tier` and `needs_next_tier` remain available
+when a caller needs to manage execution separately. The
 quality floor is caller-configurable and uses only generic signals: usable
 result count, normalized host diversity, contributing engines, independent
 engine consensus, per-result Unicode query/text alignment, and mean alignment.
@@ -1069,22 +1090,25 @@ The corpus shape is:
 }
 ```
 
-The manifest declares exactly one `api`, `http_rss`, and `headless` capability
-in that order. Deployment profiles and provider scopes are lowercase opaque
-`sha256:` identities; each scope declares its minimum request interval. The
-driver protocol preserves per-tier outcomes, calls, retries, `Retry-After`, and
+The manifest declares exactly one `api`, `http_rss`, and `headless` capability.
+Their declared order is authoritative and may be browser-first; the verifier
+requires every attempt to execute a lazy prefix of that exact sealed order.
+Deployment profiles and provider scopes are lowercase opaque `sha256:`
+identities; each scope declares its minimum request interval. The driver
+protocol preserves per-tier outcomes, calls, retries, `Retry-After`, and
 process-tree resource samples without putting provider names into the gate.
 
 The canary rejects eager fallback, a missing required tier, terminal receipts
 that suppress an available fallback, retries that do not follow a serial
 retryable failure on the same scope, `Retry-After` or provider-cadence breaches,
-receipt or result-provenance inconsistencies, latency tails, excessive fallback,
-and resource growth. It recomputes generic query-match quality after clearing
-candidate-supplied scores. Raw attempt receipts are appended and flushed before
-evaluation, and the final report binds the receipt-log digest. Driver,
-candidate, corpus, and manifest paths are rehashed before and after every
-attempt and again after driver shutdown; any persistent identity change fails
-the campaign.
+receipt or result-provenance inconsistencies, latency tails, excessive
+second-tier or final-tier escalation, and resource growth. Position-based
+escalation gates remain valid for any sealed transport order. The verifier
+recomputes generic query-match quality after clearing candidate-supplied
+scores. Raw attempt receipts are appended and flushed before evaluation, and
+the final report binds the receipt-log digest. Driver, candidate, corpus, and
+manifest paths are rehashed before and after every attempt and again after
+driver shutdown; any persistent identity change fails the campaign.
 
 Those path checks assume a trusted driver and controlled, non-adversarial
 artifact storage. They detect accidental or persistent replacement but do not

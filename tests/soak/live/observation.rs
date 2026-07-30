@@ -12,8 +12,8 @@ use super::rate::is_rate_limited;
 pub(super) struct AttemptObservation {
     pub nonempty: bool,
     pub useful: bool,
-    pub http_escalated: bool,
-    pub headless_escalated: bool,
+    pub second_tier_escalated: bool,
+    pub final_tier_escalated: bool,
     pub engine_slots: u64,
     pub upstream_calls: u64,
     pub retry_attempts: u64,
@@ -53,8 +53,8 @@ pub(super) fn evaluate_attempt(
         return Ok(AttemptObservation {
             nonempty: false,
             useful: false,
-            http_escalated: false,
-            headless_escalated: false,
+            second_tier_escalated: false,
+            final_tier_escalated: false,
             engine_slots: 0,
             upstream_calls: 0,
             retry_attempts: 0,
@@ -74,8 +74,8 @@ pub(super) fn evaluate_attempt(
     let mut calls = Vec::new();
     let mut shortcuts = HashSet::new();
     let mut circuit_open = 0_u64;
-    let mut http_escalated = false;
-    let mut headless_escalated = false;
+    let mut second_tier_escalated = false;
+    let mut final_tier_escalated = false;
 
     for (index, mut tier) in receipt.tiers.into_iter().enumerate() {
         if tier.capability != capabilities[index] {
@@ -87,10 +87,10 @@ pub(super) fn evaluate_attempt(
         if index > 0 && !cascade.needs_next_tier() {
             return Err("driver eagerly executed a tier after quality was satisfied".to_string());
         }
-        match tier.capability {
-            TierCapability::Api => {}
-            TierCapability::HttpRss => http_escalated = true,
-            TierCapability::Headless => headless_escalated = true,
+        match index {
+            1 => second_tier_escalated = true,
+            2 => final_tier_escalated = true,
+            _ => {}
         }
         for result in tier.results.items_mut() {
             result.query_match_score = None;
@@ -136,8 +136,8 @@ pub(super) fn evaluate_attempt(
     Ok(AttemptObservation {
         nonempty: !cascade.results().items().is_empty(),
         useful: !cascade.needs_next_tier(),
-        http_escalated,
-        headless_escalated,
+        second_tier_escalated,
+        final_tier_escalated,
         engine_slots: outcomes.len() as u64,
         upstream_calls,
         retry_attempts,
@@ -215,7 +215,7 @@ fn validate_terminal(
         }
         Some(_) => Ok(terminal),
         None if receipt.tiers.is_empty() => {
-            Err("completed attempt did not execute an API tier".to_string())
+            Err("completed attempt did not execute the first sealed tier".to_string())
         }
         None => Ok(None),
     }

@@ -8,35 +8,22 @@ use clap::{Parser, Subcommand, ValueEnum};
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
-use a3s_search::{
-    engines::{
-        Bing, BingChina, BingParser, Brave, BraveParser, DuckDuckGo, DuckDuckGoParser, So360,
-        So360Parser, Sogou, SogouParser, Wikipedia,
-    },
-    providers::BuiltinProvider,
-    Engine, EngineConfig, HttpFetcher, SafeSearch, Search, SearchConfig, SearchQuery, TimeRange,
-};
-
-#[cfg(feature = "headless")]
-use a3s_search::{
-    a3s_use_browser::PageRenderer,
-    browser::{BrowserFetcher, BrowserPool, BrowserPoolConfig},
-    engines::{Baidu, Google},
-    PageFetcher, WaitStrategy,
-};
+use a3s_search::{EngineConfig, SafeSearch, SearchConfig, SearchQuery, TimeRange};
 
 mod cli;
 
-use cli::output::{print_results, OutputFormat};
-use cli::provider::{
-    create_provider_engine, ensure_provider_ready, list_engines, load_search_config,
-};
-use cli::proxy::{create_http_fetcher, report_proxy_scope};
+use cli::cascade::{execute_cascade, CascadeRequest, EngineTierPlan, DEFAULT_TIMEOUT_SECONDS};
+use cli::output::{print_cascade_results, OutputFormat};
+use cli::provider::{list_engines, load_search_config};
+use cli::proxy::report_proxy_scope;
+
+#[cfg(test)]
+use cli::provider::create_provider_engine;
 
 #[cfg(test)]
 use a3s_search::{
-    providers::{ProviderAuthentication, ProviderReadiness},
-    SearchResults,
+    providers::{BuiltinProvider, ProviderAuthentication, ProviderReadiness},
+    Engine, SearchResults,
 };
 #[cfg(test)]
 use cli::output::{json_output, truncate_str};
@@ -51,17 +38,22 @@ struct Cli {
     /// Search query (if no subcommand is provided)
     query: Option<String>,
 
-    /// Search engines to use (comma-separated)
-    /// Available: ddg, brave, bing, wiki, sogou, 360, g, baidu, bing_cn, anysearch, tavily
+    /// Exact search engines to use (comma-separated); omit for the default cascade
+    /// Available: g, baidu, ddg, brave, bing, wiki, sogou, 360, bing_cn, anysearch, tavily
     #[arg(short, long, value_delimiter = ',')]
     engines: Option<Vec<String>>,
 
     /// Maximum number of results to display
-    #[arg(short, long, default_value = "10")]
+    #[arg(
+        short,
+        long,
+        default_value = "10",
+        value_parser = parse_positive_usize
+    )]
     limit: usize,
 
-    /// Search timeout in seconds (overrides config/default)
-    #[arg(short, long)]
+    /// Shared end-to-end search deadline in seconds (overrides config/default)
+    #[arg(short, long, value_parser = parse_positive_u64)]
     timeout: Option<u64>,
 
     /// Result page to fetch (1-indexed)
@@ -137,6 +129,28 @@ enum TimeRangeArg {
     Year,
 }
 
+fn parse_positive_usize(value: &str) -> std::result::Result<usize, String> {
+    value
+        .parse::<usize>()
+        .map_err(|error| format!("invalid positive integer: {error}"))
+        .and_then(|value| {
+            (value > 0)
+                .then_some(value)
+                .ok_or_else(|| "value must be greater than zero".to_string())
+        })
+}
+
+fn parse_positive_u64(value: &str) -> std::result::Result<u64, String> {
+    value
+        .parse::<u64>()
+        .map_err(|error| format!("invalid positive integer: {error}"))
+        .and_then(|value| {
+            (value > 0)
+                .then_some(value)
+                .ok_or_else(|| "value must be greater than zero".to_string())
+        })
+}
+
 impl From<TimeRangeArg> for TimeRange {
     fn from(value: TimeRangeArg) -> Self {
         match value {
@@ -200,10 +214,10 @@ async fn main() -> Result<()> {
                 println!("  a3s-search \"Rust\" -p http://127.0.0.1:8080\n");
                 println!("Options:");
                 println!(
-                    "  -e, --engines <ENGINES>  Engines/providers: ddg,brave,bing,wiki,sogou,360,g,baidu,bing_cn,anysearch,tavily"
+                    "  -e, --engines <ENGINES>  Exact engines/providers (omit for browser-first cascade)"
                 );
                 println!("  -l, --limit <N>          Max results (default: 10)");
-                println!("  -t, --timeout <SECS>     Timeout in seconds");
+                println!("  -t, --timeout <SECS>     Shared deadline (default: 20 seconds)");
                 println!("      --page <N>           Result page (default: 1)");
                 println!("      --language <LOCALE>  Search language/locale");
                 println!("      --safesearch <LEVEL> off, moderate, strict");
@@ -235,24 +249,6 @@ struct SearchArgs {
     config: Option<PathBuf>,
 }
 
-fn selected_engine_shortcuts(args: &SearchArgs, config: Option<&SearchConfig>) -> Vec<String> {
-    if let Some(engines) = &args.engines {
-        return engines.clone();
-    }
-
-    if let Some(config) = config {
-        if !config.engines.is_empty() || !config.providers.is_empty() {
-            return config
-                .enabled_sources()
-                .into_iter()
-                .map(str::to_string)
-                .collect();
-        }
-    }
-
-    vec!["ddg".to_string(), "wiki".to_string()]
-}
-
 fn is_config_enabled(config: Option<&SearchConfig>, shortcut: &str) -> bool {
     config
         .and_then(|config| {
@@ -277,177 +273,19 @@ fn configured_engine_config(
 
 async fn run_search(args: SearchArgs) -> Result<()> {
     let config = load_search_config(args.config.as_deref())?;
-
-    let mut search = if let Some(config) = config.as_ref() {
-        Search::with_health_config(config.health_config())
-    } else {
-        Search::new()
-    };
-    if let Some(config) = config.as_ref() {
-        search.set_ranking_config(config.ranking);
+    let plan = EngineTierPlan::new(args.engines.as_deref(), config.as_ref());
+    for shortcut in plan.unknown() {
+        eprintln!("Warning: Unknown engine '{shortcut}', skipping");
     }
-
-    if let Some(timeout) = args.timeout {
-        search.set_timeout(Duration::from_secs(timeout));
-    } else if config.is_none() {
-        search.set_timeout(Duration::from_secs(10));
+    if plan.is_empty() {
+        anyhow::bail!("No valid engines specified");
     }
-
-    let engine_shortcuts = selected_engine_shortcuts(&args, config.as_ref());
+    let engine_shortcuts = plan.shortcuts();
     report_proxy_scope(
         args.proxy.as_deref(),
         &engine_shortcuts,
         matches!(args.format, OutputFormat::Text),
     );
-
-    // Warn if headless engines are requested without the feature
-    #[cfg(not(feature = "headless"))]
-    {
-        let headless_engines = ["g", "google", "baidu"];
-        for e in &engine_shortcuts {
-            if headless_engines.contains(&e.as_str()) {
-                eprintln!(
-                    "Warning: '{}' engine requires the 'headless' feature. \
-                     Rebuild with: cargo build --features headless",
-                    e
-                );
-            }
-        }
-    }
-
-    // Lazily create browser pool when headless engines are needed
-    #[cfg(feature = "headless")]
-    let browser_pool: std::sync::Arc<BrowserPool> = {
-        let pool_config = BrowserPoolConfig {
-            proxy_url: args.proxy.clone(),
-            ..Default::default()
-        };
-        std::sync::Arc::new(BrowserPool::new(pool_config))
-    };
-    #[cfg(feature = "headless")]
-    let browser_renderer: std::sync::Arc<dyn PageRenderer> = browser_pool.clone();
-
-    let http_fetcher = create_http_fetcher(args.proxy.as_deref(), &engine_shortcuts)?;
-
-    for shortcut in &engine_shortcuts {
-        if !is_config_enabled(config.as_ref(), shortcut) {
-            if args.engines.is_some() {
-                eprintln!(
-                    "Warning: '{}' engine is disabled by config, skipping",
-                    shortcut
-                );
-            }
-            continue;
-        }
-
-        if let Some(provider) = BuiltinProvider::from_id(shortcut) {
-            let engine = create_provider_engine(provider, config.as_ref())?;
-            ensure_provider_ready(&engine)?;
-            search.add_engine(engine);
-            continue;
-        }
-
-        match shortcut.as_str() {
-            "ddg" | "duckduckgo" => {
-                let engine = DuckDuckGo::with_fetcher(
-                    DuckDuckGoParser,
-                    std::sync::Arc::clone(&http_fetcher),
-                );
-                let engine_config =
-                    configured_engine_config(config.as_ref(), engine.config().clone());
-                search.add_engine(engine.with_config(engine_config));
-            }
-            "brave" => {
-                let engine = Brave::with_fetcher(BraveParser, std::sync::Arc::clone(&http_fetcher));
-                let engine_config =
-                    configured_engine_config(config.as_ref(), engine.config().clone());
-                search.add_engine(engine.with_config(engine_config));
-            }
-            "bing" => {
-                let engine = Bing::with_fetcher(BingParser, std::sync::Arc::clone(&http_fetcher));
-                let engine_config =
-                    configured_engine_config(config.as_ref(), engine.config().clone());
-                search.add_engine(engine.with_config(engine_config));
-            }
-            "wiki" | "wikipedia" => {
-                // Wikipedia needs its own fetcher since it uses JSON API, not HTML
-                let fetcher = if let Some(proxy_url) = &args.proxy {
-                    HttpFetcher::with_proxy(proxy_url).map_err(|e| {
-                        anyhow::anyhow!("Failed to create HTTP fetcher with proxy: {}", e)
-                    })?
-                } else {
-                    HttpFetcher::new()
-                };
-                let engine = Wikipedia::with_http_fetcher(fetcher);
-                let engine_config =
-                    configured_engine_config(config.as_ref(), engine.config().clone());
-                search.add_engine(engine.with_config(engine_config));
-            }
-            "sogou" => {
-                let engine = Sogou::with_fetcher(SogouParser, std::sync::Arc::clone(&http_fetcher));
-                let engine_config =
-                    configured_engine_config(config.as_ref(), engine.config().clone());
-                search.add_engine(engine.with_config(engine_config));
-            }
-            "360" | "so360" => {
-                let engine = So360::with_fetcher(So360Parser, std::sync::Arc::clone(&http_fetcher));
-                let engine_config =
-                    configured_engine_config(config.as_ref(), engine.config().clone());
-                search.add_engine(engine.with_config(engine_config));
-            }
-            "bing_cn" => {
-                let engine = BingChina::new(std::sync::Arc::clone(&http_fetcher));
-                let engine_config =
-                    configured_engine_config(config.as_ref(), engine.config().clone());
-                search.add_engine(engine.with_config(engine_config));
-            }
-            #[cfg(feature = "headless")]
-            "g" | "google" => {
-                let fetcher: std::sync::Arc<dyn PageFetcher> = std::sync::Arc::new(
-                    BrowserFetcher::from_renderer(std::sync::Arc::clone(&browser_renderer))
-                        .with_wait(WaitStrategy::Selector {
-                            css: "div.g".to_string(),
-                            timeout_ms: 5000,
-                        }),
-                );
-                let engine = Google::new(fetcher);
-                let engine_config =
-                    configured_engine_config(config.as_ref(), engine.config().clone());
-                search.add_engine(engine.with_config(engine_config));
-            }
-            #[cfg(feature = "headless")]
-            "baidu" => {
-                let fetcher: std::sync::Arc<dyn PageFetcher> = std::sync::Arc::new(
-                    BrowserFetcher::from_renderer(std::sync::Arc::clone(&browser_renderer))
-                        .with_wait(WaitStrategy::Selector {
-                            css: "div.c-container".to_string(),
-                            timeout_ms: 5000,
-                        }),
-                );
-                let engine = Baidu::new(fetcher);
-                let engine_config =
-                    configured_engine_config(config.as_ref(), engine.config().clone());
-                search.add_engine(engine.with_config(engine_config));
-            }
-            #[cfg(not(feature = "headless"))]
-            "g" | "google" | "baidu" => {
-                eprintln!(
-                    "Warning: '{}' engine requires the 'headless' feature. \
-                     Rebuild with: cargo build --features headless",
-                    shortcut
-                );
-            }
-            _ => {
-                eprintln!("Warning: Unknown engine '{}', skipping", shortcut);
-            }
-        }
-    }
-
-    if search.engine_count() == 0 {
-        anyhow::bail!("No valid engines specified");
-    }
-
-    // Perform search
     let mut query = SearchQuery::new(&args.query).with_page(args.page);
     if let Some(language) = &args.language {
         query = query.with_language(language);
@@ -458,17 +296,28 @@ async fn run_search(args: SearchArgs) -> Result<()> {
     if let Some(time_range) = args.time_range {
         query = query.with_time_range(time_range.into());
     }
-    let search_result = search.search(query).await;
-    #[cfg(feature = "headless")]
-    browser_pool.shutdown().await;
-    let results = search_result?;
+    let timeout = args
+        .timeout
+        .or_else(|| config.as_ref().map(|config| config.timeout))
+        .unwrap_or(DEFAULT_TIMEOUT_SECONDS);
+    let outcome = execute_cascade(
+        &plan,
+        CascadeRequest {
+            query,
+            limit: args.limit,
+            timeout: Duration::from_secs(timeout),
+            proxy: args.proxy.as_deref(),
+            config: config.as_ref(),
+        },
+    )
+    .await?;
 
     // Show engine errors to the user
-    for (engine, error) in results.errors() {
+    for (engine, error) in outcome.results.errors() {
         eprintln!("Warning: {} engine failed: {}", engine, error);
     }
 
-    print_results(&args.query, &results, args.limit, args.format)
+    print_cascade_results(&args.query, &outcome, args.limit, args.format)
 }
 
 #[cfg(test)]
@@ -622,6 +471,12 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_rejects_zero_limit_and_timeout() {
+        assert!(Cli::try_parse_from(["a3s-search", "query", "--limit", "0"]).is_err());
+        assert!(Cli::try_parse_from(["a3s-search", "query", "--timeout", "0"]).is_err());
+    }
+
+    #[test]
     fn test_cli_with_config() {
         let cli = Cli::parse_from(["a3s-search", "query", "-c", "search.acl"]);
         assert_eq!(cli.config, Some(PathBuf::from("search.acl")));
@@ -757,83 +612,6 @@ mod tests {
         let cli = Cli::parse_from(["a3s-search", "query", "-e", "g,ddg", "--headless"]);
         assert!(cli.headless);
         assert_eq!(cli.engines, Some(vec!["g".to_string(), "ddg".to_string()]));
-    }
-
-    #[test]
-    fn test_selected_engine_shortcuts_default() {
-        let args = SearchArgs {
-            query: "query".to_string(),
-            engines: None,
-            limit: 10,
-            timeout: None,
-            page: 1,
-            language: None,
-            safesearch: None,
-            time_range: None,
-            format: OutputFormat::Text,
-            proxy: None,
-            config: None,
-        };
-
-        assert_eq!(selected_engine_shortcuts(&args, None), vec!["ddg", "wiki"]);
-    }
-
-    #[test]
-    fn test_selected_engine_shortcuts_from_config() {
-        let args = SearchArgs {
-            query: "query".to_string(),
-            engines: None,
-            limit: 10,
-            timeout: None,
-            page: 1,
-            language: None,
-            safesearch: None,
-            time_range: None,
-            format: OutputFormat::Text,
-            proxy: None,
-            config: None,
-        };
-        let config = SearchConfig::parse(
-            r#"
-            engine "ddg" { enabled = true }
-            engine "brave" { enabled = false }
-            engine "wiki" { enabled = true }
-            provider "anysearch" { enabled = true }
-            provider "tavily" { enabled = false }
-            "#,
-        )
-        .unwrap();
-
-        let selected = selected_engine_shortcuts(&args, Some(&config));
-        assert_eq!(selected, vec!["anysearch", "ddg", "wiki"]);
-        assert!(selected.contains(&"ddg".to_string()));
-        assert!(selected.contains(&"wiki".to_string()));
-        assert!(selected.contains(&"anysearch".to_string()));
-        assert!(!selected.contains(&"brave".to_string()));
-        assert!(!selected.contains(&"tavily".to_string()));
-    }
-
-    #[test]
-    fn test_selected_engine_shortcuts_cli_overrides_config_selection() {
-        let args = SearchArgs {
-            query: "query".to_string(),
-            engines: Some(vec!["bing".to_string()]),
-            limit: 10,
-            timeout: None,
-            page: 1,
-            language: None,
-            safesearch: None,
-            time_range: None,
-            format: OutputFormat::Text,
-            proxy: None,
-            config: None,
-        };
-        let config = SearchConfig::parse(r#"engine "ddg" { enabled = true }"#).unwrap();
-
-        assert_eq!(
-            selected_engine_shortcuts(&args, Some(&config)),
-            vec!["bing"]
-        );
     }
 
     #[test]

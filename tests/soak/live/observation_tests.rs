@@ -13,14 +13,14 @@ fn query() -> LiveCanaryQuery {
 
 fn capabilities() -> Vec<TierCapability> {
     vec![
-        TierCapability::Api,
-        TierCapability::HttpRss,
         TierCapability::Headless,
+        TierCapability::HttpRss,
+        TierCapability::Api,
     ]
 }
 
 fn profiles() -> Vec<String> {
-    ['1', '2', '3'].into_iter().map(scope).collect()
+    ['3', '2', '1'].into_iter().map(scope).collect()
 }
 
 fn scope(digest: char) -> String {
@@ -28,7 +28,7 @@ fn scope(digest: char) -> String {
 }
 
 fn provider_policies() -> Vec<Vec<ProviderPolicy>> {
-    ['a', 'b', 'c']
+    ['c', 'b', 'a']
         .into_iter()
         .map(|digest| {
             vec![ProviderPolicy {
@@ -134,20 +134,27 @@ fn mark_terminal(receipt: &mut AttemptReceipt, stage: FailureStage) {
 
 fn exhausted_tiers() -> Vec<TierReceipt> {
     vec![
-        tier(TierCapability::Api, "api", false, 0),
+        tier(TierCapability::Headless, "headless", false, 0),
         tier(TierCapability::HttpRss, "http", false, 20),
-        tier(TierCapability::Headless, "headless", false, 40),
+        tier(TierCapability::Api, "api", false, 40),
     ]
 }
 
 #[test]
-fn healthy_api_prevents_eager_fallback() {
-    let observation = evaluate(receipt(vec![tier(TierCapability::Api, "api", true, 0)])).unwrap();
+fn healthy_first_tier_prevents_eager_fallback() {
+    let observation = evaluate(receipt(vec![tier(
+        TierCapability::Headless,
+        "headless",
+        true,
+        0,
+    )]))
+    .unwrap();
     assert!(observation.useful);
-    assert!(!observation.http_escalated);
+    assert!(!observation.second_tier_escalated);
+    assert!(!observation.final_tier_escalated);
 
     let eager = receipt(vec![
-        tier(TierCapability::Api, "api", true, 0),
+        tier(TierCapability::Headless, "headless", true, 0),
         tier(TierCapability::HttpRss, "secondary", true, 20),
     ]);
     assert!(evaluate(eager).is_err());
@@ -155,16 +162,16 @@ fn healthy_api_prevents_eager_fallback() {
 
 #[test]
 fn tier_receipt_must_bind_the_precommitted_deployment_profile() {
-    let mut api = tier(TierCapability::Api, "api", true, 0);
-    api.profile_sha256 = scope('9');
-    assert!(evaluate(receipt(vec![api]))
+    let mut headless = tier(TierCapability::Headless, "headless", true, 0);
+    headless.profile_sha256 = scope('9');
+    assert!(evaluate(receipt(vec![headless]))
         .unwrap_err()
         .contains("sealed deployment profile"));
 }
 
 #[test]
 fn insufficient_completed_attempt_cannot_skip_an_available_tier() {
-    let early = receipt(vec![tier(TierCapability::Api, "api", false, 0)]);
+    let early = receipt(vec![tier(TierCapability::Headless, "headless", false, 0)]);
     assert!(evaluate(early)
         .unwrap_err()
         .contains("stopped before an available fallback"));
@@ -172,24 +179,21 @@ fn insufficient_completed_attempt_cannot_skip_an_available_tier() {
 
 #[test]
 fn terminal_receipt_is_accepted_only_after_every_fallback_tier() {
-    let mut terminal = receipt(vec![tier(TierCapability::Api, "api", false, 0)]);
-    mark_terminal(&mut terminal, FailureStage::Api);
+    let mut terminal = receipt(vec![tier(TierCapability::Headless, "headless", false, 0)]);
+    mark_terminal(&mut terminal, FailureStage::Headless);
     assert!(evaluate(terminal)
         .unwrap_err()
         .contains("stopped before an available fallback"));
 
     let mut exhausted = receipt(exhausted_tiers());
-    mark_terminal(&mut exhausted, FailureStage::Headless);
+    mark_terminal(&mut exhausted, FailureStage::Api);
     let observation = evaluate(exhausted).unwrap();
     assert_eq!(observation.engine_slots, 3);
     assert_eq!(observation.upstream_calls, 3);
-    assert_eq!(
-        observation.terminal_failure_stage,
-        Some(FailureStage::Headless)
-    );
+    assert_eq!(observation.terminal_failure_stage, Some(FailureStage::Api));
 
     let mut after_http = receipt(vec![
-        tier(TierCapability::Api, "api", false, 0),
+        tier(TierCapability::Headless, "headless", false, 0),
         tier(TierCapability::HttpRss, "http", false, 20),
     ]);
     mark_terminal(&mut after_http, FailureStage::HttpRss);
@@ -198,7 +202,7 @@ fn terminal_receipt_is_accepted_only_after_every_fallback_tier() {
         .contains("stopped before an available fallback"));
 
     let mut mismatched = receipt(Vec::new());
-    mark_terminal(&mut mismatched, FailureStage::Api);
+    mark_terminal(&mut mismatched, FailureStage::Headless);
     assert!(evaluate(mismatched).is_err());
 }
 
@@ -217,9 +221,9 @@ fn explicit_pre_execution_failure_is_distinct_and_fact_free() {
 #[test]
 fn verifier_ignores_candidate_supplied_query_match_scores() {
     let tiers: Vec<_> = [
-        (TierCapability::Api, "api", 0),
+        (TierCapability::Headless, "headless", 0),
         (TierCapability::HttpRss, "http", 20),
-        (TierCapability::Headless, "headless", 40),
+        (TierCapability::Api, "api", 40),
     ]
     .into_iter()
     .map(|(capability, shortcut, offset)| {
@@ -239,24 +243,24 @@ fn verifier_ignores_candidate_supplied_query_match_scores() {
 
 #[test]
 fn deduplication_or_limit_may_reduce_attribution_below_raw_count() {
-    let mut api = tier(TierCapability::Api, "api", false, 0);
-    let value = serde_json::to_value(&api.results).unwrap();
+    let mut headless = tier(TierCapability::Headless, "headless", false, 0);
+    let value = serde_json::to_value(&headless.results).unwrap();
     let mut value = value;
     value["outcomes"][0]["result_count"] = serde_json::json!(2);
-    api.results = serde_json::from_value(value).unwrap();
+    headless.results = serde_json::from_value(value).unwrap();
     let mut tiers = exhausted_tiers();
-    tiers[0] = api;
+    tiers[0] = headless;
     assert!(evaluate(receipt(tiers)).is_ok());
 }
 
 #[test]
 fn retry_must_follow_a_serial_retryable_failure_on_the_same_scope() {
-    let mut api = tier(TierCapability::Api, "api", false, 0);
-    api.calls[0].failure_kind = Some("temporary".to_string());
-    api.calls[0].retryable = true;
-    api.calls.push(UpstreamCallReceipt {
-        provider_scope: scope('a'),
-        engine_shortcut: "api".to_string(),
+    let mut headless = tier(TierCapability::Headless, "headless", false, 0);
+    headless.calls[0].failure_kind = Some("temporary".to_string());
+    headless.calls[0].retryable = true;
+    headless.calls.push(UpstreamCallReceipt {
+        provider_scope: scope('c'),
+        engine_shortcut: "headless".to_string(),
         started_offset_ms: 20,
         ended_offset_ms: 30,
         is_retry: true,
@@ -265,10 +269,10 @@ fn retry_must_follow_a_serial_retryable_failure_on_the_same_scope() {
         retry_after_seconds: None,
     });
     let mut tiers = exhausted_tiers();
-    tiers[0] = api;
+    tiers[0] = headless;
     assert!(evaluate(receipt(tiers)).is_ok());
 
-    let mut rotated = tier(TierCapability::Api, "api", false, 0);
+    let mut rotated = tier(TierCapability::Headless, "headless", false, 0);
     rotated.calls[0].failure_kind = Some("temporary".to_string());
     rotated.calls[0].retryable = true;
     let mut retry = rotated.calls[0].clone();

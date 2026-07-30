@@ -11,8 +11,8 @@ pub(super) struct LiveCanaryPolicy {
     pub maximum_retry_amplification: f64,
     pub maximum_rate_limited_rate_ucb: f64,
     pub maximum_circuit_open_rate_ucb: f64,
-    pub maximum_http_escalation_rate_ucb: f64,
-    pub maximum_headless_escalation_rate_ucb: f64,
+    pub maximum_second_tier_escalation_rate_ucb: f64,
+    pub maximum_final_tier_escalation_rate_ucb: f64,
     pub minimum_resource_coverage_ratio: f64,
     pub maximum_resource_sample_gap_ms: u64,
     pub maximum_rss_growth_kib: i64,
@@ -32,8 +32,8 @@ impl LiveCanaryPolicy {
             maximum_retry_amplification: 1.05,
             maximum_rate_limited_rate_ucb: 0.10,
             maximum_circuit_open_rate_ucb: 0.20,
-            maximum_http_escalation_rate_ucb: 0.50,
-            maximum_headless_escalation_rate_ucb: 0.20,
+            maximum_second_tier_escalation_rate_ucb: 0.50,
+            maximum_final_tier_escalation_rate_ucb: 0.20,
             minimum_resource_coverage_ratio: 0.90,
             maximum_resource_sample_gap_ms: 180_000,
             maximum_rss_growth_kib: 131_072,
@@ -78,13 +78,13 @@ impl LiveCanaryPolicy {
                 "A3S_SEARCH_LIVE_CANARY_MAX_CIRCUIT_OPEN_RATE_UCB",
                 floor.maximum_circuit_open_rate_ucb,
             ),
-            maximum_http_escalation_rate_ucb: env_value(
-                "A3S_SEARCH_LIVE_CANARY_MAX_HTTP_ESCALATION_RATE_UCB",
-                floor.maximum_http_escalation_rate_ucb,
+            maximum_second_tier_escalation_rate_ucb: env_value(
+                "A3S_SEARCH_LIVE_CANARY_MAX_SECOND_TIER_ESCALATION_RATE_UCB",
+                floor.maximum_second_tier_escalation_rate_ucb,
             ),
-            maximum_headless_escalation_rate_ucb: env_value(
-                "A3S_SEARCH_LIVE_CANARY_MAX_HEADLESS_ESCALATION_RATE_UCB",
-                floor.maximum_headless_escalation_rate_ucb,
+            maximum_final_tier_escalation_rate_ucb: env_value(
+                "A3S_SEARCH_LIVE_CANARY_MAX_FINAL_TIER_ESCALATION_RATE_UCB",
+                floor.maximum_final_tier_escalation_rate_ucb,
             ),
             minimum_resource_coverage_ratio: env_value(
                 "A3S_SEARCH_LIVE_CANARY_MIN_RESOURCE_COVERAGE_RATIO",
@@ -129,12 +129,12 @@ impl LiveCanaryPolicy {
                 self.maximum_rate_limited_rate_ucb,
             ),
             (
-                "maximum HTTP escalation rate",
-                self.maximum_http_escalation_rate_ucb,
+                "maximum second-tier escalation rate",
+                self.maximum_second_tier_escalation_rate_ucb,
             ),
             (
-                "maximum headless escalation rate",
-                self.maximum_headless_escalation_rate_ucb,
+                "maximum final-tier escalation rate",
+                self.maximum_final_tier_escalation_rate_ucb,
             ),
             (
                 "minimum resource coverage ratio",
@@ -190,9 +190,13 @@ impl LiveCanaryPolicy {
         assert!(self.maximum_retry_amplification <= floor.maximum_retry_amplification);
         assert!(self.maximum_rate_limited_rate_ucb <= floor.maximum_rate_limited_rate_ucb);
         assert!(self.maximum_circuit_open_rate_ucb <= floor.maximum_circuit_open_rate_ucb);
-        assert!(self.maximum_http_escalation_rate_ucb <= floor.maximum_http_escalation_rate_ucb);
         assert!(
-            self.maximum_headless_escalation_rate_ucb <= floor.maximum_headless_escalation_rate_ucb
+            self.maximum_second_tier_escalation_rate_ucb
+                <= floor.maximum_second_tier_escalation_rate_ucb
+        );
+        assert!(
+            self.maximum_final_tier_escalation_rate_ucb
+                <= floor.maximum_final_tier_escalation_rate_ucb
         );
         assert!(self.minimum_resource_coverage_ratio >= floor.minimum_resource_coverage_ratio);
         assert!(self.maximum_resource_sample_gap_ms <= floor.maximum_resource_sample_gap_ms);
@@ -236,8 +240,8 @@ mod tests {
             |policy| policy.maximum_retry_amplification += 0.01,
             |policy| policy.maximum_rate_limited_rate_ucb += 0.01,
             |policy| policy.maximum_circuit_open_rate_ucb += 0.01,
-            |policy| policy.maximum_http_escalation_rate_ucb += 0.01,
-            |policy| policy.maximum_headless_escalation_rate_ucb += 0.01,
+            |policy| policy.maximum_second_tier_escalation_rate_ucb += 0.01,
+            |policy| policy.maximum_final_tier_escalation_rate_ucb += 0.01,
             |policy| policy.minimum_resource_coverage_ratio -= 0.01,
             |policy| policy.maximum_resource_sample_gap_ms += 1,
             |policy| policy.maximum_rss_growth_kib += 1,

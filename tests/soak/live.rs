@@ -326,7 +326,7 @@ async fn sealed_live_tiered_canary_meets_release_floor() {
     println!(
         "LIVE_CANARY_REPORT={}",
         json!({
-            "schema_version": 5,
+            "schema_version": 6,
             "package_version": env!("CARGO_PKG_VERSION"),
             "evaluated_commit": evaluated_commit,
             "driver_sha256": driver.driver_identity,
@@ -397,12 +397,12 @@ impl LiveCanaryMeasurements {
             .rate_limited_outcomes
             .saturating_add(observation.rate_limited_outcomes);
         self.circuit_open = self.circuit_open.saturating_add(observation.circuit_open);
-        self.http_escalations = self
-            .http_escalations
-            .saturating_add(u64::from(observation.http_escalated));
-        self.headless_escalations = self
-            .headless_escalations
-            .saturating_add(u64::from(observation.headless_escalated));
+        self.second_tier_escalations = self
+            .second_tier_escalations
+            .saturating_add(u64::from(observation.second_tier_escalated));
+        self.final_tier_escalations = self
+            .final_tier_escalations
+            .saturating_add(u64::from(observation.final_tier_escalated));
     }
 }
 

@@ -33,7 +33,7 @@ name = "a3s-search"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["headless", "lightpanda"]
 headless = ["dep:a3s-use-browser"]
 # Lightpanda headless backend (Linux/macOS only; Windows unsupported by Lightpanda).
 lightpanda = ["headless", "a3s-use-browser/lightpanda"]

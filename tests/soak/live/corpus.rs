@@ -15,7 +15,7 @@ const MAX_CAMPAIGN_FILE_BYTES: usize = 1024 * 1024;
 const MINIMUM_CANARY_QUERY_COUNT: usize = 40;
 const MAXIMUM_PROVIDER_INTERVAL_SECONDS: u64 = 86_400;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum TierCapability {
     Api,
@@ -236,17 +236,23 @@ fn validate_manifest(manifest: &TierManifest) {
     assert_eq!(manifest.driver_protocol, 3, "unsupported driver protocol");
     validate_campaign_id(&manifest.campaign_id);
     assert_eq!(
-        manifest
-            .tiers
-            .iter()
-            .map(|tier| tier.capability)
-            .collect::<Vec<_>>(),
-        [
+        manifest.tiers.len(),
+        3,
+        "tier manifest must declare exactly three capabilities"
+    );
+    let capabilities = manifest
+        .tiers
+        .iter()
+        .map(|tier| tier.capability)
+        .collect::<HashSet<_>>();
+    assert_eq!(
+        capabilities,
+        HashSet::from([
             TierCapability::Api,
             TierCapability::HttpRss,
             TierCapability::Headless,
-        ],
-        "tier manifest must declare one API, HTTP/RSS, and headless profile in order"
+        ]),
+        "tier manifest must declare API, HTTP/RSS, and headless exactly once"
     );
     let mut profiles = HashSet::new();
     let mut global_policies = HashMap::<&str, u64>::new();
@@ -336,9 +342,9 @@ mod tests {
             driver_protocol: 3,
             campaign_id: "sealed-campaign".to_string(),
             tiers: [
-                (TierCapability::Api, 'a'),
-                (TierCapability::HttpRss, 'b'),
                 (TierCapability::Headless, 'c'),
+                (TierCapability::HttpRss, 'b'),
+                (TierCapability::Api, 'a'),
             ]
             .into_iter()
             .map(|(capability, digest)| TierProfile {
@@ -366,6 +372,20 @@ mod tests {
     #[test]
     fn manifest_uses_capabilities_opaque_profiles_and_predeclared_cadence() {
         validate_manifest(&manifest());
+    }
+
+    #[test]
+    fn manifest_order_is_sealed_but_not_transport_hardcoded() {
+        let mut manifest = manifest();
+        manifest.tiers.rotate_left(1);
+        validate_manifest(&manifest);
+    }
+
+    #[test]
+    fn manifest_rejects_duplicate_or_missing_capabilities() {
+        let mut manifest = manifest();
+        manifest.tiers[2].capability = TierCapability::HttpRss;
+        assert!(std::panic::catch_unwind(|| validate_manifest(&manifest)).is_err());
     }
 
     #[test]
