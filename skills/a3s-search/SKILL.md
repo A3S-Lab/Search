@@ -15,7 +15,13 @@ Use the CLI first. Request JSON whenever evidence must be inspected, compared, o
    a3s-search engines
    ```
 
-2. Select providers deliberately:
+2. Start with the default quality-gated cascade unless the task requires a
+   constrained source set. The CLI tries headless discovery first, then public
+   HTTP/RSS engines, then native API providers, and stops when the generic
+   quality floor is met. All tiers share one deadline. An explicit `--engines`
+   list runs only those sources and is never expanded.
+
+   When selecting providers deliberately:
 
    - Use `anysearch` for broad discovery and AnySearch vertical routing. This
      integration follows the downloaded AnySearch Skill's MCP `tools/call`
@@ -25,9 +31,18 @@ Use the CLI first. Request JSON whenever evidence must be inspected, compared, o
      `sub_domain`; its required parameters must be copied into ACL.
    - Use `tavily` for ranked results, direct answers, raw content, images, and usage metadata.
    - Use both for independent corroboration.
-   - Add conventional engines only when they materially improve coverage.
+   - Combine browser, conventional, and API sources when independent retrieval
+     paths materially improve coverage.
 
-3. Run a structured search:
+3. Run a structured search. Omit `--engines` for the default lazy cascade:
+
+   ```bash
+   a3s-search "current Rust async runtime guidance" \
+     --format json \
+     --limit 10
+   ```
+
+   Constrain the source set only when the research plan calls for it:
 
    ```bash
    a3s-search "current Rust async runtime guidance" \
@@ -36,7 +51,15 @@ Use the CLI first. Request JSON whenever evidence must be inspected, compared, o
      --limit 10
    ```
 
-4. Inspect `answers`, `results`, `images`, `reports`, and `errors`. Preserve URLs, provider reports, relevance scores, dates, and full text when they support the conclusion. Do not claim that a provider succeeded unless the JSON evidence shows it. Treat `auto_parameters_truncated` or `metadata_truncated` as a signal that auxiliary provider metadata was safely shortened.
+4. Inspect `answers`, `results`, `images`, `reports`, `failures`, `outcomes`,
+   `cascade_receipt`, and `cascade_receipt_binding`. Check the executed tier
+   prefix and `quality_floor_met`; if the floor remains unmet after all declared
+   tiers, treat retrieval as incomplete and refine or decompose the query
+   instead of presenting weak results as sufficient. Preserve URLs, provider
+   reports, relevance scores, dates, and full text when they support the
+   conclusion. Do not claim that a provider succeeded unless the JSON evidence
+   shows it. Treat `auto_parameters_truncated` or `metadata_truncated` as a
+   signal that auxiliary provider metadata was safely shortened.
    Treat `_a3s_normalization.changed = true` as evidence that invalid or
    oversized provider-controlled output was safely normalized; inspect its
    counters before relying on omitted evidence.
@@ -117,4 +140,9 @@ automatically selected depth or topic.
 
 ## Handle partial failures
 
-Treat provider warnings and the JSON `errors` entries as evidence. Continue with usable results when one provider fails, disclose the failed provider, and avoid conclusions that depend only on missing evidence. Retry with one provider at a time to isolate authentication, quota, timeout, or configuration failures.
+Treat provider warnings and the JSON `failures` and `outcomes` entries as
+evidence. Continue with usable results when one source fails and the receipt's
+quality floor is met. Disclose material failed paths and avoid conclusions that
+depend only on missing evidence. Retry with one source at a time to isolate
+authentication, quota, timeout, challenge, browser-runtime, or configuration
+failures.

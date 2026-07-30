@@ -3,7 +3,7 @@
 use anyhow::Result;
 use clap::ValueEnum;
 
-use a3s_search::SearchResults;
+use a3s_search::{SearchCascadeOutcomeV1, SearchResults};
 
 /// CLI output format.
 #[derive(Clone, Copy, ValueEnum, Debug)]
@@ -16,14 +16,17 @@ pub(crate) enum OutputFormat {
     Compact,
 }
 
-pub(crate) fn print_results(
+pub(crate) fn print_cascade_results(
     query: &str,
-    results: &SearchResults,
+    outcome: &SearchCascadeOutcomeV1,
     limit: usize,
     format: OutputFormat,
 ) -> Result<()> {
+    outcome.validate()?;
+    let results = &outcome.results;
     match format {
         OutputFormat::Text => {
+            let binding = outcome.receipt_binding()?;
             println!(
                 "\nSearch results for \"{}\" ({} results in {}ms):\n",
                 query, results.count, results.duration_ms
@@ -52,9 +55,30 @@ pub(crate) fn print_results(
             if !results.suggestions().is_empty() {
                 println!("Suggestions: {}", results.suggestions().join(", "));
             }
+            let executed = outcome
+                .receipt
+                .executed_tiers
+                .iter()
+                .map(|report| report.tier.as_str())
+                .collect::<Vec<_>>()
+                .join(" -> ");
+            println!(
+                "Cascade: {} | quality floor: {} | receipt: {}",
+                if executed.is_empty() {
+                    "none"
+                } else {
+                    &executed
+                },
+                if outcome.receipt.quality_floor_met {
+                    "met"
+                } else {
+                    "not met"
+                },
+                binding.sha256
+            );
         }
         OutputFormat::Json => {
-            let payload = json_output(query, results, limit);
+            let payload = cascade_json_output(query, outcome, limit)?;
             println!("{}", serde_json::to_string_pretty(&payload)?);
         }
         OutputFormat::Compact => {
@@ -64,6 +88,18 @@ pub(crate) fn print_results(
         }
     }
     Ok(())
+}
+
+pub(crate) fn cascade_json_output(
+    query: &str,
+    outcome: &SearchCascadeOutcomeV1,
+    limit: usize,
+) -> Result<serde_json::Value> {
+    outcome.validate()?;
+    let mut payload = json_output(query, &outcome.results, limit);
+    payload["cascade_receipt"] = serde_json::to_value(&outcome.receipt)?;
+    payload["cascade_receipt_binding"] = serde_json::to_value(outcome.receipt_binding()?)?;
+    Ok(payload)
 }
 
 pub(crate) fn json_output(query: &str, results: &SearchResults, limit: usize) -> serde_json::Value {
@@ -98,4 +134,39 @@ pub(crate) fn truncate_str(value: &str, max_bytes: usize) -> String {
         None => "",
     };
     format!("{truncated}...")
+}
+
+#[cfg(test)]
+mod tests {
+    use a3s_search::{SearchCascade, SearchQualityFloor, SearchQuery, SearchResult, SearchResults};
+
+    use super::*;
+
+    #[test]
+    fn cascade_json_binds_the_complete_plan_quality_and_results() {
+        let query = SearchQuery::new("portable research query");
+        let mut cascade = SearchCascade::new(query.clone(), SearchQualityFloor::for_limit(1));
+        let mut results = SearchResults::new();
+        results.add_result(
+            SearchResult::new(
+                "https://example.com/research",
+                "Portable research query",
+                "Independent evidence for a portable research query.",
+            )
+            .with_engine("fixture", 1),
+        );
+        cascade.push_tier("headless", results);
+        let outcome = cascade.finish_with_tier_plan(["headless", "http_rss", "api"]);
+        let output = cascade_json_output(&query.query, &outcome.unwrap(), 1).unwrap();
+
+        assert_eq!(output["cascade_receipt"]["configured_tiers"][0], "headless");
+        assert_eq!(output["cascade_receipt"]["quality_floor_met"], true);
+        assert_eq!(
+            output["cascade_receipt_binding"]["sha256"]
+                .as_str()
+                .unwrap()
+                .len(),
+            64
+        );
+    }
 }

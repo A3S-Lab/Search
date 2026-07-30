@@ -17,11 +17,11 @@ request reports.
 - Shared per-engine bulkheads and closed/open/half-open circuit breaking
 - Sliding failure/slow-call windows, bounded `Retry-After`, and retry budgets
 - Bounded, cancellation-safe coalescing for identical in-flight requests
-- Caller-driven, quality-gated API → HTTP/RSS → headless cascades
+- Caller-ordered, quality-gated lazy cascades with verifiable execution receipts
 - Deterministic URL deduplication, rich-field merging, duplicate evidence
   suppression, and consensus ranking
 - Typed ACL configuration with redacted credential sources
-- Conventional HTTP, RSS, and optional A3S Browser engines
+- Headless A3S Browser discovery by default, plus conventional HTTP and RSS engines
 - Query answers, suggestions, images, full text, favicons, relevance, usage, and reports
 - Bounded provider responses and sanitized provider errors
 - Bundled Codex Skill in every release archive
@@ -44,14 +44,17 @@ a3s-search = "2"
 tokio = { version = "1", features = ["full"] }
 ```
 
-Optional features:
+Cargo features:
 
 | Feature | Purpose |
 | --- | --- |
-| `headless` | Enable A3S Browser rendering for Google, Baidu, and JavaScript pages |
-| `lightpanda` | Add the Lightpanda backend; implies `headless` |
+| `headless` (default) | Enable A3S Browser rendering for Google, Baidu, and JavaScript pages |
+| `lightpanda` (default) | Add the Lightpanda backend; implies `headless` |
 
-Provider APIs do not require either browser feature.
+Provider APIs do not require either browser feature. Build with
+`--no-default-features` only when the host intentionally cannot run a browser;
+the CLI then starts with its HTTP/RSS tier before trying configured or built-in
+API providers.
 
 ## CLI quick start
 
@@ -60,6 +63,20 @@ List engines and provider readiness:
 ```bash
 a3s-search engines
 ```
+
+Without an explicit engine list or ACL source configuration, the CLI executes
+this lazy cascade:
+
+```text
+headless (Google) → HTTP/RSS (DuckDuckGo, Brave, Bing, Wikipedia) → API providers
+```
+
+It stops as soon as the generic quality floor is met. All tiers share one
+20-second end-to-end deadline by default, and the first browser attempt is
+bounded to at most five seconds so a challenge or unavailable runtime degrades
+quickly. An explicit `--engines` list runs only those sources; it is never
+silently expanded. Enabled ACL sources replace the built-in plan when the CLI
+list is absent. `--timeout` overrides the shared deadline.
 
 Search both native providers without an API key:
 
@@ -275,9 +292,11 @@ Configuration rules:
 - Tavily domain filters accept bare DNS names only and normalize international
   names to their ASCII representation.
 - An include-domain and exclude-domain list cannot contain the same domain.
-- If `--engines` is absent, enabled ACL engines and providers are selected.
+- If `--engines` is absent, enabled ACL engines and providers replace the
+  built-in cascade; an ACL file with no source declarations leaves the built-in
+  cascade intact.
 - Explicit `--engines` selection still respects `enabled = false`.
-- `--timeout` overrides configured orchestration timeouts.
+- `--timeout` overrides the configured shared end-to-end deadline.
 
 ## Structured evidence and partial failures
 
@@ -296,6 +315,8 @@ Use `--format json` for machine-readable evidence. The top-level object contains
 | `count` | Number of displayed results |
 | `total_count` | Number of aggregated results before the display limit |
 | `duration_ms` | End-to-end orchestration duration |
+| `cascade_receipt` | Configured tier plan, executed prefix, generic quality decision, and identities bound to the final results |
+| `cascade_receipt_binding` | Domain-separated SHA-256 binding for the complete receipt |
 
 Each result can preserve `engines`, `score`, `relevance_score`, `published_date`,
 `full_text`, `favicon`, and result-level `images`.
@@ -372,15 +393,17 @@ outside the repository and must not reuse public case IDs or queries:
 
 ```bash
 A3S_SEARCH_QUALITY_HOLDOUT=/secure/search-quality-holdout-v1.json \
+A3S_SEARCH_QUALITY_HOLDOUT_SHA256=<precommitted-sha256> \
   cargo test --locked --test quality_eval \
   independent_holdout_meets_the_predeclared_quality_floor \
   -- --ignored --nocapture --exact
 ```
 
 The command applies predeclared nDCG@10, material-result MRR, Recall@10,
-per-case nDCG, and duplicate-ratio floors. Its machine-readable output binds
-the report to the external corpus SHA-256. Passing the public corpus alone is
-never release evidence for the holdout gate.
+per-case nDCG, and duplicate-ratio floors. The evaluator verifies the holdout
+bytes against the SHA-256 committed before the corpus is opened, then binds
+that digest into the machine-readable report. Passing the public corpus alone
+is never release evidence for the holdout gate.
 
 ## Reliability and quality-gated fallback
 
@@ -450,15 +473,16 @@ not query topics, publishers, domains, or languages.
 fallback. `run_tier_if_needed` does not invoke its async closure after an
 earlier tier satisfies the floor, so callers can construct HTTP/RSS engines or
 headless browser pools inside the closure without paying for them on the
-healthy API path. `push_tier` and `needs_next_tier` remain available when a
-caller needs to manage execution separately. The
+healthy earlier-tier path. `push_tier` and `needs_next_tier` remain available
+when a caller needs to manage execution separately. The
 quality floor is caller-configurable and uses only generic signals: usable
 result count, normalized host diversity, contributing engines, independent
 engine consensus, per-result Unicode query/text alignment, and mean alignment.
 Multi-term alignment measures length-weighted query-unit coverage and gives
-titles and URLs more weight than snippets, preventing one generic word or page
-boilerplate from satisfying a longer query. Queries without multiple word
-boundaries fall back to normalized Unicode character n-grams.
+visible titles and snippets authority over a weak URL signal, preventing a
+query-shaped path, one generic word, or page boilerplate from satisfying a
+longer query. Queries without multiple word boundaries fall back to normalized
+Unicode character n-grams.
 The default floor does not force consensus; research callers can require it
 without embedding publisher or topic rules. `for_limit` asks for at most five
 usable results, up to three normalized hosts, at least half of the target
@@ -472,6 +496,57 @@ same URL normalization, provenance merge, and deterministic ranking path.
 end-to-end deadline, tier composition, and lazy browser lifecycle. Browser
 retries are bounded separately by a shared `RetryBudget` and total fetch
 deadline.
+
+Call `finish_with_tier_plan` when the caller needs a durable account of its
+declared tier plan and reported executed prefix. The returned V1 receipt binds
+every typed `SearchQuery` control and every caller-visible field of the ordered
+final `SearchResults` with separate domain-separated SHA-256 identities. The
+result identity includes rich results, ranking fields, full text, engine
+provenance, failures, reports, outcomes, and timing metadata; receipt validation
+recomputes it from the returned container. The receipt also records the final
+generic quality decision, whether the caller-reported plan is incomplete or
+fully traversed below the floor, and counts validated against the canonically
+merged results. Tier identifiers remain opaque caller-owned strings; Search
+does not infer transport, provider, topic, publisher, site, or language policy
+from them.
+
+`SearchCascadeOutcomeV1::receipt_binding` returns a domain-separated canonical
+SHA-256 over every receipt field without relying on JSON serialization. The
+binding detects coherent plan, policy, query, quality, state, or count
+substitution when compared with a trusted expected digest. Structural
+validation and a matching digest do not prove that a plan was committed before
+execution, that a tier ran, or who produced the record. Trusted evidence must
+therefore authenticate the complete receipt binding through an independent
+signature, digest log, or equivalent authority and validate the receipt against
+the returned results. The crate enables exact finite-float parsing for its
+supported `serde_json` round trip so receipt-bound ranking values retain their
+IEEE-754 identity.
+
+```rust,no_run
+use a3s_search::{SearchCascade, SearchQualityFloor, SearchQuery, SearchResults};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cascade = SearchCascade::new(
+        SearchQuery::new("portable research query"),
+        SearchQualityFloor::for_limit(5),
+    );
+
+    cascade
+        .run_tier_if_needed("tier-0", || async { SearchResults::new() })
+        .await;
+    cascade
+        .run_tier_if_needed("tier-1", || async { SearchResults::new() })
+        .await;
+
+    let outcome = cascade.finish_with_tier_plan(["tier-0", "tier-1"])?;
+    outcome.validate()?;
+    let receipt_binding = outcome.receipt_binding()?;
+    assert_eq!(receipt_binding.sha256.len(), 64);
+    assert!(outcome.receipt.exhausted_below_floor);
+    Ok(())
+}
+```
 
 ## Library usage
 
@@ -946,11 +1021,11 @@ Run checks from the `a3s-search` repository root:
 
 ```bash
 cargo fmt --all -- --check
-cargo test --no-default-features
-cargo test --all-features
-cargo clippy --all-targets --no-default-features -- -D warnings
-cargo clippy --all-targets --all-features -- -D warnings
-RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
+cargo test --no-default-features --locked
+cargo test --all-features --locked
+cargo clippy --all-targets --no-default-features --locked -- -D warnings
+cargo clippy --all-targets --all-features --locked -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --locked
 cargo package --locked
 scripts/test-release-package.sh
 ```
@@ -960,55 +1035,95 @@ authentication, response adaptation, error sanitization, and CLI evidence.
 Live provider smoke tests are separate because they depend on external service
 availability.
 
-### Stability soak tests
+### Reliability stress and live canary
 
-Long-running stability tests are opt-in and use only public library contracts.
-The deterministic soak injects rotating API throttling, empty HTTP responses,
-healthy recovery, concurrent duplicate requests, and leader cancellation while
-checking fallback paths, circuit recovery, bulkhead limits, latency, RSS, file
-descriptors, and complete queue/flight drainage:
+The deterministic stress test is opt-in and uses only public library contracts.
+It injects rotating API throttling, empty HTTP responses, healthy recovery,
+concurrent duplicate requests, and leader cancellation while checking lazy
+fallback, circuit recovery, bulkhead limits, latency, RSS, file descriptors,
+and complete queue/flight drainage. This is where forced API → HTTP/RSS →
+headless failures are exercised without manufacturing public traffic:
 
 ```bash
-A3S_SEARCH_SOAK_SECONDS=1800 \
+A3S_SEARCH_SOAK_SECONDS=300 \
   cargo test --release --test soak deterministic_reliability_soak \
   -- --ignored --nocapture --exact
 ```
 
-The low-rate public-network soak is intentionally separate so an upstream
-challenge or empty result is recorded as provider evidence rather than confused
-with a deterministic product regression:
+The live check is a bounded, one-pass canary rather than a duration-based soak.
+It executes every case in a precommitted corpus exactly once, at the slowest
+cadence declared by the opaque provider policies. A corpus must contain at
+least 40 distinct cases. There is no 24-hour requirement and repeated queries
+cannot be counted as additional independent evidence.
+
+The canary requires an independently built deployment driver, an all-features
+candidate binary, their precommitted SHA-256 identities, a sealed query corpus,
+a tier manifest, and a new absolute path for the append-only receipt log:
 
 ```bash
-A3S_SEARCH_LIVE_SOAK_SECONDS=600 \
-A3S_SEARCH_LIVE_SOAK_INTERVAL_SECONDS=10 \
-  cargo test --release --test soak public_http_low_rate_soak \
+A3S_SEARCH_EVALUATED_COMMIT=<full-40-character-commit> \
+A3S_SEARCH_LIVE_CANARY_DRIVER=/secure/search-canary-driver \
+A3S_SEARCH_LIVE_CANARY_DRIVER_SHA256=sha256:<driver-digest> \
+A3S_SEARCH_LIVE_CANARY_CANDIDATE_BIN=/secure/a3s-search \
+A3S_SEARCH_LIVE_CANARY_CANDIDATE_SHA256=sha256:<candidate-digest> \
+A3S_SEARCH_LIVE_CANARY_QUERY_CORPUS=/secure/search-canary-cases.json \
+A3S_SEARCH_LIVE_CANARY_QUERY_CORPUS_SHA256=sha256:<corpus-digest> \
+A3S_SEARCH_LIVE_CANARY_TIER_MANIFEST=/secure/search-canary-tiers.json \
+A3S_SEARCH_LIVE_CANARY_TIER_MANIFEST_SHA256=sha256:<manifest-digest> \
+A3S_SEARCH_LIVE_CANARY_RECEIPT_LOG=/secure/new-search-canary-receipts.jsonl \
+  cargo test --release --all-features --locked --test soak \
+  sealed_live_tiered_canary_meets_release_floor \
   -- --ignored --nocapture --exact
 ```
 
-The built-in corpus rotates eight multilingual stability probes. A release
-candidate should instead use an external, bounded JSON corpus so the long soak
-does not repeatedly exercise a small public set. Only run it at a rate allowed
-by every configured public engine:
+All four artifact paths must identify regular non-symlink files. The two sealed
+campaign files are limited to one MiB and bind the same bounded campaign ID.
+The corpus shape is:
 
-```bash
-A3S_SEARCH_LIVE_SOAK_QUERY_CORPUS=/secure/live-soak-queries-v1.json \
-A3S_SEARCH_LIVE_SOAK_SECONDS=86400 \
-A3S_SEARCH_LIVE_SOAK_INTERVAL_SECONDS=60 \
-  cargo test --release --test soak public_http_low_rate_soak \
-  -- --ignored --nocapture --exact
+```json
+{
+  "version": 1,
+  "campaign_id": "opaque-campaign-id",
+  "queries": [
+    { "id": "opaque-case-id", "query": "...", "language": null }
+  ]
+}
 ```
 
-The external file uses `{"version":1,"queries":[{"query":"...","language":"en"}]}`,
-is limited to one MiB, and must contain at least four distinct ASCII and
-non-ASCII queries. The report records its SHA-256 and query count without
-printing the queries. Resource checks establish their baseline after the first
-network warm-up, reject sustained descriptor growth during the soak, then drop
-the complete `Search` instance and verify that connection-pool descriptors are
-released. Expected keep-alive sockets are therefore not mistaken for leaks.
+The manifest declares exactly one `api`, `http_rss`, and `headless` capability.
+Their declared order is authoritative and may be browser-first; the verifier
+requires every attempt to execute a lazy prefix of that exact sealed order.
+Deployment profiles and provider scopes are lowercase opaque `sha256:`
+identities; each scope declares its minimum request interval. The driver
+protocol preserves per-tier outcomes, calls, retries, `Retry-After`, and
+process-tree resource samples without putting provider names into the gate.
 
-Both commands emit one JSON report line suitable for retaining with release
-evidence. Environment variables can also adjust worker count, duplicate group
-size, request deadline, and RSS or file-descriptor growth thresholds.
+The canary rejects eager fallback, a missing required tier, terminal receipts
+that suppress an available fallback, retries that do not follow a serial
+retryable failure on the same scope, `Retry-After` or provider-cadence breaches,
+receipt or result-provenance inconsistencies, latency tails, excessive
+second-tier or final-tier escalation, and resource growth. Position-based
+escalation gates remain valid for any sealed transport order. The verifier
+recomputes generic query-match quality after clearing candidate-supplied
+scores. Raw attempt receipts are appended and flushed before evaluation, and
+the final report binds the receipt-log digest. Driver, candidate, corpus, and
+manifest paths are rehashed before and after every attempt and again after
+driver shutdown; any persistent identity change fails the campaign.
+
+Those path checks assume a trusted driver and controlled, non-adversarial
+artifact storage. They detect accidental or persistent replacement but do not
+prove which bytes were opened between a digest check and execution. The
+external verifier must freeze the evaluated artifacts with a read-only mount,
+content-addressed object, or equivalent descriptor-based execution before it
+can attest the exact bytes.
+
+This repository-side ignored test is useful evidence but cannot authorize its
+own release. Registry publication remains fail-closed for every tag, and stable
+release evidence remains blocked until an external pinned verifier checks the
+exact frozen `.crate` and a trusted uploader can publish those exact bytes
+without executing candidate code. See
+[Search issue #8](https://github.com/A3S-Lab/Search/issues/8). Longer-term
+stability belongs in rolling production SLOs, not a 24-hour release soak.
 
 ## A3S ecosystem
 

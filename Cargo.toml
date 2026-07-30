@@ -9,7 +9,9 @@ authors = ["A3S Lab Team"]
 [workspace.dependencies]
 tokio = { version = "1.35", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+# Receipt bindings include exact finite f64 bits, so supported JSON round trips
+# must not change caller-visible scores by one ULP.
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
 thiserror = "1.0"
 anyhow = "1.0"
 tracing = "0.1"
@@ -19,7 +21,7 @@ tokio-test = "0.4"
 
 [package]
 name = "a3s-search"
-version = "2.1.2"
+version = "2.2.0"
 edition.workspace = true
 license.workspace = true
 repository = "https://github.com/A3S-Lab/Search"
@@ -31,7 +33,7 @@ name = "a3s-search"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["headless", "lightpanda"]
 headless = ["dep:a3s-use-browser"]
 # Lightpanda headless backend (Linux/macOS only; Windows unsupported by Lightpanda).
 lightpanda = ["headless", "a3s-use-browser/lightpanda"]
@@ -43,6 +45,7 @@ tokio.workspace = true
 # Serialization
 serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.10"
 
 # Error handling
 thiserror.workspace = true
@@ -92,7 +95,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [dev-dependencies]
 tokio-test.workspace = true
 tempfile = "3"
-sha2 = "0.10"
 
 # =============================================================================
 # Release Profile — optimized for binary size
