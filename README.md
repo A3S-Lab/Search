@@ -331,8 +331,11 @@ engine weight
 Provider relevance values are calibrated only within that provider response;
 incomparable API score scales are never multiplied directly across sources.
 Query alignment uses visible title and snippet text plus a weak URL signal.
-Unicode units and character n-grams keep the mechanism language-neutral without
-embedding topic-specific rules.
+Unicode units and adaptive character n-grams let unsegmented queries collect
+evidence across the visible title and snippet. Mixed-script queries retain
+matching evidence from every substantive script, so a high-overlap result in
+only one script cannot stop fallback. The mechanism remains language-neutral
+and contains no topic, publisher, site, or provider exceptions.
 
 For a display limit of ten, the default floor evaluates the leading evidence
 window against these generic signals:

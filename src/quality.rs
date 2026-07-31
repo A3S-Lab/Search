@@ -1,9 +1,10 @@
 //! Domain-agnostic result quality and tier-cascade decisions.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 
 use serde::{Deserialize, Serialize};
+use unicode_script::{Script, UnicodeScript};
 
 use crate::{SearchQuery, SearchResult, SearchResults};
 
@@ -287,11 +288,13 @@ impl SearchCascade {
 /// publisher, or language-specific rules.
 ///
 /// Multi-term queries combine length-weighted exact-unit coverage with
-/// normalized Unicode character n-grams so one generic word cannot satisfy a
-/// longer request while partial unsegmented or inflected evidence remains
-/// observable. In all cases visible title and snippet text drive alignment.
-/// The URL is only a weak auxiliary signal, so a query-shaped path cannot
-/// substitute for provider-visible result text.
+/// normalized Unicode character n-grams. Unsegmented queries can collect
+/// adjacent-character evidence across the visible title and snippet, while
+/// mixed-script queries must retain matching evidence from each substantive
+/// query script. One generic word or a result written in only one part of a
+/// mixed-script request cannot satisfy a longer request. The URL remains a
+/// weak auxiliary signal, so a query-shaped path cannot substitute for
+/// provider-visible result text.
 pub fn query_match_score(query: &str, result: &SearchResult) -> f64 {
     const TITLE_WEIGHT: f64 = 0.50;
     const SNIPPET_WEIGHT: f64 = 0.45;
@@ -306,21 +309,34 @@ pub fn query_match_score(query: &str, result: &SearchResult) -> f64 {
         return 0.0;
     }
 
+    let unsegmented_query = query_units.len() == 1;
+    let query_scripts = query_script_characters(&query_characters);
     let field_score = |visible: &str| {
-        let character_score = character_gram_coverage(&query_characters, visible);
-        if query_units.len() > 1 {
-            query_unit_coverage(&query_units, visible).max(character_score)
+        let visible = normalized_characters(visible);
+        let script_overlap = query_script_overlap(&query_scripts, &visible);
+        let character_score =
+            character_gram_coverage(&query_characters, &visible, unsegmented_query)
+                * script_overlap;
+        let lexical_score = if query_units.len() > 1 {
+            query_unit_coverage(&query_units, &visible) * script_overlap
         } else {
-            character_score
-        }
+            0.0
+        };
+        lexical_score.max(character_score)
     };
     let title_score = field_score(&result.title);
     let snippet_score = field_score(&result.content);
     let url_score = field_score(&result.url);
-    TITLE_WEIGHT.mul_add(
+    let field_weighted_score = TITLE_WEIGHT.mul_add(
         title_score,
         SNIPPET_WEIGHT.mul_add(snippet_score, URL_WEIGHT * url_score),
-    )
+    );
+    let combined_visible_score = if unsegmented_query {
+        field_score(&format!("{} {}", result.title, result.content))
+    } else {
+        0.0
+    };
+    field_weighted_score.max(combined_visible_score)
 }
 
 fn normalized_query_units(value: &str) -> Vec<Vec<char>> {
@@ -334,28 +350,37 @@ fn normalized_query_units(value: &str) -> Vec<Vec<char>> {
         .collect()
 }
 
-fn query_unit_coverage(query_units: &[Vec<char>], visible: &str) -> f64 {
-    let visible = normalized_characters(visible);
+fn query_unit_coverage(query_units: &[Vec<char>], visible: &[char]) -> f64 {
     let total_weight = query_units.iter().map(Vec::len).sum::<usize>();
     if visible.is_empty() || total_weight == 0 {
         return 0.0;
     }
     let matched_weight = query_units
         .iter()
-        .filter(|unit| contains_characters(&visible, unit))
+        .filter(|unit| contains_characters(visible, unit))
         .map(Vec::len)
         .sum::<usize>();
     matched_weight as f64 / total_weight as f64
 }
 
-fn character_gram_coverage(query: &[char], visible: &str) -> f64 {
-    let visible = normalized_characters(visible);
+fn character_gram_coverage(query: &[char], visible: &[char], use_shorter_grams: bool) -> f64 {
     if visible.is_empty() {
         return 0.0;
     }
-    let gram_size = query.len().min(3);
+    let longest_gram = query.len().min(3);
+    let longest_coverage = gram_coverage(query, visible, longest_gram);
+    if longest_gram < 3 || !use_shorter_grams {
+        return longest_coverage;
+    }
+
+    let adjacent_coverage = gram_coverage(query, visible, 2);
+    let character_coverage = gram_coverage(query, visible, 1);
+    longest_coverage.max((2.0 * adjacent_coverage + character_coverage) / 3.0)
+}
+
+fn gram_coverage(query: &[char], visible: &[char], gram_size: usize) -> f64 {
     let query_grams = character_grams(query, gram_size);
-    let visible_grams = character_grams(&visible, gram_size);
+    let visible_grams = character_grams(visible, gram_size);
     if query_grams.is_empty() {
         return 0.0;
     }
@@ -364,6 +389,35 @@ fn character_gram_coverage(query: &[char], visible: &str) -> f64 {
         .filter(|gram| visible_grams.contains(*gram))
         .count();
     matched as f64 / query_grams.len() as f64
+}
+
+fn query_script_characters(query: &[char]) -> HashMap<Script, HashSet<char>> {
+    let mut query_scripts = HashMap::<Script, HashSet<char>>::new();
+    for character in query {
+        let script = character.script();
+        if !matches!(script, Script::Common | Script::Inherited | Script::Unknown) {
+            query_scripts.entry(script).or_default().insert(*character);
+        }
+    }
+    query_scripts
+}
+
+fn query_script_overlap(query_scripts: &HashMap<Script, HashSet<char>>, visible: &[char]) -> f64 {
+    if query_scripts.len() <= 1 {
+        return 1.0;
+    }
+
+    let visible = visible.iter().copied().collect::<HashSet<_>>();
+    let matched_scripts = query_scripts
+        .values()
+        .filter(|characters| {
+            characters
+                .iter()
+                .any(|character| visible.contains(character))
+        })
+        .count();
+    let coverage = matched_scripts as f64 / query_scripts.len() as f64;
+    coverage * coverage
 }
 
 fn contains_characters(haystack: &[char], needle: &[char]) -> bool {
