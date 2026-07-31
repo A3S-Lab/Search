@@ -32,7 +32,7 @@ use cli::output::{json_output, truncate_str};
 #[cfg(test)]
 use cli::provider::provider_readiness_summary;
 
-/// Extensible web search CLI with native providers and meta-search engines
+/// Embeddable metasearch CLI with browser, HTTP/RSS, and native API sources
 #[derive(Parser)]
 #[command(name = "a3s-search")]
 #[command(author, version, about, long_about = None)]
@@ -212,7 +212,7 @@ async fn main() -> Result<()> {
                 .await
             } else {
                 // No query provided, show help
-                println!("A3S Search - Extensible web search CLI\n");
+                println!("A3S Search - Embeddable metasearch CLI\n");
                 println!("Usage: a3s-search <QUERY> [OPTIONS]");
                 println!("       a3s-search engines\n");
                 println!("Examples:");

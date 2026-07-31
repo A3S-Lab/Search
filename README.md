@@ -129,8 +129,8 @@ An explicit `--engines` list is never expanded. `--limit` controls displayed
 results; provider-side result limits belong in ACL.
 
 > [!NOTE]
-> `main` currently declares version `2.2.0`. The latest crates.io release may
-> be older because stable publication remains fail-closed while
+> `main` currently declares version `2.2.0-rc.1`. The latest crates.io release
+> is older because stable publication remains fail-closed while
 > [Search issue #8](https://github.com/A3S-Lab/Search/issues/8) is open.
 
 ## Why A3S Search
@@ -617,6 +617,8 @@ Release jobs package and freeze the exact `.crate` bytes in an unprivileged
 job before any publication step. Release authorization remains separate from
 retrieval quality and is intentionally fail-closed while
 [issue #8](https://github.com/A3S-Lab/Search/issues/8) remains unresolved.
+Prerelease tags may publish GitHub CLI archives, but they do not publish the
+crate to crates.io or update Homebrew.
 
 ## Bundled agent Skill
 
