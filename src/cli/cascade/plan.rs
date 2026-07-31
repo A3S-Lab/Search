@@ -1,13 +1,15 @@
 //! CLI engine selection and tier planning.
 
+use std::collections::HashSet;
+
 use a3s_search::{providers::BuiltinProvider, SearchConfig};
 
 const DEFAULT_HTTP_TIER: [&str; 4] = ["ddg", "brave", "bing", "wiki"];
 #[cfg(feature = "headless")]
 const DEFAULT_HEADLESS_TIER: [&str; 1] = ["g"];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum EngineTier {
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum EngineTier {
     Headless,
     HttpRss,
     Api,
@@ -24,18 +26,36 @@ impl EngineTier {
 }
 
 /// Ordered browser-first plan used by the CLI.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct EngineTierPlan {
     headless: Vec<String>,
     http_rss: Vec<String>,
     api: Vec<String>,
     unknown: Vec<String>,
+    order: Vec<EngineTier>,
+}
+
+impl Default for EngineTierPlan {
+    fn default() -> Self {
+        Self {
+            headless: Vec::new(),
+            http_rss: Vec::new(),
+            api: Vec::new(),
+            unknown: Vec::new(),
+            order: vec![EngineTier::Headless, EngineTier::HttpRss, EngineTier::Api],
+        }
+    }
 }
 
 impl EngineTierPlan {
     /// Builds a plan from an explicit CLI selection, an ACL selection, or the
     /// generic built-in defaults, in that precedence order.
-    pub(crate) fn new(explicit: Option<&[String]>, config: Option<&SearchConfig>) -> Self {
+    pub(crate) fn new(
+        explicit: Option<&[String]>,
+        config: Option<&SearchConfig>,
+        order: Option<&[EngineTier]>,
+    ) -> Result<Self, String> {
+        let order = validated_order(order)?;
         let selected = match (explicit, config) {
             (Some(explicit), _) => explicit.to_vec(),
             (None, Some(config)) if !config.engines.is_empty() || !config.providers.is_empty() => {
@@ -45,14 +65,21 @@ impl EngineTierPlan {
                     .map(str::to_string)
                     .collect()
             }
-            _ => return Self::builtin_default(),
+            _ => {
+                let mut plan = Self::builtin_default();
+                plan.order = order;
+                return Ok(plan);
+            }
         };
 
-        let mut plan = Self::default();
+        let mut plan = Self {
+            order,
+            ..Self::default()
+        };
         for shortcut in selected {
             plan.add(&shortcut);
         }
-        plan
+        Ok(plan)
     }
 
     fn builtin_default() -> Self {
@@ -105,16 +132,31 @@ impl EngineTierPlan {
     }
 
     pub(super) fn tiers(&self) -> Vec<(EngineTier, &[String])> {
-        let candidates = [
-            (EngineTier::Headless, self.headless.as_slice()),
-            (EngineTier::HttpRss, self.http_rss.as_slice()),
-            (EngineTier::Api, self.api.as_slice()),
-        ];
-        candidates
-            .into_iter()
-            .filter(|(_, shortcuts)| !shortcuts.is_empty())
+        self.order
+            .iter()
+            .copied()
+            .filter_map(|tier| {
+                let shortcuts = match tier {
+                    EngineTier::Headless => self.headless.as_slice(),
+                    EngineTier::HttpRss => self.http_rss.as_slice(),
+                    EngineTier::Api => self.api.as_slice(),
+                };
+                (!shortcuts.is_empty()).then_some((tier, shortcuts))
+            })
             .collect()
     }
+}
+
+fn validated_order(order: Option<&[EngineTier]>) -> Result<Vec<EngineTier>, String> {
+    let default = [EngineTier::Headless, EngineTier::HttpRss, EngineTier::Api];
+    let order = order.unwrap_or(&default);
+    if order.len() != default.len()
+        || order.iter().copied().collect::<HashSet<_>>()
+            != default.into_iter().collect::<HashSet<_>>()
+    {
+        return Err("tier order must contain api, http-rss, and headless exactly once".to_string());
+    }
+    Ok(order.to_vec())
 }
 
 fn canonical_engine_shortcut(shortcut: &str) -> String {
@@ -152,7 +194,7 @@ mod tests {
 
     #[test]
     fn default_plan_is_browser_first_and_contains_every_fallback_class() {
-        let plan = EngineTierPlan::new(None, None);
+        let plan = EngineTierPlan::new(None, None, None).unwrap();
         let tiers = plan.tiers();
 
         #[cfg(feature = "headless")]
@@ -170,7 +212,7 @@ mod tests {
             "GOOGLE".to_string(),
             "unknown".to_string(),
         ];
-        let plan = EngineTierPlan::new(Some(&selected), None);
+        let plan = EngineTierPlan::new(Some(&selected), None, None).unwrap();
 
         assert_eq!(plan.headless, vec!["g"]);
         assert_eq!(plan.http_rss, vec!["ddg"]);
@@ -190,10 +232,27 @@ mod tests {
             "#,
         )
         .unwrap();
-        let plan = EngineTierPlan::new(None, Some(&config));
+        let plan = EngineTierPlan::new(None, Some(&config), None).unwrap();
 
         assert_eq!(plan.headless, vec!["g"]);
         assert_eq!(plan.http_rss, vec!["wiki"]);
         assert_eq!(plan.api, vec!["anysearch"]);
+    }
+
+    #[test]
+    fn explicit_tier_order_is_a_complete_unique_permutation() {
+        let order = [EngineTier::Api, EngineTier::HttpRss, EngineTier::Headless];
+        let selected = ["anysearch", "wiki", "g"].map(str::to_string);
+        let plan = EngineTierPlan::new(Some(&selected), None, Some(&order)).unwrap();
+        let tiers = plan
+            .tiers()
+            .into_iter()
+            .map(|(tier, _)| tier)
+            .collect::<Vec<_>>();
+        assert_eq!(tiers, order);
+
+        let duplicate = [EngineTier::Api, EngineTier::Api, EngineTier::Headless];
+        assert!(EngineTierPlan::new(None, None, Some(&duplicate)).is_err());
+        assert!(EngineTierPlan::new(None, None, Some(&order[..2])).is_err());
     }
 }

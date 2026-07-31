@@ -120,13 +120,18 @@ a3s-search engines
 
 a3s-search "Rust async runtime guidance" \
   --engines ddg,wiki,anysearch,tavily \
+  --tier-order api,http-rss,headless \
+  --browser-retries 0 \
   --language en-US \
   --time-range month \
   --format json
 ```
 
-An explicit `--engines` list is never expanded. `--limit` controls displayed
-results; provider-side result limits belong in ACL.
+An explicit `--engines` list is never expanded. `--tier-order` accepts any
+complete, duplicate-free permutation of `api`, `http-rss`, and `headless`;
+omitting it retains the browser-first default. `--browser-retries` bounds
+headless retries from zero through ten. `--limit` controls displayed results;
+provider-side result limits belong in ACL.
 
 > [!NOTE]
 > `main` currently declares version `2.2.0-rc.2`. The latest crates.io release
@@ -214,6 +219,10 @@ The CLI bounds that profile:
    quality floor.
 6. Explicit CLI sources are exact. Enabled ACL sources replace the built-in
    plan when source blocks are present.
+7. A complete `--tier-order` can change transport priority without changing
+   source membership or embedding query-specific routing.
+8. Headless retry observations are emitted as structured request reports and
+   can be bounded independently from fallback activation.
 
 Build with `--no-default-features` when a host must not compile or run a
 browser. The CLI profile then starts with HTTP/RSS and can continue to native
@@ -614,11 +623,17 @@ A3S_SEARCH_SOAK_SECONDS=300 \
 ```
 
 Release jobs package and freeze the exact `.crate` bytes in an unprivileged
-job before any publication step. Release authorization remains separate from
-retrieval quality and is intentionally fail-closed while
-[issue #8](https://github.com/A3S-Lab/Search/issues/8) remains unresolved.
-Prerelease tags may publish GitHub CLI archives, but they do not publish the
-crate to crates.io or update Homebrew.
+job before any publication step. A stable tag then waits for the protected
+`stable-release` environment and a full-commit-pinned
+[SearchVerifier](https://github.com/A3S-Lab/SearchVerifier). The independent
+job builds only the frozen package, runs deterministic fault injection, spends
+each sealed live case once, and retains the raw receipts plus a canonical
+attestation. The credentialed publication job checks that evidence again and
+uploads the already-frozen crate bytes without checking out, building, or
+executing Search. Any missing, failed, cancelled, or mismatched gate keeps
+crates.io, GitHub Release, and Homebrew fail-closed. Prerelease tags may
+publish GitHub CLI archives, but they do not publish the crate to crates.io or
+update Homebrew.
 
 ## Bundled agent Skill
 

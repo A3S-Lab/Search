@@ -183,28 +183,54 @@ jobs:
           retention-days: 90
 
   commercial-search-gates:
-    name: Stable release evidence (blocked)
+    name: Independent stable release evidence
     if: needs.classify.outputs.stable == 'true'
     needs: [classify, ci, freeze-crate]
     runs-on: ubuntu-latest
+    environment: stable-release
+    outputs:
+      evidence_sha256: ${{ steps.verify.outputs.evidence-sha256 }}
+      receipts_sha256: ${{ steps.verify.outputs.receipts-sha256 }}
+      frozen_crate_sha256: ${{ steps.verify.outputs.frozen-crate-sha256 }}
+      artifact_id: ${{ steps.evidence.outputs.artifact-id }}
+      artifact_digest: ${{ steps.evidence.outputs.artifact-digest }}
     steps:
-      - name: Refuse candidate-repository commercial certification
-        env:
-          FROZEN_CRATE_SHA256: ${{ needs.freeze-crate.outputs.crate_sha256 }}
-          FROZEN_MANIFEST_SHA256: ${{ needs.freeze-crate.outputs.manifest_sha256 }}
-          FROZEN_ARTIFACT_ID: ${{ needs.freeze-crate.outputs.artifact_id }}
-          FROZEN_ARTIFACT_DIGEST: ${{ needs.freeze-crate.outputs.artifact_digest }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "$FROZEN_CRATE_SHA256"
-          test -n "$FROZEN_MANIFEST_SHA256"
-          test -n "$FROZEN_ARTIFACT_ID"
-          test -n "$FROZEN_ARTIFACT_DIGEST"
-          echo "Stable publication requires an external pinned verifier" >&2
-          echo "bound to the exact frozen .crate bytes and raw campaign receipts." >&2
-          echo "Tracking: https://github.com/A3S-Lab/Search/issues/8" >&2
-          exit 1
+      - name: Download frozen crate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: frozen-crate-${{ needs.classify.outputs.version }}
+          path: frozen-crate
+
+      - name: Setup exact Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12.12"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+
+      - name: Verify frozen release
+        id: verify
+        uses: A3S-Lab/SearchVerifier@dff7ff44012d685187bbb877e473aaf95c4995be
+        with:
+          frozen-directory: ${{ github.workspace }}/frozen-crate
+          evaluated-commit: ${{ github.sha }}
+          git-ref: ${{ github.ref }}
+          corpus-key: ${{ secrets.A3S_SEARCH_CORPUS_KEY }}
+          evidence-directory: ${{ github.workspace }}/release-evidence
+
+      - name: Retain verifier evidence
+        id: evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-evidence-${{ needs.classify.outputs.version }}
+          path: release-evidence
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
 
   commercial-release-gate:
     name: Stable release gate
@@ -219,6 +245,12 @@ jobs:
           FROZEN_CRATE_RESULT: ${{ needs.freeze-crate.result }}
           COMMERCIAL_RESULT: ${{ needs.commercial-search-gates.result }}
           STABLE: ${{ needs.classify.outputs.stable }}
+          FROZEN_CRATE_SHA256: ${{ needs.freeze-crate.outputs.crate_sha256 }}
+          VERIFIED_CRATE_SHA256: ${{ needs.commercial-search-gates.outputs.frozen_crate_sha256 }}
+          EVIDENCE_SHA256: ${{ needs.commercial-search-gates.outputs.evidence_sha256 }}
+          RECEIPTS_SHA256: ${{ needs.commercial-search-gates.outputs.receipts_sha256 }}
+          EVIDENCE_ARTIFACT_ID: ${{ needs.commercial-search-gates.outputs.artifact_id }}
+          EVIDENCE_ARTIFACT_DIGEST: ${{ needs.commercial-search-gates.outputs.artifact_digest }}
         shell: bash
         run: |
           set -euo pipefail
@@ -227,6 +259,12 @@ jobs:
           test "$FROZEN_CRATE_RESULT" = success
           if [ "$STABLE" = true ]; then
             test "$COMMERCIAL_RESULT" = success
+            test -n "$FROZEN_CRATE_SHA256"
+            test "$VERIFIED_CRATE_SHA256" = "$FROZEN_CRATE_SHA256"
+            test -n "$EVIDENCE_SHA256"
+            test -n "$RECEIPTS_SHA256"
+            test -n "$EVIDENCE_ARTIFACT_ID"
+            test -n "$EVIDENCE_ARTIFACT_DIGEST"
           else
             test "$COMMERCIAL_RESULT" = skipped
           fi
@@ -307,19 +345,38 @@ jobs:
   # Publish core crate to crates.io
   # ───────────────────────────────────────────────
   publish-crate:
-    name: Crate publication evidence (blocked)
+    name: Publish exact attested crate
     if: needs.classify.outputs.stable == 'true'
-    needs: [classify, commercial-release-gate]
+    needs: [classify, freeze-crate, commercial-search-gates, commercial-release-gate]
     runs-on: ubuntu-latest
     steps:
-      - name: Refuse credentialed candidate publication
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "Crate publication remains disabled until a trusted job can upload" >&2
-          echo "the exact externally attested frozen .crate without executing candidate code." >&2
-          echo "Tracking: https://github.com/A3S-Lab/Search/issues/8" >&2
-          exit 1
+      - name: Download frozen crate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: frozen-crate-${{ needs.classify.outputs.version }}
+          path: frozen-crate
+
+      - name: Download verifier evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-evidence-${{ needs.classify.outputs.version }}
+          path: release-evidence
+
+      - name: Setup exact Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12.12"
+
+      - name: Upload exact frozen bytes
+        uses: A3S-Lab/SearchVerifier/publish@dff7ff44012d685187bbb877e473aaf95c4995be
+        with:
+          frozen-directory: ${{ github.workspace }}/frozen-crate
+          expected-crate-sha256: ${{ needs.freeze-crate.outputs.crate_sha256 }}
+          expected-commit: ${{ github.sha }}
+          expected-git-ref: ${{ github.ref }}
+          evidence-directory: ${{ github.workspace }}/release-evidence
+          expected-evidence-sha256: ${{ needs.commercial-search-gates.outputs.evidence_sha256 }}
+          registry-token: ${{ secrets.CARGO_TOKEN }}
 
   # ───────────────────────────────────────────────
   # Create GitHub Release with CLI binaries
