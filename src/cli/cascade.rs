@@ -25,8 +25,7 @@ mod plan;
 
 use browser::execute_headless_tier;
 pub(crate) use browser::HeadlessBrowser;
-use plan::EngineTier;
-pub(crate) use plan::EngineTierPlan;
+pub(crate) use plan::{EngineTier, EngineTierPlan};
 
 /// Default end-to-end CLI deadline when ACL and command-line options omit one.
 pub(crate) const DEFAULT_TIMEOUT_SECONDS: u64 = 20;
@@ -39,6 +38,7 @@ pub(crate) struct CascadeRequest<'a> {
     pub proxy: Option<&'a str>,
     pub config: Option<&'a SearchConfig>,
     pub browser: HeadlessBrowser,
+    pub browser_max_retries: u32,
 }
 
 #[derive(Clone, Default)]
@@ -339,7 +339,7 @@ mod tests {
 
     #[tokio::test]
     async fn timeout_that_cannot_fit_an_instant_is_rejected() {
-        let plan = EngineTierPlan::new(Some(&["ddg".to_string()]), None);
+        let plan = EngineTierPlan::new(Some(&["ddg".to_string()]), None, None).unwrap();
         let error = execute_cascade(
             &plan,
             CascadeRequest {
@@ -349,6 +349,7 @@ mod tests {
                 proxy: None,
                 config: None,
                 browser: HeadlessBrowser::Chrome,
+                browser_max_retries: 1,
             },
         )
         .await

@@ -13,7 +13,8 @@ use a3s_search::{EngineConfig, SafeSearch, SearchConfig, SearchQuery, TimeRange}
 mod cli;
 
 use cli::cascade::{
-    execute_cascade, CascadeRequest, EngineTierPlan, HeadlessBrowser, DEFAULT_TIMEOUT_SECONDS,
+    execute_cascade, CascadeRequest, EngineTier, EngineTierPlan, HeadlessBrowser,
+    DEFAULT_TIMEOUT_SECONDS,
 };
 use cli::output::{print_cascade_results, OutputFormat};
 use cli::provider::{list_engines, load_search_config};
@@ -85,6 +86,18 @@ struct Cli {
     /// Headless browser backend (Chrome also discovers Chromium)
     #[arg(long, value_enum, default_value_t)]
     browser: HeadlessBrowser,
+
+    /// Retries allowed for each headless render after its initial attempt
+    #[arg(
+        long,
+        default_value_t = 1,
+        value_parser = clap::value_parser!(u32).range(0..=10)
+    )]
+    browser_retries: u32,
+
+    /// Tier priority as a complete permutation of api,http-rss,headless
+    #[arg(long, value_delimiter = ',', value_enum)]
+    tier_order: Option<Vec<EngineTier>>,
 
     /// ACL configuration file
     #[arg(short = 'c', long)]
@@ -207,6 +220,8 @@ async fn main() -> Result<()> {
                     format: cli.format,
                     proxy: cli.proxy,
                     browser: cli.browser,
+                    browser_retries: cli.browser_retries,
+                    tier_order: cli.tier_order,
                     config: cli.config,
                 })
                 .await
@@ -233,6 +248,12 @@ async fn main() -> Result<()> {
                 println!("  -f, --format <FORMAT>    Output: text, json, compact");
                 println!("  -p, --proxy <URL>        Proxy URL (http/https/socks5)");
                 println!("      --browser <BACKEND>  Headless backend: chrome, lightpanda (default: chrome)");
+                println!(
+                    "      --browser-retries <N> Headless retries per render (default: 1; maximum: 10)"
+                );
+                println!(
+                    "      --tier-order <TIERS>  Complete tier priority (default: headless,http-rss,api)"
+                );
                 println!("  -c, --config <PATH>      ACL configuration file");
                 println!("  -v, --verbose            Enable debug logging");
                 println!("  -h, --help               Show help");
@@ -256,6 +277,8 @@ struct SearchArgs {
     format: OutputFormat,
     proxy: Option<String>,
     browser: HeadlessBrowser,
+    browser_retries: u32,
+    tier_order: Option<Vec<EngineTier>>,
     config: Option<PathBuf>,
 }
 
@@ -283,7 +306,12 @@ fn configured_engine_config(
 
 async fn run_search(args: SearchArgs) -> Result<()> {
     let config = load_search_config(args.config.as_deref())?;
-    let plan = EngineTierPlan::new(args.engines.as_deref(), config.as_ref());
+    let plan = EngineTierPlan::new(
+        args.engines.as_deref(),
+        config.as_ref(),
+        args.tier_order.as_deref(),
+    )
+    .map_err(anyhow::Error::msg)?;
     for shortcut in plan.unknown() {
         eprintln!("Warning: Unknown engine '{shortcut}', skipping");
     }
@@ -319,6 +347,7 @@ async fn run_search(args: SearchArgs) -> Result<()> {
             proxy: args.proxy.as_deref(),
             config: config.as_ref(),
             browser: args.browser,
+            browser_max_retries: args.browser_retries,
         },
     )
     .await?;
@@ -452,6 +481,7 @@ mod tests {
         assert!(cli.safesearch.is_none());
         assert!(cli.time_range.is_none());
         assert!(cli.proxy.is_none());
+        assert_eq!(cli.browser_retries, 1);
         assert!(cli.config.is_none());
         assert!(!cli.verbose);
     }
@@ -479,6 +509,28 @@ mod tests {
     fn test_cli_with_timeout() {
         let cli = Cli::parse_from(["a3s-search", "query", "-t", "30"]);
         assert_eq!(cli.timeout, Some(30));
+    }
+
+    #[test]
+    fn test_cli_accepts_a_complete_tier_order_and_bounded_browser_retries() {
+        let cli = Cli::parse_from([
+            "a3s-search",
+            "query",
+            "--tier-order",
+            "api,http-rss,headless",
+            "--browser-retries",
+            "0",
+        ]);
+        assert_eq!(
+            cli.tier_order,
+            Some(vec![
+                EngineTier::Api,
+                EngineTier::HttpRss,
+                EngineTier::Headless
+            ])
+        );
+        assert_eq!(cli.browser_retries, 0);
+        assert!(Cli::try_parse_from(["a3s-search", "query", "--browser-retries", "11"]).is_err());
     }
 
     #[test]

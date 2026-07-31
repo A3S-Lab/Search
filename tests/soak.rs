@@ -23,6 +23,16 @@ use tokio::sync::Barrier;
 use harness::{SoakConfig, SoakCounters, SoakRuntime};
 use resources::{sample_resources, summarize_resources};
 
+#[tokio::test]
+async fn deterministic_bulkhead_probe_produces_one_structured_rejection() {
+    let runtime = SoakRuntime::new();
+
+    assert_eq!(runtime.exercise_bulkhead_rejection().await, 1);
+    let snapshot = runtime.bulkhead.snapshot("soak_cancellation");
+    assert_eq!(snapshot.in_flight, 0);
+    assert_eq!(snapshot.queued, 0);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[ignore = "long-running deterministic stability soak; run explicitly"]
 async fn deterministic_reliability_soak() {
@@ -87,6 +97,10 @@ async fn deterministic_reliability_soak() {
     }
     cancellation.await.expect("cancellation soak task panicked");
 
+    let forced_rejections = runtime.exercise_bulkhead_rejection().await;
+    counters
+        .rejected
+        .fetch_add(forced_rejections, Ordering::Relaxed);
     runtime.force_recovery().await;
     resource_running.store(false, Ordering::Release);
     sampler.await.expect("resource sampler panicked");
@@ -184,6 +198,10 @@ async fn deterministic_reliability_soak() {
     assert!(
         counters.circuit_open.load(Ordering::Relaxed) > 0,
         "circuit never opened"
+    );
+    assert!(
+        counters.rejected.load(Ordering::Relaxed) > 0,
+        "bulkhead rejection was never observed"
     );
     assert!(
         coalescer.shared_requests > 0,

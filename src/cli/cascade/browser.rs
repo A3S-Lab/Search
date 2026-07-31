@@ -2,7 +2,36 @@
 
 use std::time::Instant;
 
-use a3s_search::{EngineFailure, SearchResults};
+use a3s_search::{EngineFailure, EngineOutcomeKind, SearchReport, SearchResults};
+
+const RETRY_OBSERVATION_SCHEMA: &str = "a3s/search-retry-observation/v1";
+
+fn add_retry_observation(
+    results: &mut SearchResults,
+    retry_attempts: u64,
+    maximum_retries_per_request: u32,
+) {
+    let initial_attempts = results
+        .outcomes()
+        .iter()
+        .filter(|outcome| {
+            matches!(
+                outcome.kind,
+                EngineOutcomeKind::Success
+                    | EngineOutcomeKind::Empty
+                    | EngineOutcomeKind::Failure
+                    | EngineOutcomeKind::Timeout
+            )
+        })
+        .count();
+    results.add_report(
+        SearchReport::new("a3s-search/browser-retry")
+            .with_metadata("schema", RETRY_OBSERVATION_SCHEMA)
+            .with_metadata("initial_attempts", initial_attempts)
+            .with_metadata("retry_attempts", retry_attempts)
+            .with_metadata("maximum_retries_per_request", maximum_retries_per_request),
+    );
+}
 
 /// Browser backend used by the CLI headless tier.
 #[derive(clap::ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -54,7 +83,9 @@ pub(super) async fn execute_headless_tier(
     remaining_tiers: usize,
 ) -> SearchResults {
     if deadline.saturating_duration_since(Instant::now()).is_zero() {
-        return deadline_exhausted("headless");
+        let mut results = deadline_exhausted("headless");
+        add_retry_observation(&mut results, 0, request.browser_max_retries);
+        return results;
     }
 
     let pool_config = match browser_pool_config(request.proxy, request.browser) {
@@ -62,6 +93,7 @@ pub(super) async fn execute_headless_tier(
         Err(failure) => {
             let mut results = SearchResults::new();
             results.add_failure(failure);
+            add_retry_observation(&mut results, 0, request.browser_max_retries);
             return results;
         }
     };
@@ -102,7 +134,7 @@ pub(super) async fn execute_headless_tier(
                     ))
                     .with_timeout(render_budget)
                     .with_total_timeout(render_budget)
-                    .with_retries(1, 100)
+                    .with_retries(request.browser_max_retries, 100)
                     .with_retry_budget(retry_budget.clone()),
             )
         };
@@ -127,7 +159,7 @@ pub(super) async fn execute_headless_tier(
         }
     }
 
-    let results = execute_search_tier(
+    let mut results = execute_search_tier(
         search,
         setup_results,
         &request.query,
@@ -137,6 +169,8 @@ pub(super) async fn execute_headless_tier(
     )
     .await;
     cleanup.shutdown(deadline).await;
+    let retries = retry_budget.snapshot().admitted_retries;
+    add_retry_observation(&mut results, retries, request.browser_max_retries);
     results
 }
 
@@ -159,6 +193,7 @@ pub(super) async fn execute_headless_tier(
             ),
         ));
     }
+    add_retry_observation(&mut results, 0, request.browser_max_retries);
     results
 }
 
@@ -255,6 +290,58 @@ mod tests {
     #[test]
     fn cli_browser_default_is_chrome() {
         assert_eq!(HeadlessBrowser::default(), HeadlessBrowser::Chrome);
+    }
+
+    #[test]
+    fn retry_observation_is_structured_and_counts_only_upstream_attempts() {
+        let mut results: SearchResults = serde_json::from_value(serde_json::json!({
+            "results": [],
+            "suggestions": [],
+            "answers": [],
+            "images": [],
+            "errors": [],
+            "failures": [],
+            "reports": [],
+            "outcomes": [
+                {
+                    "engine": "Google",
+                    "shortcut": "g",
+                    "kind": "success",
+                    "result_count": 1,
+                    "duration_ms": 10
+                },
+                {
+                    "engine": "Baidu",
+                    "shortcut": "baidu",
+                    "kind": "circuit_open",
+                    "result_count": 0,
+                    "duration_ms": 0,
+                    "failure": {
+                        "engine": "Baidu",
+                        "kind": "circuit_open",
+                        "message": "open",
+                        "transient": true
+                    }
+                }
+            ],
+            "count": 0,
+            "duration_ms": 10
+        }))
+        .unwrap();
+
+        add_retry_observation(&mut results, 1, 2);
+
+        let metadata = &results.reports()[0].metadata;
+        assert_eq!(
+            metadata["schema"],
+            serde_json::json!("a3s/search-retry-observation/v1")
+        );
+        assert_eq!(metadata["initial_attempts"], serde_json::json!(1));
+        assert_eq!(metadata["retry_attempts"], serde_json::json!(1));
+        assert_eq!(
+            metadata["maximum_retries_per_request"],
+            serde_json::json!(2)
+        );
     }
 
     #[cfg(feature = "headless")]

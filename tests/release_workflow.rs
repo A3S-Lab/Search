@@ -20,23 +20,32 @@ fn release_waits_for_the_exact_browser_crate_before_validation() {
 }
 
 #[test]
-fn stable_release_fails_closed_without_executing_candidate_code_on_a_privileged_runner() {
+fn stable_release_uses_a_pinned_independent_verifier_in_a_protected_environment() {
     let workflow = include_str!("../.github/workflows/release.yml");
-    let blocker = job_body(workflow, "commercial-search-gates");
-    assert!(blocker.contains("needs.classify.outputs.stable == 'true'"));
-    assert!(blocker.contains("https://github.com/A3S-Lab/Search/issues/8"));
-    assert!(blocker.contains("exit 1"));
+    let verifier = job_body(workflow, "commercial-search-gates");
+    assert!(verifier.contains("needs.classify.outputs.stable == 'true'"));
+    assert!(verifier.contains("environment: stable-release"));
+    assert!(verifier.contains("python-version: \"3.12.12\""));
+    assert!(
+        verifier.contains("uses: A3S-Lab/SearchVerifier@dff7ff44012d685187bbb877e473aaf95c4995be")
+    );
+    assert!(verifier.contains("name: frozen-crate-${{ needs.classify.outputs.version }}"));
+    assert!(verifier.contains("evaluated-commit: ${{ github.sha }}"));
+    assert!(verifier.contains("git-ref: ${{ github.ref }}"));
+    assert!(verifier.contains("corpus-key: ${{ secrets.A3S_SEARCH_CORPUS_KEY }}"));
+    assert!(verifier.contains("if: always()"));
+    assert!(verifier.contains("name: release-evidence-${{ needs.classify.outputs.version }}"));
+    assert!(verifier.contains("if-no-files-found: error"));
     for forbidden in [
         "actions/checkout",
-        "cargo test",
         "self-hosted",
-        "environment:",
-        "secrets.",
-        "vars.",
+        "contents: write",
+        "CARGO_REGISTRY_TOKEN",
+        "cargo publish",
     ] {
         assert!(
-            !blocker.contains(forbidden),
-            "stable blocker must not expose candidate code to privileged state: {forbidden}"
+            !verifier.contains(forbidden),
+            "independent verifier job must not gain a publication path: {forbidden}"
         );
     }
 }
@@ -62,6 +71,15 @@ fn release_freezes_one_exact_crate_before_external_evidence_is_considered() {
     assert!(aggregate.contains("needs: [classify, ci, freeze-crate, commercial-search-gates]"));
     assert!(aggregate.contains("FROZEN_CRATE_RESULT: ${{ needs.freeze-crate.result }}"));
     assert!(aggregate.contains("test \"$FROZEN_CRATE_RESULT\" = success"));
+    assert!(aggregate.contains(
+        "VERIFIED_CRATE_SHA256: ${{ needs.commercial-search-gates.outputs.frozen_crate_sha256 }}"
+    ));
+    assert!(aggregate.contains("test \"$VERIFIED_CRATE_SHA256\" = \"$FROZEN_CRATE_SHA256\""));
+    assert!(aggregate
+        .contains("EVIDENCE_SHA256: ${{ needs.commercial-search-gates.outputs.evidence_sha256 }}"));
+    assert!(aggregate.contains(
+        "EVIDENCE_ARTIFACT_ID: ${{ needs.commercial-search-gates.outputs.artifact_id }}"
+    ));
 }
 
 #[test]
@@ -97,7 +115,9 @@ fn every_release_write_path_is_transitively_blocked_by_the_aggregate_gate() {
     assert!(aggregate.contains("if: always() && !cancelled()"));
     assert!(build.contains("needs: commercial-release-gate"));
     assert!(publish.contains("if: needs.classify.outputs.stable == 'true'"));
-    assert!(publish.contains("needs: [classify, commercial-release-gate]"));
+    assert!(publish.contains(
+        "needs: [classify, freeze-crate, commercial-search-gates, commercial-release-gate]"
+    ));
     assert!(github.contains("needs: [classify, commercial-release-gate, publish-crate, build-cli]"));
     assert!(github.contains("if: |"));
     assert!(github.contains("always() &&"));
@@ -173,25 +193,49 @@ fn candidate_checkouts_bind_to_the_trigger_commit_without_persisted_credentials(
 }
 
 #[test]
-fn crate_publication_is_fail_closed_without_candidate_code_or_registry_secrets() {
+fn crate_publication_uses_the_same_pinned_exact_byte_uploader_without_candidate_code() {
     let workflow = include_str!("../.github/workflows/release.yml");
     let publish = job_body(workflow, "publish-crate");
     assert!(publish.contains("if: needs.classify.outputs.stable == 'true'"));
-    assert!(publish.contains("https://github.com/A3S-Lab/Search/issues/8"));
-    assert!(publish.contains("exit 1"));
+    assert!(publish.contains("python-version: \"3.12.12\""));
+    assert!(publish.contains("name: frozen-crate-${{ needs.classify.outputs.version }}"));
+    assert!(publish.contains("name: release-evidence-${{ needs.classify.outputs.version }}"));
+    assert!(publish
+        .contains("uses: A3S-Lab/SearchVerifier/publish@dff7ff44012d685187bbb877e473aaf95c4995be"));
+    assert!(
+        publish.contains("expected-crate-sha256: ${{ needs.freeze-crate.outputs.crate_sha256 }}")
+    );
+    assert!(publish.contains(
+        "expected-evidence-sha256: ${{ needs.commercial-search-gates.outputs.evidence_sha256 }}"
+    ));
+    assert!(publish.contains("expected-commit: ${{ github.sha }}"));
+    assert!(publish.contains("expected-git-ref: ${{ github.ref }}"));
+    assert!(publish.contains("registry-token: ${{ secrets.CARGO_TOKEN }}"));
     for forbidden in [
         "actions/checkout",
+        "dtolnay/rust-toolchain",
+        "cargo build",
+        "cargo test",
         "cargo publish",
         "cargo package",
-        "CARGO_REGISTRY_TOKEN",
-        "secrets.",
         "build.rs",
     ] {
         assert!(
             !publish.contains(forbidden),
-            "blocked publication must not expose credentials or execute candidate code: {forbidden}"
+            "credentialed uploader must not execute candidate code: {forbidden}"
         );
     }
+}
+
+#[test]
+fn verifier_and_uploader_are_pinned_to_the_same_immutable_revision() {
+    let workflow = include_str!("../.github/workflows/release.yml");
+    let revision = "dff7ff44012d685187bbb877e473aaf95c4995be";
+    let verifier = job_body(workflow, "commercial-search-gates");
+    let publish = job_body(workflow, "publish-crate");
+
+    assert!(verifier.contains(&format!("A3S-Lab/SearchVerifier@{revision}")));
+    assert!(publish.contains(&format!("A3S-Lab/SearchVerifier/publish@{revision}")));
 }
 
 #[test]

@@ -342,6 +342,30 @@ impl SoakRuntime {
         self.search(self.cancellation.clone())
     }
 
+    pub(super) async fn exercise_bulkhead_rejection(&self) -> u64 {
+        let mut permits = Vec::with_capacity(self.max_concurrent);
+        for _ in 0..self.max_concurrent {
+            permits.push(
+                self.bulkhead
+                    .acquire("soak_cancellation")
+                    .await
+                    .expect("bulkhead capacity must be available after the worker drain"),
+            );
+        }
+        let results = self
+            .cancellation_search()
+            .search(SearchQuery::new("generic bulkhead saturation probe"))
+            .await
+            .expect("bulkhead rejection must remain a structured search outcome");
+        let rejected = results
+            .outcomes()
+            .iter()
+            .filter(|outcome| outcome.kind == EngineOutcomeKind::Rejected)
+            .count() as u64;
+        drop(permits);
+        rejected
+    }
+
     pub(super) async fn force_recovery(&self) {
         self.clock.force_healthy.store(true, Ordering::Release);
         for engine in [self.api.clone(), self.http.clone()] {
