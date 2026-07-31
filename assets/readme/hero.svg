@@ -1,0 +1,133 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1200" height="430" viewBox="0 0 1200 430"
+     role="img" aria-labelledby="title desc">
+  <title id="title">A3S Search — ranked, inspectable web evidence</title>
+  <desc id="desc">A3S Search routes one query through a quality-gated headless, HTTP and RSS, and native API cascade before returning ranked results, typed failures, and a verifiable receipt.</desc>
+
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1200" y2="430" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0d1117"/>
+      <stop offset="0.68" stop-color="#111923"/>
+      <stop offset="1" stop-color="#15152a"/>
+    </linearGradient>
+    <linearGradient id="route" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#6ca3ff"/>
+      <stop offset="1" stop-color="#8c83ff"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0L8 4L0 8Z" fill="#6ca3ff"/>
+    </marker>
+  </defs>
+
+  <rect x="1" y="1" width="1198" height="428" rx="24"
+        fill="url(#background)" stroke="#263445" stroke-width="2"/>
+  <path d="M570 42V388" stroke="#263445" stroke-width="2"/>
+
+  <g id="identity" transform="translate(58 48)">
+    <g id="route-mark" transform="translate(0 0)" fill="none" stroke-linecap="round">
+      <circle cx="24" cy="24" r="20" stroke="#6ca3ff" stroke-width="5"/>
+      <path d="M39 39L56 56" stroke="#8c83ff" stroke-width="6"/>
+      <path d="M5 17H22M7 29H27M23 5V18" stroke="#3ccf91" stroke-width="3"/>
+    </g>
+    <text x="78" y="31" fill="#6ca3ff"
+          font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="18" font-weight="700" letter-spacing="2">A3S / EVIDENCE RETRIEVAL</text>
+
+    <text y="132" fill="#eef4fb"
+          font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif"
+          font-size="70" font-weight="760" letter-spacing="-2.8">A3S Search</text>
+    <text y="184" fill="#eef4fb"
+          font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif"
+          font-size="25" font-weight="650">One query. Multiple retrieval paths.</text>
+    <text y="219" fill="#b8c4d3"
+          font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif"
+          font-size="25" font-weight="560">Ranked, inspectable evidence.</text>
+
+    <g transform="translate(0 258)">
+      <rect width="454" height="58" rx="8" fill="#111923" stroke="#31445b" stroke-width="2"/>
+      <text x="20" y="36" fill="#3ccf91"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="20" font-weight="700">$</text>
+      <text x="48" y="36" fill="#eef4fb"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="20" font-weight="700">a3s-search</text>
+      <text x="180" y="36" fill="#8996a8"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="18">&quot;query&quot; --format json</text>
+    </g>
+
+    <g transform="translate(0 338)"
+       font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+       font-size="17" font-weight="700">
+      <circle cx="7" cy="7" r="7" fill="#6ca3ff"/>
+      <text x="24" y="14" fill="#b8c4d3">RUST LIBRARY</text>
+      <circle cx="164" cy="7" r="7" fill="#3ccf91"/>
+      <text x="181" y="14" fill="#b8c4d3">CLI</text>
+      <circle cx="245" cy="7" r="7" fill="#f0b44d"/>
+      <text x="262" y="14" fill="#b8c4d3">MIT</text>
+    </g>
+  </g>
+
+  <g id="evidence-cascade" transform="translate(610 36)">
+    <rect width="532" height="358" rx="14" fill="#0f151e" stroke="#31445b" stroke-width="2"/>
+
+    <g transform="translate(24 23)">
+      <circle cx="8" cy="8" r="8" fill="#3ccf91"/>
+      <text x="28" y="15" fill="#eef4fb"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="20" font-weight="700">query://web-evidence</text>
+      <text x="484" y="15" fill="#8996a8" text-anchor="end"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="16">LAZY CASCADE</text>
+    </g>
+    <path d="M24 58H508" stroke="#263445" stroke-width="2"/>
+
+    <g transform="translate(24 76)">
+      <rect width="428" height="54" rx="8" fill="#152235" stroke="#446da7"/>
+      <text x="18" y="23" fill="#6ca3ff"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="17" font-weight="700">01 / HEADLESS</text>
+      <text x="18" y="44" fill="#eef4fb"
+            font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+            font-size="20" font-weight="650">Google · Chrome / Chromium</text>
+      <path d="M428 27H468" stroke="#6ca3ff" stroke-width="2" marker-end="url(#arrow)"/>
+      <circle cx="480" cy="27" r="7" fill="#0f151e" stroke="#6ca3ff" stroke-width="3"/>
+    </g>
+
+    <g transform="translate(24 144)">
+      <rect width="428" height="54" rx="8" fill="#131c26" stroke="#31445b"/>
+      <text x="18" y="23" fill="#8996a8"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="17" font-weight="700">02 / HTTP + RSS</text>
+      <text x="18" y="44" fill="#eef4fb"
+            font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+            font-size="20" font-weight="650">DDG · Brave · Bing · Wikipedia</text>
+      <path d="M428 27H468" stroke="#6ca3ff" stroke-width="2" marker-end="url(#arrow)"/>
+      <circle cx="480" cy="27" r="7" fill="#0f151e" stroke="#6ca3ff" stroke-width="3"/>
+    </g>
+
+    <g transform="translate(24 212)">
+      <rect width="428" height="54" rx="8" fill="#17182a" stroke="#4c4384"/>
+      <text x="18" y="23" fill="#8c83ff"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="17" font-weight="700">03 / NATIVE API</text>
+      <text x="18" y="44" fill="#eef4fb"
+            font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+            font-size="20" font-weight="650">AnySearch · Tavily</text>
+      <path d="M428 27H468" stroke="#8c83ff" stroke-width="2" marker-end="url(#arrow)"/>
+      <circle cx="480" cy="27" r="7" fill="#0f151e" stroke="#8c83ff" stroke-width="3"/>
+    </g>
+
+    <path d="M504 103V293H480" fill="none" stroke="url(#route)" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <g transform="translate(24 286)">
+      <rect width="456" height="48" rx="8" fill="#10271f" stroke="#3ccf91" stroke-width="2"/>
+      <text x="18" y="20" fill="#baf5dc"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="18" font-weight="700">SearchResults + cascade_receipt/v1</text>
+      <text x="18" y="40" fill="#79c9a8"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="16">ranked · typed failures · sha256-bound</text>
+    </g>
+  </g>
+</svg>

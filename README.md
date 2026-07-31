@@ -1,165 +1,217 @@
-# A3S Search
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="A3S Search routes one query through a quality-gated headless, HTTP and RSS, and native API cascade before returning ranked results, typed failures, and a verifiable receipt">
+</p>
 
-Extensible web search for Rust and the command line.
+<p align="center">
+  <strong>Extensible web search for Rust, agents, and the command line.</strong>
+</p>
 
-`a3s-search` runs conventional search engines and native third-party search
-providers in parallel, merges duplicate URLs, ranks independent evidence, and
-preserves provider-native answers, relevance, full text, images, usage, and
-request reports.
+<p align="center">
+  <a href="https://github.com/A3S-Lab/Search/actions/workflows/ci.yml"><img alt="A3S Search CI" src="https://img.shields.io/github/actions/workflow/status/A3S-Lab/Search/ci.yml?branch=main&amp;style=flat-square&amp;label=CI"></a>
+  <a href="https://crates.io/crates/a3s-search"><img alt="a3s-search on crates.io" src="https://img.shields.io/crates/v/a3s-search?style=flat-square&amp;color=2864e8"></a>
+  <a href="https://docs.rs/a3s-search"><img alt="a3s-search documentation" src="https://img.shields.io/docsrs/a3s-search?style=flat-square&amp;color=5420bd"></a>
+  <a href="https://www.rust-lang.org/"><img alt="Rust native" src="https://img.shields.io/badge/Rust-native-a4a8b2?style=flat-square"></a>
+  <a href="./LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-17181a?style=flat-square"></a>
+</p>
 
-## Highlights
+<p align="center">
+  <a href="#run-one-search">Quick start</a> ·
+  <a href="#why-a3s-search">Why</a> ·
+  <a href="#how-the-cascade-works">Architecture</a> ·
+  <a href="#retrieval-sources">Sources</a> ·
+  <a href="#use-the-rust-library">Rust API</a> ·
+  <a href="#configure-with-acl">Configuration</a> ·
+  <a href="#reliability-boundaries">Reliability</a> ·
+  <a href="#development">Development</a>
+</p>
 
-- Native [AnySearch](https://www.anysearch.com/) MCP/JSON-RPC integration
-- Native [Tavily](https://www.tavily.com/) Search API integration
-- Anonymous AnySearch and keyless Tavily access, with optional bearer authentication
-- Provider-neutral `SearchProvider` protocol for downstream integrations
-- Parallel execution with isolated timeouts and partial-failure results
-- Shared per-engine bulkheads and closed/open/half-open circuit breaking
-- Sliding failure/slow-call windows, bounded `Retry-After`, and retry budgets
-- Bounded, cancellation-safe coalescing for identical in-flight requests
-- Caller-ordered, quality-gated lazy cascades with verifiable execution receipts
-- Deterministic URL deduplication, rich-field merging, duplicate evidence
-  suppression, and consensus ranking
-- Typed ACL configuration with redacted credential sources
-- Chrome/Chromium-backed A3S Browser search by default, plus conventional HTTP and RSS engines
-- Query answers, suggestions, images, full text, favicons, relevance, usage, and reports
-- Bounded provider responses and sanitized provider errors
-- Bundled Codex Skill in every release archive
+---
 
-## Install
+A3S Search is a Rust library and CLI for combining browser-rendered search,
+conventional HTTP/RSS engines, and native search APIs. It executes independent
+sources concurrently, keeps partial failures visible, merges duplicate URLs,
+and returns ranked evidence with a verifiable account of the fallback path.
 
-Install the CLI:
+It is a retrieval component, not a research agent. Query decomposition,
+iterative investigation, source interpretation, and report writing belong to
+the caller.
+
+## Run one search
+
+Install the latest published CLI:
 
 ```bash
 cargo install a3s-search
-# or
+
+# macOS or Linux through the A3S Homebrew tap
 brew install A3S-Lab/tap/a3s-search
 ```
 
-Add the library:
+To evaluate the unreleased behavior on `main`, install directly from the
+repository instead:
 
-```toml
-[dependencies]
-a3s-search = "2"
-tokio = { version = "1", features = ["full"] }
+```bash
+cargo install --git https://github.com/A3S-Lab/Search --locked
 ```
 
-Cargo features:
+Then run the default quality-gated cascade:
 
-| Feature | Purpose |
+```bash
+a3s-search "Rust async runtime guidance" --format json --limit 10
+```
+
+On current `main`, the JSON result keeps both useful evidence and
+degraded-path diagnostics:
+
+| Output | What it preserves |
 | --- | --- |
-| `headless` (default) | Enable Chrome/Chromium rendering for Google, Baidu, and JavaScript pages |
-| `lightpanda` | Add the explicit Lightpanda backend; implies `headless` |
+| `results` | Ranked and deduplicated URLs, snippets, provenance, scores, dates, and optional full text |
+| `answers` / `images` | Provider-native direct answers and query-level images |
+| `reports` | Request IDs, provider timing, total matches, usage, and bounded metadata |
+| `failures` | Typed error kind, transient state, provider identity, and optional retry delay |
+| `outcomes` | Success, empty, failure, timeout, local rejection, or circuit-open state for every selected engine |
+| `cascade_receipt` | Configured tiers, executed prefix, final quality, and whether the plan was exhausted below the floor |
+| `cascade_receipt_binding` | Domain-separated SHA-256 identity for the complete receipt |
 
-Provider APIs do not require either browser feature. Build with
-`--no-default-features` only when the host intentionally cannot run a browser;
-the CLI then starts with its HTTP/RSS tier before trying configured or built-in
-API providers. Native Windows builds use Chrome/Chromium; on a Windows host,
-Lightpanda requires running A3S Search inside WSL2.
-
-## CLI quick start
-
-List engines and provider readiness:
+Inspect available engines and native-provider readiness:
 
 ```bash
 a3s-search engines
 ```
 
-Without an explicit engine list or ACL source configuration, the CLI executes
-this lazy cascade:
-
-```text
-headless (Google) → HTTP/RSS (DuckDuckGo, Brave, Bing, Wikipedia) → API providers
-```
-
-It stops as soon as the generic quality floor is met. All tiers share one
-20-second end-to-end deadline by default, and the first browser attempt is
-bounded to at most five seconds so a challenge or unavailable runtime degrades
-quickly. An explicit `--engines` list runs only those sources; it is never
-silently expanded. Enabled ACL sources replace the built-in plan when the CLI
-list is absent. `--timeout` overrides the shared deadline.
-
-Search both native providers without an API key:
+Use an exact source set when the task requires it:
 
 ```bash
 a3s-search "Rust async runtime guidance" \
-  --engines anysearch,tavily \
-  --format json \
-  --limit 10
+  --engines ddg,wiki,anysearch,tavily \
+  --language en-US \
+  --time-range month \
+  --format json
 ```
 
-Authenticate through the environment when higher quotas or authenticated
-features are needed:
+An explicit `--engines` list is never expanded. `--limit` controls displayed
+results; provider-side result limits belong in ACL.
+
+> [!NOTE]
+> `main` currently declares version `2.2.0`. The latest crates.io release may
+> be older because stable publication remains fail-closed while
+> [Search issue #8](https://github.com/A3S-Lab/Search/issues/8) is open.
+
+## Why A3S Search
+
+| Need | Mechanism |
+| --- | --- |
+| More than one fragile endpoint | Browser, HTTP/RSS, and API transports behind one `Engine` contract |
+| Bounded fallback cost | A shared deadline and a quality decision after every lazily executed tier |
+| Results that remain explainable | Per-engine provenance, normalized rank signals, typed failures, and request reports |
+| Independent evidence without duplicate noise | Canonical URL merging and weighted reciprocal-rank fusion |
+| Safe integration into long-lived agents | Shared circuits, bulkheads, retry budgets, and in-flight request coalescing |
+| Provider extensibility | A provider-neutral `SearchProvider` protocol adapted through `ProviderEngine` |
+| Configuration without secret leakage | Typed ACL and redacted environment credential sources |
+
+The runtime ranker contains no query-topic, host, publisher, named-entity, or
+language exceptions. Domain-specific research policy stays above the search
+kernel.
+
+## How the cascade works
+
+Without an explicit source list or ACL source selection, the CLI uses this
+browser-first plan:
+
+```text
+SearchQuery
+    │
+    ├─ 01  headless      Google through Chrome/Chromium
+    │       └─ quality met? stop
+    │
+    ├─ 02  HTTP / RSS    DuckDuckGo + Brave + Bing + Wikipedia
+    │       └─ quality met? stop
+    │
+    └─ 03  native API    AnySearch + Tavily
+            └─ finish with results + cascade receipt
+```
+
+The important boundaries are:
+
+1. The first headless attempt is capped at five seconds.
+2. All tiers share one end-to-end deadline, 20 seconds by default.
+3. Engines inside one tier run concurrently with isolated timeouts.
+4. One source failure never discards successful results from another source.
+5. A tier is skipped once the combined result set satisfies the generic
+   quality floor.
+6. Explicit CLI sources are exact. Enabled ACL sources replace the built-in
+   plan when source blocks are present.
+
+Build with `--no-default-features` when the host must not compile or run a
+browser. The built-in plan then starts with HTTP/RSS and can continue to native
+APIs.
+
+The library does not impose the CLI order. Callers can compose
+`SearchCascade`, name their own tiers, set their own quality floor, and create
+expensive browser resources only inside `run_tier_if_needed`.
+
+### Core layers
+
+```text
+AnySearch ─┐
+Tavily ────┼─ SearchProvider ─ ProviderEngine ─┐
+Custom ────┘                                  │
+                                              ├─ Search
+HTTP / RSS engines ───────── Engine ──────────┤
+Browser engines ─ PageFetcher ─ Engine ───────┘
+                                                 │
+                          Aggregator ─ SearchQuality ─ SearchResults
+                                                 │
+                                  SearchCascadeReceiptV1
+```
+
+- `SearchProvider` models typed API capabilities, requests, readiness, rich
+  responses, and sanitized provider failures.
+- `ProviderEngine` adapts a provider into the stable engine contract and
+  applies provider-neutral output normalization.
+- `Search` owns parallel execution, timeouts, optional shared controls, typed
+  outcomes, and partial failures.
+- `Aggregator` owns URL normalization, evidence merging, provenance, and rank
+  fusion.
+- `SearchCascade` owns generic quality decisions and a caller-declared lazy
+  tier plan.
+
+See the complete public surface on [docs.rs](https://docs.rs/a3s-search).
+
+## Retrieval sources
+
+### Native providers
+
+| Provider | Protocol | Credential-free mode | Rich evidence |
+| --- | --- | --- | --- |
+| [AnySearch](https://www.anysearch.com/) | MCP over JSON-RPC 2.0 | Anonymous | Full text, total count, timing, request ID |
+| [Tavily](https://www.tavily.com/) | Tavily Search REST API | Keyless header | Answers, relevance, raw content, images, favicon, usage, metadata |
+
+Both providers accept optional bearer authentication:
 
 ```bash
 export ANYSEARCH_API_KEY="..."
 export TAVILY_API_KEY="..."
-export TAVILY_PROJECT="..." # optional; authenticated Tavily requests only
-
-a3s-search "Rust async runtime guidance" \
-  --engines anysearch,tavily \
-  --format json
+export TAVILY_PROJECT="..." # authenticated Tavily requests only
 ```
 
-Other useful controls:
+Prefer `env("VARIABLE")` in ACL. Credentials are never written by the provider
+adapters, included in endpoint URLs, or retained from provider response bodies.
 
-```bash
-a3s-search "query" --engines ddg,wiki,anysearch,tavily
-a3s-search "query" --language en-US --time-range month
-a3s-search "query" --safesearch moderate --timeout 20
-a3s-search "query" --format compact
-```
+<details>
+<summary><strong>AnySearch protocol and vertical routing</strong></summary>
 
-Chrome/Chromium is the default headless backend. Lightpanda is never selected
-implicitly; builds that enable its Cargo feature can request it explicitly:
-
-```bash
-cargo run --features lightpanda -- "query" --browser lightpanda
-```
-
-`--limit` limits displayed results. Provider-side result limits belong in ACL.
-
-## Native providers
-
-| Provider | Native protocol | Credential-free mode | Default result limit | Rich evidence |
-| --- | --- | --- | --- | --- |
-| AnySearch | MCP over JSON-RPC 2.0 | Anonymous | 10, range `1..=10` | Full text, total count, timing, request ID |
-| Tavily | Tavily Search REST API | `X-Tavily-Access-Mode: keyless` | 5, range `0..=20` | Answers, relevance, raw content, images, favicon, usage, metadata |
-
-### AnySearch
-
-The built-in provider sends `tools/call` requests for the AnySearch `search`
-tool to `POST https://api.anysearch.com/mcp`. It prefers structured content and
-supports the official Markdown result fallback. `ANYSEARCH_API_KEY` is optional;
-when present it is sent as a bearer token.
-
-AnySearch may report an exhausted anonymous allowance or auto-registration data
-inside an otherwise successful JSON-RPC tool result. The adapter classifies
-these responses as `provider_quota` instead of malformed search content and
-never retains or exposes credentials returned in the response. Configure or
-replace `ANYSEARCH_API_KEY` explicitly before retrying; the library does not
-write provider-issued keys to disk.
-
-Aggregated searches retain both the legacy engine error pairs and structured
-`EngineFailure` records containing the engine, provider identifier, stable error
-kind, diagnostic, and transient flag. Callers can therefore implement fallback
-policies for quota, rate-limit, authentication, transport, and timeout failures
-without parsing provider-specific messages.
-
-This integration follows the
+The built-in adapter sends the AnySearch `search` tool through MCP
+`tools/call` to `POST https://api.anysearch.com/mcp`. It follows the
 [AnySearch Skill v2.1.0](https://github.com/anysearch-ai/anysearch-skill/tree/v2.1.0)
-MCP contract linked from AnySearch's Skill download. AnySearch also documents a
-separate `/v1/search` REST surface; that REST request schema is not the Skill
-protocol and is intentionally not mixed into this provider.
+contract and does not mix in AnySearch's separate `/v1/search` REST schema.
 
-The one-query `SearchProvider` contract implements the Skill's `search`
-operation. Workflow operations such as `get_sub_domains`, `batch_search`, and
-`extract` remain in the official AnySearch Skill: sub-domain discovery is not
-guessed by this library, batch orchestration belongs to the caller, and page
-extraction is available through `enrich_full_text`. Obtain a documented
-sub-domain and its required parameters before configuring vertical routing.
+The one-query provider contract implements the Skill's `search` operation.
+Workflow operations such as `get_sub_domains`, `batch_search`, and `extract`
+remain in the official AnySearch Skill. Obtain a documented sub-domain and its
+required parameters before configuring vertical routing.
 
-AnySearch vertical routing supports:
+Supported top-level routing domains are:
 
 ```text
 general, resource, social_media, finance, academic, legal, health,
@@ -167,405 +219,149 @@ business, security, ip, code, energy, environment, agriculture,
 travel, film, gaming
 ```
 
-When using a sub-domain, use the `{domain}.{sub_domain}` form and keep its
-prefix equal to `domain`.
+Use `{domain}.{sub_domain}` and keep the sub-domain prefix equal to `domain`.
 
-### Tavily
+</details>
 
-The built-in provider sends typed requests to
-`POST https://api.tavily.com/search`. Without `TAVILY_API_KEY`, it uses Tavily's
-documented keyless header. With a key, it uses bearer authentication and sends
-`TAVILY_PROJECT` as `X-Project-ID` only when that project value is configured.
+<details>
+<summary><strong>Tavily controls</strong></summary>
 
-Supported controls include search depth, topic, direct answers, raw content,
-domain lists, calendar-valid date bounds, country boost, automatic parameters,
+The typed Tavily adapter supports search depth, topic, direct answers, raw
+content, domain filters, date bounds, country boost, automatic parameters,
 exact matching, images, image descriptions, favicons, usage, and safe search.
-Tavily safe search requires authenticated enterprise access and `basic` or
-`advanced` depth. Defaults follow Tavily's API contract, including
-`include_usage = false`; enable usage explicitly in ACL or with
-`TavilyConfig::with_include_usage(true)` when credit evidence is needed.
 
-## ACL configuration
+`chunks_per_source` requires advanced depth.
+`include_image_descriptions` requires images.
+Country boost applies only to the general topic. Tavily follows the documented
+`include_usage = false` default; enable it explicitly when credit evidence is
+required.
 
-Use `.acl` files for provider-specific controls and credential references.
-This example shows every provider attribute:
+With `auto_parameters = true`, omit depth and topic when Tavily should select
+them. Explicit compatible values intentionally pin those fields.
 
-```acl
-timeout {
-  value = 20
-}
+</details>
 
-health {
-  max_failures = 3
-  suspend_seconds = 60
-}
+### Conventional engines
 
-ranking {
-  rrf_rank_constant       = 60
-  query_alignment_weight  = 0.8
-  native_relevance_weight = 0.2
-}
+| Shortcut | Source | Transport | Built-in default |
+| --- | --- | --- | --- |
+| `g` | Google | A3S Browser | Yes |
+| `ddg` | DuckDuckGo | HTTP | Yes |
+| `brave` | Brave Search | HTTP | Yes |
+| `bing` | Bing International | RSS | Yes |
+| `wiki` | Wikipedia | MediaWiki JSON API | Yes |
+| `baidu` | Baidu | A3S Browser | Explicit |
+| `sogou` | Sogou | HTTP | Explicit |
+| `360` | 360 Search | HTTP | Explicit |
+| `bing_cn` | Bing China | RSS | Explicit |
 
-provider "anysearch" {
-  enabled = true
-  weight = 1.0
-  timeout = 20
-  endpoint = "https://api.anysearch.com/mcp"
-  api_key = env("ANYSEARCH_API_KEY")
-  http_timeout = 30
-  max_response_bytes = 2097152
+HTML engines validate the response structure before parsing. CAPTCHA,
+verification, consent, and anti-bot pages become typed transient `challenge`
+failures. An unrelated successful HTTP page becomes `invalid_response` rather
+than a false empty result.
 
-  max_results = 10
-  domain = "code"
-  sub_domain = "code.doc"
-  sub_domain_params = {
-    library = "tokio"
-    filters = {
-      stable = true
-    }
-  }
-}
+## Ranking and quality evidence
 
-provider "tavily" {
-  enabled = true
-  weight = 1.2
-  timeout = 20
-  endpoint = "https://api.tavily.com/search"
-  api_key = env("TAVILY_API_KEY")
-  project = env("TAVILY_PROJECT")
-  http_timeout = 30
-  max_response_bytes = 2097152
+The aggregator first deduplicates each engine response, then merges results by
+normalized URL across engines. It removes common tracking parameters and
+combines independent provenance, positions, rich fields, and rank signals.
 
-  search_depth = "advanced"
-  chunks_per_source = 3
-  max_results = 10
-  topic = "general"
-  include_answer = "advanced"
-  include_raw_content = "markdown"
-  include_domains = ["docs.rs", "rust-lang.org"]
-  exclude_domains = ["example.com"]
-  start_date = "2026-01-01"
-  end_date = "2026-07-20"
-  country = "united states"
-  auto_parameters = true
-  exact_match = false
-  include_usage = true
-  include_images = true
-  include_image_descriptions = true
-  include_favicon = true
-  safe_search = false
-}
+Each engine contributes through weighted reciprocal-rank fusion:
 
-engine "ddg" {
-  enabled = true
-  weight = 0.8
-  timeout = 10
-}
+```text
+engine weight
+× reciprocal rank
+× bounded query-alignment factor
+× provider-local relevance factor
 ```
 
-Run with the configuration:
+Provider relevance values are calibrated only within that provider response;
+incomparable API score scales are never multiplied directly across sources.
+Query alignment uses visible title and snippet text plus a weak URL signal.
+Unicode units and character n-grams keep the mechanism language-neutral without
+embedding topic-specific rules.
 
-```bash
-a3s-search --config search.acl engines
-a3s-search "query" --config search.acl --format json
-```
+For a display limit of ten, the default floor evaluates the leading evidence
+window against these generic signals:
 
-Configuration rules:
-
-- Prefer `env("VARIABLE")`; credential debug output is redacted.
-- Provider readiness resolves credential sources and verifies that API-key and
-  authenticated Tavily project values can be represented safely as headers.
-- Use `api_key = null` to force AnySearch anonymous or Tavily keyless mode.
-- Never put credentials in endpoint URLs.
-- Provider endpoints must use HTTPS; loopback HTTP is accepted for tests.
-- AnySearch `sub_domain_params` are resource-bounded before serialization:
-  nesting, collection sizes, node count, and text volume must remain within
-  the provider adapter's defensive limits.
-- Integral numeric settings are range-checked without saturation. Fractional,
-  negative, out-of-range, zero timeout, zero weight, and duplicate engine
-  configurations are rejected instead of silently coerced.
-- `ranking.rrf_rank_constant` must be finite and in `0..=1000000`; both
-  ranking weights must be finite and in `0..=1`.
-- `chunks_per_source` requires Tavily `search_depth = "advanced"`.
-- With Tavily `auto_parameters = true`, omit `search_depth` and `topic` to let
-  Tavily select them. Explicit values override automatic selection as documented.
-  `chunks_per_source`, `country`, or safe search pin the compatible field needed
-  for those controls. Reports expose the actual documented depth and topic
-  selected by Tavily when returned in `auto_parameters`; an unpinned value is
-  omitted from the report if Tavily does not disclose its selection.
-- Tavily follows the official `include_usage = false` default; set it to
-  `true` when reports should include consumed credits.
-- `include_image_descriptions` requires `include_images = true`.
-- `country` applies only to Tavily's `general` topic.
-- Tavily domain filters accept bare DNS names only and normalize international
-  names to their ASCII representation.
-- An include-domain and exclude-domain list cannot contain the same domain.
-- If `--engines` is absent, enabled ACL engines and providers replace the
-  built-in cascade; an ACL file with no source declarations leaves the built-in
-  cascade intact.
-- Explicit `--engines` selection still respects `enabled = false`.
-- `--timeout` overrides the configured shared end-to-end deadline.
-
-## Structured evidence and partial failures
-
-Use `--format json` for machine-readable evidence. The top-level object contains:
-
-| Field | Meaning |
+| Signal | Default expectation |
 | --- | --- |
-| `results` | Ranked, deduplicated results up to the CLI display limit |
-| `answers` | Provider-supplied direct answers |
-| `suggestions` | Provider or engine query suggestions |
-| `images` | Query-level images |
-| `reports` | Provider request IDs, total counts, timings, usage, and bounded metadata |
-| `errors` | Legacy per-engine failure entries |
-| `failures` | Typed failures with stable kinds, transient status, and retry context |
-| `outcomes` | Success, empty, failure, timeout, local rejection, or circuit-open state for each selected engine |
-| `count` | Number of displayed results |
-| `total_count` | Number of aggregated results before the display limit |
-| `duration_ms` | End-to-end orchestration duration |
-| `cascade_receipt` | Configured tier plan, executed prefix, generic quality decision, and identities bound to the final results |
-| `cascade_receipt_binding` | Domain-separated SHA-256 binding for the complete receipt |
+| Usable HTTP(S) results | Up to five |
+| Distinct normalized hosts | Up to three |
+| Contributing engines | At least one |
+| Per-result query match | At least `0.35` for half the target |
+| Mean query match | At least `0.30` |
+| Cross-engine consensus | Observable, not required by default |
 
-Each result can preserve `engines`, `score`, `relevance_score`, `published_date`,
-`full_text`, `favicon`, and result-level `images`.
+Research callers can require stronger consensus or a different floor. The
+built-in floor deliberately does not claim to measure publisher authority,
+factual correctness, recency, viewpoint coverage, or completeness.
 
-Tavily's provider-controlled `auto_parameters` object is recursively bounded and
-credential-redacted before it enters a report. If any keys, values, nesting, or
-items were truncated, the report includes
-`metadata.auto_parameters_truncated = true`. The generic provider adapter also
-sets `metadata.metadata_truncated = true` when it must bound metadata from a
-custom provider.
+If every declared tier runs below the floor, the CLI returns the remaining
+evidence with `quality_floor_met = false` and
+`exhausted_below_floor = true`. Downstream products can fail closed on that
+state.
 
-Every provider response also crosses a provider-neutral normalization boundary.
-It accepts only bounded HTTP(S) URLs without embedded credentials; bounds
-results, titles, snippets, full text, dates, answers, suggestions, and image
-descriptions; limits result-level and query-level image collections; and
-normalizes finite relevance into `0.0..=1.0`. Invalid entries are dropped.
-When this changes provider output, the report contains a reserved
-`metadata._a3s_normalization` object with bounded counters. Request identifiers
-are bounded, non-finite or negative usage is discarded, and provider metadata
-is recursively bounded before it reaches `SearchReport`.
+### Verifiable cascade receipts
 
-One failed source does not discard successful sources. The CLI writes warnings
-to stderr and keeps failures in both the compatibility `errors` view and typed
-`failures`/`outcomes`; even an all-source failure returns an empty result set
-with the individual errors. Each outcome includes the engine identity, result
-count, and attempt duration. Treat those failures as part of the evidence
-rather than silently ignoring them.
+`finish_with_tier_plan` returns the final `SearchResults` with a versioned
+receipt that binds:
 
-## Rank fusion and quality evidence
+- the complete typed query;
+- the configured tier plan and executed prefix;
+- every tier quality decision;
+- the ordered final results and rich evidence fields;
+- failures, reports, outcomes, counts, and timing metadata.
 
-The default aggregator uses weighted reciprocal-rank fusion. A result at
-one-based position `p` contributes `(k + 1) / (k + p)`, multiplied by the
-configured engine weight and bounded query-alignment and native-relevance
-factors. Contributions from independent engines are added after normalized URL
-deduplication, so repeated evidence can outrank an isolated first position.
-Duplicates returned by one engine are collapsed before rank positions and
-provider-local relevance percentiles are assigned. Tracking parameters,
-HTTP/HTTPS aliases, or repeated provider rows therefore cannot consume rank
-positions or imitate cross-engine consensus.
+`receipt_binding()` calculates a domain-separated canonical SHA-256 over the
+complete validated receipt. It detects substitution when compared with a
+trusted expected digest. Structural validity and a digest do not prove who ran
+the search or that the plan was committed before execution; authenticity still
+requires a trusted signature, digest log, or equivalent authority.
 
-Provider-native relevance values are not comparable across APIs. Each engine
-response is therefore calibrated to a local percentile before it contributes
-to ranking. Missing native scores, and responses with only one distinct score,
-are neutral. The raw value remains available as result evidence but is never
-multiplied directly across providers.
+## Use the Rust library
 
-`RankingConfig` exposes the three generic controls for library callers and the
-same values are available through the ACL `ranking` block. The implementation
-contains no query-topic, host, publisher, named-entity, or language branches.
+Add the current major release:
 
-The versioned offline quality corpus verifies nDCG@10, first material-result
-rank, recall, host diversity, cross-engine consensus, and duplicate rate. Run
-the regression gate and print the machine-readable evidence report with:
-
-```bash
-cargo test --locked --test quality_eval
-cargo test --locked --test quality_eval ranking_quality_report \
-  -- --ignored --nocapture --exact
+```toml
+[dependencies]
+a3s-search = "2"
+tokio = { version = "1", features = ["full"] }
 ```
 
-The fixtures live only under `tests/`; they are not compiled into the library
-or used by the runtime ranker. They establish a reproducible regression floor,
-not a substitute for live-provider evaluation. The same gate applies
-metamorphic transformations for provider input order, opaque provider names,
-provider-local score scales, and repeated canonical rows. Those transformations
-test general ranking invariants without adding topic-specific runtime logic. A
-separate query-alignment matrix runs 100 transformed trials across 20 scripts
-and request shapes to guard the Unicode, whitespace, case, punctuation, and
-field-weighting paths.
+Run multiple engines under one orchestration contract:
 
-Before a release is treated as broadly quality-qualified, evaluate a separately
-maintained holdout with at least 40 fully judged cases. The holdout must remain
-outside the repository and must not reuse public case IDs or queries:
-
-```bash
-A3S_SEARCH_QUALITY_HOLDOUT=/secure/search-quality-holdout-v1.json \
-A3S_SEARCH_QUALITY_HOLDOUT_SHA256=<precommitted-sha256> \
-  cargo test --locked --test quality_eval \
-  independent_holdout_meets_the_predeclared_quality_floor \
-  -- --ignored --nocapture --exact
-```
-
-The command applies predeclared nDCG@10, material-result MRR, Recall@10,
-per-case nDCG, and duplicate-ratio floors. The evaluator verifies the holdout
-bytes against the SHA-256 committed before the corpus is opened, then binds
-that digest into the machine-readable report. Passing the public corpus alone
-is never release evidence for the holdout gate.
-
-## Reliability and quality-gated fallback
-
-`Bulkhead`, `CircuitBreaker`, and `SearchCoalescer` are optional shared
-registries. Clone them into each compatible `Search` instance in the same
-runtime so one overloaded or unavailable engine cannot consume unbounded local
-resources or be retried independently by every new request:
-
-```rust,no_run
-use a3s_search::{Bulkhead, CircuitBreaker, Search, SearchCoalescer};
-
-let bulkhead = Bulkhead::default();
-let circuit = CircuitBreaker::default();
-let coalescer = SearchCoalescer::default();
-let first = Search::new()
-    .with_bulkhead(bulkhead.clone())
-    .with_circuit_breaker(circuit.clone())
-    .with_request_coalescer(coalescer.clone());
-let second = Search::new()
-    .with_bulkhead(bulkhead)
-    .with_circuit_breaker(circuit)
-    .with_request_coalescer(coalescer);
-```
-
-Bulkheads are keyed by normalized engine shortcut and enforce bounded in-flight
-and queued calls. Saturation and queue expiry produce typed `rejected` outcomes
-without incrementing upstream failure counters; a locally rejected half-open
-probe is returned immediately. Keep the bulkhead process- or runtime-scoped
-when those instances compete for the same local browser, socket, or provider
-capacity.
-
-Scope circuit state to compatible credentials, endpoint configuration, and
-network routing. Do not share terminal authentication or quota state between
-unrelated tenants. Recreate the circuit when those inputs change.
-
-The coalescer collapses only overlapping requests with identical query
-controls, configured engine identities and weights, rank-fusion policy, and
-timeout policy.
-It removes each flight immediately after completion, so sequential requests
-remain fresh and no positive or negative result cache is implied. Its distinct
-in-flight map is bounded; excess distinct requests bypass coalescing and remain
-subject to the normal bulkhead. If a leader is cancelled, followers are woken
-and exactly one can take over rather than waiting forever. Scope a coalescer to
-compatible tenant, credential, endpoint, proxy, safe-search, freshness, and
-policy boundaries because opaque engine credentials are deliberately not part
-of the request identity. `SearchCoalescerSnapshot` exposes current flights and
-leader, shared, bypassed, and abandoned request counts.
-
-The circuit uses closed, open, and half-open states. Quota, authentication,
-permission, and rate-limit failures open immediately; transient failures and
-structurally empty responses use configurable consecutive thresholds. An
-optional count-based window also opens on intermittent failure rate or slow-call
-rate after a minimum sample size. Failed recovery probes increase the bounded
-open interval with exponential backoff and jitter. A provider `Retry-After`
-value supplies the base open interval. When that interval expires, exactly one
-concurrent request receives a probe permit. Request-scoped invalid-query
-failures neither claim recovery nor poison later queries.
-
-HTTP engines preserve standards-compliant cookies across redirects. Their HTML
-parsers validate provider protocol structure before extraction: CAPTCHA,
-verification, consent, and anti-bot interstitials become transient `challenge`
-failures; unrelated 2xx pages become `invalid_response`; recognized result and
-empty-state structures remain valid. These checks use engine page structure,
-not query topics, publishers, domains, or languages.
-
-`SearchCascade` provides a lazy tier gate rather than eagerly running every
-fallback. `run_tier_if_needed` does not invoke its async closure after an
-earlier tier satisfies the floor, so callers can construct HTTP/RSS engines or
-headless browser pools inside the closure without paying for them on the
-healthy earlier-tier path. `push_tier` and `needs_next_tier` remain available
-when a caller needs to manage execution separately. The
-quality floor is caller-configurable and uses only generic signals: usable
-result count, normalized host diversity, contributing engines, independent
-engine consensus, per-result Unicode query/text alignment, and mean alignment.
-It evaluates the smallest leading prefix of the final ranking that could meet
-the selected floor. This keeps unseen provider tail noise from triggering an
-otherwise unnecessary tier while preventing stronger low-ranked rows from
-being cherry-picked over a weak result head.
-Multi-term alignment measures length-weighted query-unit coverage and gives
-visible titles and snippets authority over a weak URL signal, preventing a
-query-shaped path, one generic word, or page boilerplate from satisfying a
-longer query. Normalized character n-gram evidence recovers partial unsegmented
-matches and common word-form changes, and repeated query units are collapsed
-before both scoring paths so repetition cannot inflate alignment.
-The default floor does not force consensus; research callers can require it
-without embedding publisher or topic rules. `for_limit` asks for at most five
-usable results, up to three normalized hosts, at least half of the target
-results with query alignment of `0.35` or higher, and mean alignment of at
-least `0.30`. The mechanism contains no host, named-entity, topic, publisher,
-or language exceptions.
-
-All executed tiers merge through `SearchResults::merge`, which applies the
-same URL normalization, provenance merge, and deterministic ranking path.
-`SearchCascade` deliberately does not create browsers: the caller owns the
-end-to-end deadline, tier composition, and lazy browser lifecycle. Browser
-retries are bounded separately by a shared `RetryBudget` and total fetch
-deadline.
-
-Call `finish_with_tier_plan` when the caller needs a durable account of its
-declared tier plan and reported executed prefix. The returned V1 receipt binds
-every typed `SearchQuery` control and every caller-visible field of the ordered
-final `SearchResults` with separate domain-separated SHA-256 identities. The
-result identity includes rich results, ranking fields, full text, engine
-provenance, failures, reports, outcomes, and timing metadata; receipt validation
-recomputes it from the returned container. The receipt also records the final
-generic quality decision, whether the caller-reported plan is incomplete or
-fully traversed below the floor, and counts validated against the canonically
-merged results. Tier identifiers remain opaque caller-owned strings; Search
-does not infer transport, provider, topic, publisher, site, or language policy
-from them.
-
-`SearchCascadeOutcomeV1::receipt_binding` returns a domain-separated canonical
-SHA-256 over every receipt field without relying on JSON serialization. The
-binding detects coherent plan, policy, query, quality, state, or count
-substitution when compared with a trusted expected digest. Structural
-validation and a matching digest do not prove that a plan was committed before
-execution, that a tier ran, or who produced the record. Trusted evidence must
-therefore authenticate the complete receipt binding through an independent
-signature, digest log, or equivalent authority and validate the receipt against
-the returned results. The crate enables exact finite-float parsing for its
-supported `serde_json` round trip so receipt-bound ranking values retain their
-IEEE-754 identity.
-
-```rust,no_run
-use a3s_search::{SearchCascade, SearchQualityFloor, SearchQuery, SearchResults};
+```rust
+use a3s_search::{
+    engines::{DuckDuckGo, Wikipedia},
+    Search, SearchQuery,
+};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut cascade = SearchCascade::new(
-        SearchQuery::new("portable research query"),
-        SearchQualityFloor::for_limit(5),
-    );
+async fn main() -> a3s_search::Result<()> {
+    let mut search = Search::new();
+    search.add_engine(DuckDuckGo::new());
+    search.add_engine(Wikipedia::new());
 
-    cascade
-        .run_tier_if_needed("tier-0", || async { SearchResults::new() })
-        .await;
-    cascade
-        .run_tier_if_needed("tier-1", || async { SearchResults::new() })
-        .await;
+    let results = search
+        .search(SearchQuery::new("extensible Rust search"))
+        .await?;
 
-    let outcome = cascade.finish_with_tier_plan(["tier-0", "tier-1"])?;
-    outcome.validate()?;
-    let receipt_binding = outcome.receipt_binding()?;
-    assert_eq!(receipt_binding.sha256.len(), 64);
-    assert!(outcome.receipt.exhausted_below_floor);
+    for result in results.items() {
+        println!(
+            "{:.3} {} {:?}",
+            result.score,
+            result.url,
+            result.engines
+        );
+    }
     Ok(())
 }
 ```
 
-## Library usage
+Provider APIs use the same `Search` orchestration:
 
-Run the built-in providers directly:
-
-```rust,no_run
+```rust
 use a3s_search::providers::BuiltinProvider;
 use a3s_search::{Search, SearchQuery};
 
@@ -576,461 +372,196 @@ async fn main() -> a3s_search::Result<()> {
     search.add_engine(BuiltinProvider::Tavily.create_engine()?);
 
     let results = search
-        .search(SearchQuery::new("extensible Rust search"))
+        .search(SearchQuery::new("current Rust async guidance"))
         .await?;
-
-    for result in results.items() {
-        println!("{} {} {:?}", result.score, result.url, result.engines);
-    }
-    for report in results.reports() {
-        println!("{:?}", report);
-    }
+    println!("{} aggregated results", results.count);
     Ok(())
 }
 ```
 
-`BuiltinProvider::create_engine` uses `ANYSEARCH_API_KEY`, `TAVILY_API_KEY`, and
-`TAVILY_PROJECT` when present. Construct `AnySearchConfig` or `TavilyConfig`
-directly for fully typed programmatic configuration.
+### Add a provider
 
-### Add an external provider
+Implement the provider-neutral protocol and wrap it in `ProviderEngine`:
 
-Implement only the provider-neutral public protocol, then adapt it with
-`ProviderEngine`:
-
-```rust,no_run
-use a3s_search::providers::{
-    ProviderAuthentication, ProviderCapabilities, ProviderDescriptor,
-    ProviderEngine, ProviderReadiness, ProviderReport, ProviderRequest,
-    ProviderResponse, ProviderResult, SearchProvider,
-};
-use a3s_search::{Search, SearchQuery};
-use async_trait::async_trait;
-
-struct MyProvider;
-
-#[async_trait]
-impl SearchProvider for MyProvider {
-    fn descriptor(&self) -> ProviderDescriptor {
-        ProviderDescriptor::new(
-            "my-provider",
-            "My Provider",
-            "https://search.example.com/",
-            ProviderCapabilities::new()
-                .with_answers(true)
-                .with_full_text(true),
-        )
-    }
-
-    fn readiness(&self) -> ProviderReadiness {
-        ProviderReadiness::Ready {
-            authentication: ProviderAuthentication::Authenticated,
-        }
-    }
-
-    async fn search(
-        &self,
-        request: &ProviderRequest,
-    ) -> a3s_search::Result<ProviderResponse> {
-        Ok(ProviderResponse::new()
-            .with_result(
-                ProviderResult::new(
-                    "https://example.com/result",
-                    format!("Result for {}", request.query),
-                    "Provider-neutral snippet",
-                )
-                .with_full_text("Complete source content")
-                .with_relevance_score(0.9),
-            )
-            .with_answer("Provider-neutral answer")
-            .with_report(
-                ProviderReport::new()
-                    .with_request_id("request-1")
-                    .with_total_results(1),
-            ))
-    }
-}
-
-#[tokio::main]
-async fn main() -> a3s_search::Result<()> {
-    let mut search = Search::new();
-    search.add_engine(ProviderEngine::new(MyProvider));
-    let results = search.search(SearchQuery::new("custom provider")).await?;
-    assert_eq!(results.items().len(), 1);
-    Ok(())
-}
-```
-
-Provider protocol types are `#[non_exhaustive]`; use their public constructors
-and builders. This keeps downstream providers source-compatible when common
-evidence fields are added later.
-
-### Migrating from 1.x
-
-Version 2 introduces the provider architecture as an explicit API boundary.
-Code that constructed `SearchResult` or `SearchConfig` with struct literals
-should use `SearchResult::new` or `SearchConfig::new` and then set public
-fields. Exhaustive `SearchError` matches must handle `SearchError::Provider`
-and retain a wildcard arm. These types are now non-exhaustive so future
-provider evidence and configuration can be added without another source
-compatibility break.
-
-## Architecture
-
-```text
-AnySearchProvider ─┐
-TavilyProvider ────┼─ SearchProvider ─ ProviderEngine ─┐
-CustomProvider ────┘                                  │
-                                                      ├─ Search
-HTTP/RSS engines ─────────────── Engine ──────────────┘
-                                                         │
-                                                         ▼
-                                      Aggregator → SearchResults
-```
-
-The layers have separate responsibilities:
-
-- `SearchProvider` models typed API requests, readiness, capabilities, rich
-  responses, and sanitized provider failures.
-- `ProviderEngine` adapts any provider into the stable `Engine` orchestration
-  contract and applies the provider-neutral rich-output normalization boundary.
-- `Search` owns parallel execution, timeouts, optional shared circuit state,
-  typed outcomes, and partial failures.
-- `Aggregator` owns URL normalization, merging, provenance, and ranking.
-- Provider modules own wire protocols and are split into configuration,
-  request, response, and error concerns.
-- `ProviderHttpClient` enforces HTTPS, disables redirects, limits decompressed
-  response size, applies timeouts, and never exposes response bodies in errors.
-
-The legacy per-instance health monitor ignores client-side provider failures.
-When a shared `CircuitBreaker` is attached, quota, authentication, and
-permission failures open immediately because another request cannot repair
-them; provider invalid-request and query-validation failures remain
-request-scoped. Transport, timeout, invalid-response, rate-limit, parse, and
-service failures contribute to the configured circuit policy.
-
-This boundary lets a new provider reuse orchestration and aggregation without
-adding provider-specific branches to the search core.
-
-## Conventional engines
-
-| Shortcut | Engine | Transport |
-| --- | --- | --- |
-| `ddg` | DuckDuckGo | HTTP |
-| `brave` | Brave Search | HTTP |
-| `bing` | Bing International | RSS |
-| `wiki` | Wikipedia | JSON API |
-| `sogou` | Sogou | HTTP |
-| `360` | 360 Search | HTTP |
-| `bing_cn` | Bing China | RSS |
-| `g` | Google | A3S Browser, `headless` feature |
-| `baidu` | Baidu | A3S Browser, `headless` feature |
-
-Provider APIs and conventional engines can participate in the same search.
-
-## Browser rendering and full text
-
-With the `headless` feature, Search adapts the typed
-`a3s_use_browser::PageRenderer` interface from the independently maintained
-[A3S Browser repository](https://github.com/A3S-Lab/Browser). Browser owns
-browser discovery, managed installation, process lifecycle, and tab limits;
-Search owns only URL-to-HTML adaptation, wait conditions, retries, and metrics.
-Search never depends on the A3S Use facade, Browser driver, or MCP surface.
-Release `a3s-use-browser` before tagging a Search version that depends on it;
-the Search release gate waits for the exact Browser crate version on crates.io.
-
-`BrowserFetcher` applies a total deadline across all render attempts, queueing,
-and retry sleeps. Transient failures use capped exponential backoff with full
-jitter, and every retry must consume a token from its `RetryBudget`. Share one
-budget across fetchers in the same runtime to prevent a broad browser or
-network incident from multiplying work across requests. Successful operations
-restore bounded credit.
-
-Providers may return `full_text` directly. For snippet-only results,
-`enrich_full_text` can fetch each result page and extract the main article body:
-
-```rust,no_run
-use a3s_search::{enrich_full_text, HttpFetcher, PageFetcher};
-use std::sync::Arc;
-use std::time::Duration;
-
-# async fn enrich(
-#     results: &mut a3s_search::SearchResults,
-# ) {
-let fetcher: Arc<dyn PageFetcher> = Arc::new(HttpFetcher::new());
-enrich_full_text(results, fetcher, 8, Duration::from_secs(10)).await;
-# }
-```
-
-Failed enrichment keeps the original snippet. JavaScript pages can use
-`BrowserFetcher` through the same `PageFetcher` interface.
-
-## Proxy and metrics
-
-Conventional HTTP engines can use `HttpFetcher::with_proxy` or a
-`PooledHttpFetcher` backed by `ProxyPool`. Provider APIs intentionally own
-their bounded direct HTTP clients and do not inherit scraping proxies. The CLI
-never echoes a potentially credential-bearing `--proxy` URL.
-
-Attach `Metrics` to `Search` for success/failure counts and latency
-percentiles. Provider-native request timing and usage remain available in
-`SearchReport`.
-
-### Static proxy pool
-
-```rust,no_run
-use a3s_search::proxy::{ProxyConfig, ProxyPool, ProxyProtocol, ProxyStrategy};
-
-let proxies = vec![
-    ProxyConfig::new("10.0.0.1", 8080).with_protocol(ProxyProtocol::Http),
-    ProxyConfig::new("10.0.0.2", 1080).with_protocol(ProxyProtocol::Socks5),
-];
-let pool = ProxyPool::with_proxies(proxies).with_strategy(ProxyStrategy::RoundRobin);
-```
-
-### Dynamic proxy provider
-
-```rust,no_run
-use a3s_search::proxy::{spawn_auto_refresh, ProxyConfig, ProxyPool, ProxyProvider};
-use a3s_search::{PageFetcher, PooledHttpFetcher};
-use async_trait::async_trait;
-use std::sync::Arc;
-use std::time::Duration;
-
-struct MyProxyProvider;
-
-#[async_trait]
-impl ProxyProvider for MyProxyProvider {
-    async fn fetch_proxies(&self) -> a3s_search::Result<Vec<ProxyConfig>> {
-        Ok(vec![ProxyConfig::new("10.0.0.1", 8080)])
-    }
-
-    fn refresh_interval(&self) -> Duration {
-        Duration::from_secs(60)
-    }
-}
-
-let pool = Arc::new(ProxyPool::with_provider(MyProxyProvider));
-let _refresh = spawn_auto_refresh(Arc::clone(&pool));
-let fetcher: Arc<dyn PageFetcher> =
-    Arc::new(PooledHttpFetcher::new(Arc::clone(&pool)));
-```
-
-`PooledHttpFetcher` reuses one `reqwest` client per proxy URL while rotating
-proxies between requests. `ProxyPool` supports:
-
-| Method | Purpose |
-| --- | --- |
-| `new()` | Create an empty, disabled pool |
-| `with_proxies(proxies)` | Create a static pool |
-| `with_provider(provider)` | Create a dynamically refreshed pool |
-| `with_strategy(strategy)` | Select round-robin or random routing |
-| `get_proxy()` | Select the next proxy |
-| `add_proxy()` / `remove_proxy()` | Mutate the pool |
-| `set_enabled(bool)` / `is_enabled()` | Control routing |
-| `refresh()` | Refresh from the dynamic provider |
-| `len()` / `is_empty()` | Inspect pool size |
-| `create_client(user_agent)` | Build a client for the selected proxy |
-
-### Metrics
-
-```rust,no_run
-use a3s_search::metrics::{Metrics, TimingGuard};
-use a3s_search::{HttpFetcher, Search};
-use std::sync::Arc;
-
-let metrics = Arc::new(Metrics::new());
-let _search = Search::new().with_metrics(Arc::clone(&metrics));
-let _fetcher = HttpFetcher::new().with_metrics(Arc::clone(&metrics));
-
-metrics.record_success(std::time::Duration::from_millis(150));
-metrics.record_failure("timeout", true);
-
-# async fn inspect(metrics: Arc<Metrics>) {
-let snapshot = metrics.snapshot().await;
-println!("Success rate: {:.1}%", snapshot.success_rate());
-println!("P50 latency: {}ms", snapshot.latency_p50_ms);
-# }
-```
-
-`MetricsSnapshot` exposes total successes and failures, transient and permanent
-failure counts, low-cardinality error counts, and p50/p95/p99 latency.
-`TimingGuard` records success or failure latency through an RAII-style timer.
-
-## API reference
-
-This section keeps the main stable surfaces discoverable. Rustdoc remains the
-authoritative source for exhaustive fields and feature gating.
-
-### Search orchestration
-
-```rust,ignore
-impl Search {
-    pub fn new() -> Self;
-    pub fn with_health_config(config: HealthConfig) -> Self;
-    pub fn with_metrics(self, metrics: Arc<Metrics>) -> Self;
-    pub fn with_circuit_breaker(self, circuit_breaker: CircuitBreaker) -> Self;
-    pub fn with_bulkhead(self, bulkhead: Bulkhead) -> Self;
-    pub fn with_request_coalescer(self, coalescer: SearchCoalescer) -> Self;
-    pub fn set_circuit_breaker(&mut self, circuit_breaker: Option<CircuitBreaker>);
-    pub fn set_bulkhead(&mut self, bulkhead: Option<Bulkhead>);
-    pub fn set_request_coalescer(&mut self, coalescer: Option<SearchCoalescer>);
-    pub fn set_metrics(&mut self, metrics: Option<Arc<Metrics>>);
-    pub fn metrics(&self) -> Option<Arc<Metrics>>;
-    pub fn add_engine<E: Engine + 'static>(&mut self, engine: E);
-    pub fn set_timeout(&mut self, timeout: Duration);
-    pub fn engine_count(&self) -> usize;
-    pub async fn search(&self, query: SearchQuery) -> Result<SearchResults>;
-}
-```
-
-`SearchQuery` carries:
-
-```rust,ignore
-pub struct SearchQuery {
-    pub query: String,
-    pub categories: Vec<EngineCategory>,
-    pub language: Option<String>,
-    pub safesearch: SafeSearch,
-    pub page: u32,
-    pub time_range: Option<TimeRange>,
-    pub engines: Vec<String>,
-}
-```
-
-Use `SearchQuery::new`, `with_categories`, `with_language`,
-`with_safesearch`, `with_page`, `with_time_range`, and `with_engines`.
-`SafeSearch` provides `Off`, `Moderate`, and `Strict`; `TimeRange` provides
-`Day`, `Week`, `Month`, and `Year`.
-
-### Engine and provider extension points
-
-Conventional engines implement:
-
-```rust,ignore
-#[async_trait]
-pub trait Engine: Send + Sync {
-    fn config(&self) -> &EngineConfig;
-    async fn search(&self, query: &SearchQuery) -> Result<Vec<SearchResult>>;
-    async fn search_output(&self, query: &SearchQuery) -> Result<EngineOutput>;
-    fn name(&self) -> &str;
-    fn shortcut(&self) -> &str;
-    fn weight(&self) -> f64;
-    fn is_enabled(&self) -> bool;
-}
-```
-
-The default `search_output` wraps `search`, so existing engines do not need to
-implement rich evidence. Native third-party integrations implement:
-
-```rust,ignore
+```rust
 #[async_trait]
 pub trait SearchProvider: Send + Sync {
     fn descriptor(&self) -> ProviderDescriptor;
     fn readiness(&self) -> ProviderReadiness;
-    async fn search(&self, request: &ProviderRequest)
-        -> Result<ProviderResponse>;
+    async fn search(
+        &self,
+        request: &ProviderRequest,
+    ) -> Result<ProviderResponse>;
+}
+
+let engine = ProviderEngine::new(my_provider);
+search.add_engine(engine);
+```
+
+The adapter preserves direct answers, suggestions, full text, images,
+relevance, usage, and request reports without encoding them as synthetic web
+results. Provider output crosses a bounded normalization boundary before it
+reaches callers.
+
+## Configure with ACL
+
+Use the A3S Agent Configuration Language for source selection, credentials,
+timeouts, ranking, and provider-specific controls:
+
+```acl
+timeout {
+  value = 20
+}
+
+ranking {
+  rrf_rank_constant       = 60
+  query_alignment_weight  = 0.8
+  native_relevance_weight = 0.2
+}
+
+engine "g" {
+  enabled = true
+  weight = 1.2
+  timeout = 8
+}
+
+provider "anysearch" {
+  enabled = true
+  api_key = env("ANYSEARCH_API_KEY")
+  max_results = 10
+}
+
+provider "tavily" {
+  enabled = true
+  api_key = env("TAVILY_API_KEY")
+  project = env("TAVILY_PROJECT")
+  search_depth = "advanced"
+  chunks_per_source = 3
+  max_results = 10
+  include_answer = "advanced"
+  include_raw_content = "markdown"
+  include_images = true
+  include_favicon = true
 }
 ```
 
-`ProviderEngine::new(provider)` adapts this protocol to `Engine`.
-`ProviderDescriptor` advertises stable identity and capabilities.
-`ProviderRequest` carries normalized query controls. `ProviderResponse`
-contains `ProviderResult`, answers, suggestions, images, and `ProviderReport`.
-Use public constructors and builders because provider types are
-`#[non_exhaustive]`.
+Run with the configuration:
 
-### Results and reports
+```bash
+a3s-search --config search.acl engines
+a3s-search "query" --config search.acl --format json
+```
 
-```rust,ignore
-pub struct SearchResult {
-    pub url: String,
-    pub title: String,
-    pub content: String,
-    pub result_type: ResultType,
-    pub engines: HashSet<String>,
-    pub positions: Vec<u32>,
-    pub score: f64,
-    pub relevance_score: Option<f64>,
-    pub thumbnail: Option<String>,
-    pub published_date: Option<String>,
-    pub favicon: Option<String>,
-    pub images: Vec<SearchImage>,
-    pub full_text: Option<String>,
-    pub query_match_score: Option<f64>,
+Configuration is type-checked:
+
+- provider endpoints require HTTPS, except loopback HTTP used by tests;
+- integral values are range-checked without silent saturation;
+- weights, timeouts, date ranges, domains, and cross-field requirements are
+  validated;
+- duplicate source blocks and a source configured as both engine and provider
+  are rejected;
+- `api_key = null` explicitly forces AnySearch anonymous or Tavily keyless
+  mode;
+- credential debug output is redacted.
+
+See [`SearchConfig`](https://docs.rs/a3s-search/latest/a3s_search/struct.SearchConfig.html),
+[`AnySearchConfig`](https://docs.rs/a3s-search/latest/a3s_search/providers/struct.AnySearchConfig.html),
+and [`TavilyConfig`](https://docs.rs/a3s-search/latest/a3s_search/providers/struct.TavilyConfig.html)
+for the complete typed surface.
+
+## Reliability boundaries
+
+The library exposes composable controls instead of hiding policy in global
+state:
+
+| Control | Boundary |
+| --- | --- |
+| `HealthMonitor` | Compatibility per-`Search` consecutive-failure suspension |
+| `CircuitBreaker` | Shared closed/open/half-open engine state with failure, empty, slow-call, and `Retry-After` policies |
+| `Bulkhead` | Bounded per-engine in-flight work and queue wait |
+| `RetryBudget` | Token bucket that limits retry amplification |
+| `SearchCoalescer` | Bounded, cancellation-safe sharing of identical overlapping requests |
+| `Metrics` | In-memory success/failure counters and p50/p95/p99 latency |
+
+Share compatible controls across long-lived `Search` instances:
+
+```rust,no_run
+use a3s_search::{Bulkhead, CircuitBreaker, Search, SearchCoalescer};
+
+let bulkhead = Bulkhead::default();
+let circuit = CircuitBreaker::default();
+let coalescer = SearchCoalescer::default();
+
+let search = Search::new()
+    .with_bulkhead(bulkhead.clone())
+    .with_circuit_breaker(circuit.clone())
+    .with_request_coalescer(coalescer.clone());
+```
+
+Scope shared state to compatible tenants, credentials, endpoints, proxies,
+safe-search settings, freshness requirements, and ranking policy. The
+coalescer retains only in-flight work; it is not a result cache.
+
+The standalone CLI constructs its controls inside one command invocation.
+Applications that need circuit history across requests should own and reuse
+the library controls in a long-lived runtime.
+
+### Browser rendering
+
+The default `headless` Cargo feature uses the typed renderer from
+[A3S Browser](https://github.com/A3S-Lab/Browser):
+
+| Feature | Behavior |
+| --- | --- |
+| `headless` (default) | Discover installed or previously managed Chrome/Chromium |
+| `lightpanda` | Add Lightpanda as an explicit backend; never selected implicitly |
+| no default features | Remove the browser/CDP dependency stack |
+
+Chrome/Chromium is the native Windows backend. Lightpanda requires WSL2 on a
+Windows host.
+
+Browser owns discovery, process lifecycle, rendering, tab limits, and cleanup.
+Search owns search URLs, wait conditions, HTML validation, retries, and
+search-specific metrics. `BrowserFetcher` applies one total deadline across
+rendering, queueing, backoff, and bounded retries.
+
+Request Lightpanda only in a build that enables it:
+
+```bash
+cargo run --features lightpanda -- "query" --browser lightpanda
+```
+
+### Full text, proxies, and metrics
+
+Native providers may return `full_text` directly. Snippet-only results can be
+enriched through the same `PageFetcher` abstraction:
+
+```rust
+use a3s_search::{
+    enrich_full_text, HttpFetcher, PageFetcher, SearchResults,
+};
+use std::sync::Arc;
+use std::time::Duration;
+
+async fn enrich(results: &mut SearchResults) {
+    let fetcher: Arc<dyn PageFetcher> = Arc::new(HttpFetcher::new());
+    enrich_full_text(results, fetcher, 8, Duration::from_secs(10)).await;
 }
 ```
 
-`SearchResults` exposes `items`, `items_mut`, `suggestions`, `answers`,
-`images`, `errors`, `failures`, `reports`, and `outcomes`, plus canonical
-cross-tier `merge`; `count` and `duration_ms` are public summary fields.
-`EngineOutcome` contains engine/provider identity, a typed terminal state,
-result count, duration, and an optional structured failure. `SearchReport`
-contains engine/provider identity, request ID, total matches, provider timing,
-optional `SearchUsage`, and bounded provider metadata.
+Failed enrichment keeps the original snippet.
 
-### Fetching and browser rendering
+Conventional engines support a static proxy or a rotating `ProxyPool`.
+Provider APIs own separate bounded HTTP clients and intentionally do not
+inherit scraping proxies. The CLI never echoes a potentially
+credential-bearing proxy URL.
 
-```rust,ignore
-#[async_trait]
-pub trait PageFetcher: Send + Sync {
-    async fn fetch(&self, url: &str) -> Result<String>;
-}
-
-pub enum WaitStrategy {
-    Load,
-    NetworkIdle { idle_ms: u64 },
-    Selector { css: String, timeout_ms: u64 },
-    Delay { ms: u64 },
-}
-```
-
-With `headless`, `BrowserFetcher` adapts any
-`a3s_use_browser::PageRenderer`. It supports wait strategy, user agent,
-per-attempt and total timeouts, capped jittered retries, a shared retry budget,
-and metrics. `BrowserPool` owns shared tab concurrency and provides `warm_up`
-and idempotent terminal `shutdown`. Its typed provider choices are discovered,
-managed, or explicit Chrome/Lightpanda executables; managed variants explicitly
-permit A3S Use to install the selected browser.
-
-### Health, proxy, and metrics types
-
-`HealthConfig` exposes the compatibility per-instance failure threshold and
-suspension duration. `CircuitBreakerConfig` controls shared failure and empty
-thresholds, transient/terminal/maximum open durations, recovery backoff, jitter,
-and an optional `CircuitWindowConfig` for recent failure and slow-call rates.
-`BulkheadConfig` controls per-engine in-flight capacity, bounded queue size, and
-queue wait. `RetryBudgetConfig` controls shared capacity, retry cost, and
-success credit. `SearchCoalescerConfig` bounds distinct in-flight request
-identities without retaining completed results; each type exposes a
-point-in-time snapshot.
-`ProxyConfig` contains host, port, protocol, and optional authentication;
-`ProxyPool` supports static or dynamic providers and round-robin or random
-selection. `Metrics` supports recording, snapshots, request counts, success
-rate, and reset. See the preceding proxy and metrics examples for end-to-end
-usage.
-
-## Bundled Skill and release layout
-
-Every platform archive contains:
-
-```text
-a3s-search
-skills/a3s-search/SKILL.md
-skills/a3s-search/agents/openai.yaml
-```
-
-The Skill guides coding agents through provider selection, JSON evidence,
-anonymous/keyless and authenticated modes, ACL, secret handling, and partial
-failures. Homebrew installs the binary under `bin` and the Skill under:
-
-```text
-share/a3s-search/skills/a3s-search
-```
+Attach one `Metrics` registry to `Search`, `HttpFetcher`, or `BrowserFetcher`
+when the host needs request counts, failure classes, and latency percentiles.
 
 ## Development
 
-Run checks from the `a3s-search` repository root:
+Run checks from the Search repository, not from the A3S monorepo root:
 
 ```bash
 cargo fmt --all -- --check
@@ -1044,19 +575,23 @@ scripts/test-release-package.sh
 scripts/test-freeze-crate.sh
 ```
 
-The provider contract tests use loopback mock servers and verify protocol,
-authentication, response adaptation, error sanitization, and CLI evidence.
-Live provider smoke tests are separate because they depend on external service
-availability.
+The test strategy separates deterministic correctness from live availability:
 
-### Reliability stress and live canary
+- loopback provider-contract tests verify protocols, authentication,
+  normalization, and sanitized failures;
+- the checked-in quality corpus verifies ranking and generalization invariants;
+- deterministic fault injection exercises throttle, empty response, recovery,
+  cancellation, concurrency, and resource drainage;
+- a bounded one-pass live canary evaluates a sealed corpus without requiring a
+  24-hour soak.
 
-The deterministic stress test is opt-in and uses only public library contracts.
-It injects rotating API throttling, empty HTTP responses, healthy recovery,
-concurrent duplicate requests, and leader cancellation while checking lazy
-fallback, circuit recovery, bulkhead limits, latency, RSS, file descriptors,
-and complete queue/flight drainage. This is where forced API → HTTP/RSS →
-headless failures are exercised without manufacturing public traffic:
+Run the reproducible ranking gate:
+
+```bash
+cargo test --locked --test quality_eval
+```
+
+Run the opt-in bounded reliability soak:
 
 ```bash
 A3S_SEARCH_SOAK_SECONDS=300 \
@@ -1064,105 +599,38 @@ A3S_SEARCH_SOAK_SECONDS=300 \
   -- --ignored --nocapture --exact
 ```
 
-The live check is a bounded, one-pass canary rather than a duration-based soak.
-It executes every case in a precommitted corpus exactly once, at the slowest
-cadence declared by the opaque provider policies. A corpus must contain at
-least 40 distinct cases. There is no 24-hour requirement and repeated queries
-cannot be counted as additional independent evidence.
+Release jobs package and freeze the exact `.crate` bytes in an unprivileged
+job before any publication step. Release authorization remains separate from
+retrieval quality and is intentionally fail-closed while
+[issue #8](https://github.com/A3S-Lab/Search/issues/8) remains unresolved.
 
-The canary requires an independently built deployment driver, an all-features
-candidate binary, the exact frozen `.crate`, their precommitted SHA-256
-identities, a sealed query corpus, a tier manifest, and a new absolute path for
-the append-only receipt log:
+## Bundled agent Skill
 
-```bash
-A3S_SEARCH_EVALUATED_COMMIT=<full-40-character-commit> \
-A3S_SEARCH_LIVE_CANARY_DRIVER=/secure/search-canary-driver \
-A3S_SEARCH_LIVE_CANARY_DRIVER_SHA256=sha256:<driver-digest> \
-A3S_SEARCH_LIVE_CANARY_CANDIDATE_BIN=/secure/a3s-search \
-A3S_SEARCH_LIVE_CANARY_CANDIDATE_SHA256=sha256:<candidate-digest> \
-A3S_SEARCH_LIVE_CANARY_FROZEN_CRATE=/secure/a3s-search-<version>.crate \
-A3S_SEARCH_LIVE_CANARY_FROZEN_CRATE_SHA256=sha256:<crate-digest> \
-A3S_SEARCH_LIVE_CANARY_QUERY_CORPUS=/secure/search-canary-cases.json \
-A3S_SEARCH_LIVE_CANARY_QUERY_CORPUS_SHA256=sha256:<corpus-digest> \
-A3S_SEARCH_LIVE_CANARY_TIER_MANIFEST=/secure/search-canary-tiers.json \
-A3S_SEARCH_LIVE_CANARY_TIER_MANIFEST_SHA256=sha256:<manifest-digest> \
-A3S_SEARCH_LIVE_CANARY_RECEIPT_LOG=/secure/new-search-canary-receipts.jsonl \
-  cargo test --release --all-features --locked --test soak \
-  sealed_live_tiered_canary_meets_release_floor \
-  -- --ignored --nocapture --exact
+Every platform release archive includes:
+
+```text
+a3s-search
+skills/a3s-search/SKILL.md
+skills/a3s-search/agents/openai.yaml
 ```
 
-All four artifact paths must identify regular non-symlink files. The two sealed
-campaign files are limited to one MiB and bind the same bounded campaign ID.
-The corpus shape is:
-
-```json
-{
-  "version": 1,
-  "campaign_id": "opaque-campaign-id",
-  "queries": [
-    { "id": "opaque-case-id", "query": "...", "language": null }
-  ]
-}
-```
-
-The manifest declares exactly one `api`, `http_rss`, and `headless` capability.
-Their declared order is authoritative and may be browser-first; the verifier
-requires every attempt to execute a lazy prefix of that exact sealed order.
-Deployment profiles and provider scopes are lowercase opaque `sha256:`
-identities; each scope declares its minimum request interval. The driver
-protocol preserves per-tier outcomes, calls, retries, `Retry-After`, and
-process-tree resource samples without putting provider names into the gate.
-
-The canary rejects eager fallback, a missing required tier, terminal receipts
-that suppress an available fallback, retries that do not follow a serial
-retryable failure on the same scope, `Retry-After` or provider-cadence breaches,
-receipt or result-provenance inconsistencies, latency tails, excessive
-second-tier or final-tier escalation, and resource growth. Position-based
-escalation gates remain valid for any sealed transport order. The verifier
-recomputes generic query-match quality after clearing candidate-supplied
-scores. Raw attempt receipts are appended and flushed before evaluation, and
-the final report binds the receipt-log digest. Driver, candidate, frozen crate,
-corpus, and manifest paths are rehashed before and after every attempt and
-again after driver shutdown; any persistent identity change fails the
-campaign.
-
-Tag workflows package the crate again in an unprivileged, credential-free job
-after CI. `scripts/freeze-crate.sh` places the one exact `.crate` and a
-canonical `a3s/search-frozen-crate/v1` identity manifest in the
-`frozen-crate-<version>` workflow artifact. The manifest binds the tag, full
-commit, package name/version, byte length, crate SHA-256, and source manifest
-and lockfile SHA-256 identities. Stable publication remains downstream from
-that job and fail-closed.
-
-The live canary rehashes the frozen crate alongside the driver, candidate,
-corpus, and tier manifest before and after every attempt and after driver
-shutdown. Those path checks assume a trusted driver and controlled,
-non-adversarial artifact storage. They detect accidental or persistent
-replacement but do not prove which bytes were opened between a digest check
-and execution. The external verifier must freeze the evaluated artifacts with
-a read-only mount, content-addressed object, or equivalent descriptor-based
-execution before it can attest the exact bytes.
-
-This repository-side ignored test is useful evidence but cannot authorize its
-own release. Registry publication remains fail-closed for every tag, and stable
-release evidence remains blocked until an external pinned verifier checks the
-exact frozen `.crate` and a trusted uploader can publish those exact bytes
-without executing candidate code. See
-[Search issue #8](https://github.com/A3S-Lab/Search/issues/8). Longer-term
-stability belongs in rolling production SLOs, not a 24-hour release soak.
+The Skill guides coding agents through source selection, structured evidence,
+credential handling, ACL, quality receipts, and partial failures.
 
 ## A3S ecosystem
 
-```text
-a3s-box      - MicroVM sandbox
-a3s-code     - AI coding agent
-a3s-lane     - Queue
-a3s-memory   - Memory
-a3s-search   - Search
-```
+A3S Search is independently usable and also serves higher-level A3S products:
+
+- [A3S](https://github.com/A3S-Lab/a3s) — unified platform and component entry point
+- [A3S Code](https://github.com/A3S-Lab/Code) — governed coding-agent runtime
+- [A3S Browser](https://github.com/A3S-Lab/Browser) — typed browser rendering boundary
+
+## Contributing
+
+Issues and focused pull requests are welcome. Keep runtime ranking and quality
+rules domain-neutral, add regression coverage for changed behavior, and run
+the relevant no-default and all-feature checks before submitting.
 
 ## License
 
-MIT
+[MIT](./LICENSE)
