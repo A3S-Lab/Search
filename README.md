@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="A3S Search routes one query through a quality-gated headless, HTTP and RSS, and native API cascade before returning ranked results, typed failures, and a verifiable receipt">
+  <img src="./assets/readme/hero.svg" width="100%" alt="A3S Search embeds browser, HTTP and RSS, and native API sources behind one typed Rust metasearch boundary">
 </p>
 
 <p align="center">
-  <strong>Extensible web search for Rust, agents, and the command line.</strong>
+  <strong>Embeddable metasearch for Rust applications, agent systems, and the command line.</strong>
 </p>
 
 <p align="center">
@@ -15,11 +15,11 @@
 </p>
 
 <p align="center">
-  <a href="#run-one-search">Quick start</a> ·
+  <a href="#embed-one-search">Quick start</a> ·
   <a href="#why-a3s-search">Why</a> ·
-  <a href="#how-the-cascade-works">Architecture</a> ·
+  <a href="#how-the-engine-works">Architecture</a> ·
   <a href="#retrieval-sources">Sources</a> ·
-  <a href="#use-the-rust-library">Rust API</a> ·
+  <a href="#extend-a3s-search">Extension API</a> ·
   <a href="#configure-with-acl">Configuration</a> ·
   <a href="#reliability-boundaries">Reliability</a> ·
   <a href="#development">Development</a>
@@ -27,16 +27,69 @@
 
 ---
 
-A3S Search is a Rust library and CLI for combining browser-rendered search,
-conventional HTTP/RSS engines, and native search APIs. It executes independent
-sources concurrently, keeps partial failures visible, merges duplicate URLs,
-and returns ranked evidence with a verifiable account of the fallback path.
+A3S Search is an embeddable Rust metasearch engine with a companion CLI.
+Applications compose browser-rendered search, conventional HTTP/RSS engines,
+and native search APIs behind one `Engine` boundary. The runtime executes
+independent sources concurrently, preserves partial failures, merges duplicate
+URLs, and returns ranked results with source provenance.
 
-It is a retrieval component, not a research agent. Query decomposition,
-iterative investigation, source interpretation, and report writing belong to
-the caller.
+The kernel owns retrieval, normalization, aggregation, and reliability. Query
+decomposition, iterative investigation, source interpretation, and report
+writing stay with the caller. It does not crawl or maintain a private web
+index, and no model runtime or research loop is required.
 
-## Run one search
+## Embed one search
+
+Add the library and an async runtime:
+
+```toml
+[dependencies]
+a3s-search = "2"
+tokio = { version = "1", features = ["full"] }
+```
+
+Compose only the sources your application needs:
+
+```rust
+use a3s_search::{
+    engines::{DuckDuckGo, Wikipedia},
+    Search, SearchQuery,
+};
+
+#[tokio::main]
+async fn main() -> a3s_search::Result<()> {
+    let mut search = Search::new();
+    search.add_engine(DuckDuckGo::new());
+    search.add_engine(Wikipedia::new());
+
+    let results = search
+        .search(SearchQuery::new("extensible Rust search"))
+        .await?;
+
+    for result in results.items() {
+        println!("{:.3} {} {:?}", result.score, result.url, result.engines);
+    }
+    Ok(())
+}
+```
+
+`Search` is caller-owned: the host selects sources, ranking policy, timeouts,
+metrics, and any shared reliability controls. The returned `SearchResults`
+keeps useful output and degraded-path diagnostics together:
+
+| Output | What it preserves |
+| --- | --- |
+| `results` | Ranked and deduplicated URLs, snippets, provenance, scores, dates, and optional full text |
+| `answers` / `images` | Provider-native direct answers and query-level images |
+| `reports` | Request IDs, provider timing, total matches, usage, and bounded metadata |
+| `failures` | Typed error kind, transient state, provider identity, and optional retry delay |
+| `outcomes` | Success, empty, failure, timeout, local rejection, or circuit-open state for every selected engine |
+
+When an application adds a caller-defined `SearchCascade`,
+`SearchCascadeOutcomeV1` also binds the query, results, tier decisions, and
+quality state into a verifiable receipt.
+
+### Try the companion CLI
 
 Install the latest published CLI:
 
@@ -48,40 +101,23 @@ brew install A3S-Lab/tap/a3s-search
 ```
 
 To evaluate the unreleased behavior on `main`, install directly from the
-repository instead:
+repository:
 
 ```bash
 cargo install --git https://github.com/A3S-Lab/Search --locked
 ```
 
-Then run the default quality-gated cascade:
+Run the CLI's default quality-gated profile:
 
 ```bash
 a3s-search "Rust async runtime guidance" --format json --limit 10
 ```
 
-On current `main`, the JSON result keeps both useful evidence and
-degraded-path diagnostics:
-
-| Output | What it preserves |
-| --- | --- |
-| `results` | Ranked and deduplicated URLs, snippets, provenance, scores, dates, and optional full text |
-| `answers` / `images` | Provider-native direct answers and query-level images |
-| `reports` | Request IDs, provider timing, total matches, usage, and bounded metadata |
-| `failures` | Typed error kind, transient state, provider identity, and optional retry delay |
-| `outcomes` | Success, empty, failure, timeout, local rejection, or circuit-open state for every selected engine |
-| `cascade_receipt` | Configured tiers, executed prefix, final quality, and whether the plan was exhausted below the floor |
-| `cascade_receipt_binding` | Domain-separated SHA-256 identity for the complete receipt |
-
-Inspect available engines and native-provider readiness:
+Inspect source readiness or select an exact source set:
 
 ```bash
 a3s-search engines
-```
 
-Use an exact source set when the task requires it:
-
-```bash
 a3s-search "Rust async runtime guidance" \
   --engines ddg,wiki,anysearch,tavily \
   --language en-US \
@@ -101,56 +137,24 @@ results; provider-side result limits belong in ACL.
 
 | Need | Mechanism |
 | --- | --- |
+| One search boundary inside your application | Caller-owned `Search`, typed queries, and structured results |
 | More than one fragile endpoint | Browser, HTTP/RSS, and API transports behind one `Engine` contract |
-| Bounded fallback cost | A shared deadline and a quality decision after every lazily executed tier |
 | Results that remain explainable | Per-engine provenance, normalized rank signals, typed failures, and request reports |
 | Independent evidence without duplicate noise | Canonical URL merging and weighted reciprocal-rank fusion |
-| Safe integration into long-lived agents | Shared circuits, bulkheads, retry budgets, and in-flight request coalescing |
+| Safe integration into long-lived runtimes | Shared circuits, bulkheads, retry budgets, and in-flight request coalescing |
+| Caller-owned routing and fallback | Direct source selection or a lazily executed `SearchCascade` |
 | Provider extensibility | A provider-neutral `SearchProvider` protocol adapted through `ProviderEngine` |
 | Configuration without secret leakage | Typed ACL and redacted environment credential sources |
 
 The runtime ranker contains no query-topic, host, publisher, named-entity, or
-language exceptions. Domain-specific research policy stays above the search
-kernel.
+language exceptions. Application-specific policy stays above the search
+kernel, and the library does not impose the CLI's source order.
 
-## How the cascade works
+## How the engine works
 
-Without an explicit source list or ACL source selection, the CLI uses this
-browser-first plan:
-
-```text
-SearchQuery
-    │
-    ├─ 01  headless      Google through Chrome/Chromium
-    │       └─ quality met? stop
-    │
-    ├─ 02  HTTP / RSS    DuckDuckGo + Brave + Bing + Wikipedia
-    │       └─ quality met? stop
-    │
-    └─ 03  native API    AnySearch + Tavily
-            └─ finish with results + cascade receipt
-```
-
-The important boundaries are:
-
-1. The first headless attempt is capped at five seconds.
-2. All tiers share one end-to-end deadline, 20 seconds by default.
-3. Engines inside one tier run concurrently with isolated timeouts.
-4. One source failure never discards successful results from another source.
-5. A tier is skipped once the combined result set satisfies the generic
-   quality floor.
-6. Explicit CLI sources are exact. Enabled ACL sources replace the built-in
-   plan when source blocks are present.
-
-Build with `--no-default-features` when the host must not compile or run a
-browser. The built-in plan then starts with HTTP/RSS and can continue to native
-APIs.
-
-The library does not impose the CLI order. Callers can compose
-`SearchCascade`, name their own tiers, set their own quality floor, and create
-expensive browser resources only inside `run_tier_if_needed`.
-
-### Core layers
+The host selects sources and owns the `Search` instance. Every source crosses
+the same engine boundary before the runtime fans out work, isolates failures,
+normalizes output, and merges ranked results.
 
 ```text
 AnySearch ─┐
@@ -175,6 +179,46 @@ Browser engines ─ PageFetcher ─ Engine ───────┘
   fusion.
 - `SearchCascade` owns generic quality decisions and a caller-declared lazy
   tier plan.
+
+A basic embedded search does not require a cascade. Applications can add
+engines directly and receive one `SearchResults` container. Add
+`SearchCascade` only when the host needs ordered fallback, quality-based early
+stop, and a receipt of the executed prefix.
+
+### CLI quality-gated profile
+
+The companion CLI supplies one opinionated profile for interactive use. Without
+an explicit source list or ACL source selection, it uses this browser-first
+plan:
+
+```text
+SearchQuery
+    │
+    ├─ 01  headless      Google through Chrome/Chromium
+    │       └─ quality met? stop
+    │
+    ├─ 02  HTTP / RSS    DuckDuckGo + Brave + Bing + Wikipedia
+    │       └─ quality met? stop
+    │
+    └─ 03  native API    AnySearch + Tavily
+            └─ finish with results + cascade receipt
+```
+
+The CLI bounds that profile:
+
+1. The first headless attempt is capped at five seconds.
+2. All tiers share one end-to-end deadline, 20 seconds by default.
+3. Engines inside one tier run concurrently with isolated timeouts.
+4. One source failure never discards successful results from another source.
+5. A tier is skipped once the combined result set satisfies the generic
+   quality floor.
+6. Explicit CLI sources are exact. Enabled ACL sources replace the built-in
+   plan when source blocks are present.
+
+Build with `--no-default-features` when a host must not compile or run a
+browser. The CLI profile then starts with HTTP/RSS and can continue to native
+APIs. Library callers can instead name their own tiers, set their own quality
+floor, and create expensive resources only inside `run_tier_if_needed`.
 
 See the complete public surface on [docs.rs](https://docs.rs/a3s-search).
 
@@ -293,7 +337,7 @@ window against these generic signals:
 | Mean query match | At least `0.30` |
 | Cross-engine consensus | Observable, not required by default |
 
-Research callers can require stronger consensus or a different floor. The
+Applications can require stronger consensus or a different floor. The
 built-in floor deliberately does not claim to measure publisher authority,
 factual correctness, recency, viewpoint coverage, or completeness.
 
@@ -319,47 +363,17 @@ trusted expected digest. Structural validity and a digest do not prove who ran
 the search or that the plan was committed before execution; authenticity still
 requires a trusted signature, digest log, or equivalent authority.
 
-## Use the Rust library
+## Extend A3S Search
 
-Add the current major release:
+The library exposes two extension boundaries:
 
-```toml
-[dependencies]
-a3s-search = "2"
-tokio = { version = "1", features = ["full"] }
-```
+| Extension | Use it for | Integration |
+| --- | --- | --- |
+| `Engine` | A source that returns ordinary web or media results | Add it directly to `Search` |
+| `SearchProvider` | A typed API with capabilities, readiness, rich output, and provider reports | Adapt it through `ProviderEngine` |
 
-Run multiple engines under one orchestration contract:
-
-```rust
-use a3s_search::{
-    engines::{DuckDuckGo, Wikipedia},
-    Search, SearchQuery,
-};
-
-#[tokio::main]
-async fn main() -> a3s_search::Result<()> {
-    let mut search = Search::new();
-    search.add_engine(DuckDuckGo::new());
-    search.add_engine(Wikipedia::new());
-
-    let results = search
-        .search(SearchQuery::new("extensible Rust search"))
-        .await?;
-
-    for result in results.items() {
-        println!(
-            "{:.3} {} {:?}",
-            result.score,
-            result.url,
-            result.engines
-        );
-    }
-    Ok(())
-}
-```
-
-Provider APIs use the same `Search` orchestration:
+Built-in native providers use the same `Search` runtime as conventional
+engines:
 
 ```rust
 use a3s_search::providers::BuiltinProvider;
@@ -379,7 +393,7 @@ async fn main() -> a3s_search::Result<()> {
 }
 ```
 
-### Add a provider
+### Add a native provider
 
 Implement the provider-neutral protocol and wrap it in `ProviderEngine`:
 
@@ -624,6 +638,7 @@ A3S Search is independently usable and also serves higher-level A3S products:
 - [A3S](https://github.com/A3S-Lab/a3s) — unified platform and component entry point
 - [A3S Code](https://github.com/A3S-Lab/Code) — governed coding-agent runtime
 - [A3S Browser](https://github.com/A3S-Lab/Browser) — typed browser rendering boundary
+- [A3S Science](https://github.com/A3S-Lab/Science) — research workflows built above the retrieval kernel
 
 ## Contributing
 
