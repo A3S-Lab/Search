@@ -304,7 +304,8 @@ jobs:
   # ───────────────────────────────────────────────
   publish-crate:
     name: Crate publication evidence (blocked)
-    needs: commercial-release-gate
+    if: needs.classify.outputs.stable == 'true'
+    needs: [classify, commercial-release-gate]
     runs-on: ubuntu-latest
     steps:
       - name: Refuse credentialed candidate publication
@@ -321,7 +322,19 @@ jobs:
   # ───────────────────────────────────────────────
   github-release:
     name: GitHub Release
-    needs: [classify, publish-crate, build-cli]
+    if: |
+      always() &&
+      !cancelled() &&
+      needs.classify.result == 'success' &&
+      needs.commercial-release-gate.result == 'success' &&
+      needs.build-cli.result == 'success' &&
+      (
+        (needs.classify.outputs.stable == 'true' &&
+          needs.publish-crate.result == 'success') ||
+        (needs.classify.outputs.stable == 'false' &&
+          needs.publish-crate.result == 'skipped')
+      )
+    needs: [classify, commercial-release-gate, publish-crate, build-cli]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -436,7 +449,7 @@ jobs:
 
           cat > homebrew-tap/Formula/a3s-search.rb << EOF
           class A3sSearch < Formula
-            desc "Extensible web search CLI with native AnySearch and Tavily providers"
+            desc "Embeddable metasearch CLI with browser, HTTP/RSS, and native API sources"
             homepage "https://github.com/A3S-Lab/Search"
             version "${VERSION}"
             license "MIT"

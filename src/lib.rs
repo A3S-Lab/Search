@@ -1,7 +1,7 @@
 //! # a3s-search
 //!
-//! An extensible web search library with conventional engines and native
-//! third-party provider APIs.
+//! An embeddable metasearch library with browser, conventional HTTP/RSS, and
+//! native third-party provider sources.
 //!
 //! This library provides a framework for aggregating search results from multiple
 //! search engines, with support for:

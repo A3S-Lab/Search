@@ -96,9 +96,31 @@ fn every_release_write_path_is_transitively_blocked_by_the_aggregate_gate() {
     assert!(aggregate.contains("needs: [classify, ci, freeze-crate, commercial-search-gates]"));
     assert!(aggregate.contains("if: always() && !cancelled()"));
     assert!(build.contains("needs: commercial-release-gate"));
-    assert!(publish.contains("needs: commercial-release-gate"));
-    assert!(github.contains("needs: [classify, publish-crate, build-cli]"));
+    assert!(publish.contains("if: needs.classify.outputs.stable == 'true'"));
+    assert!(publish.contains("needs: [classify, commercial-release-gate]"));
+    assert!(github.contains("needs: [classify, commercial-release-gate, publish-crate, build-cli]"));
+    assert!(github.contains("if: |"));
+    assert!(github.contains("always() &&"));
+    assert!(github.contains("!cancelled() &&"));
+    assert!(github.contains("needs.commercial-release-gate.result == 'success'"));
+    assert!(github.contains("needs.build-cli.result == 'success'"));
+    assert!(github.contains("needs.publish-crate.result == 'success'"));
+    assert!(github.contains("needs.publish-crate.result == 'skipped'"));
     assert!(homebrew.contains("needs: [classify, github-release]"));
+    assert!(homebrew.contains("needs.classify.outputs.stable == 'true'"));
+}
+
+#[test]
+fn prerelease_can_publish_github_binaries_without_registry_or_homebrew() {
+    let workflow = include_str!("../.github/workflows/release.yml");
+    let publish = job_body(workflow, "publish-crate");
+    let github = job_body(workflow, "github-release");
+    let homebrew = job_body(workflow, "update-homebrew");
+
+    assert!(publish.contains("if: needs.classify.outputs.stable == 'true'"));
+    assert!(github.contains("needs.classify.outputs.stable == 'false'"));
+    assert!(github.contains("needs.publish-crate.result == 'skipped'"));
+    assert!(github.contains("PRERELEASE_FLAG=\"--prerelease\""));
     assert!(homebrew.contains("needs.classify.outputs.stable == 'true'"));
 }
 
@@ -146,6 +168,7 @@ fn candidate_checkouts_bind_to_the_trigger_commit_without_persisted_credentials(
 fn crate_publication_is_fail_closed_without_candidate_code_or_registry_secrets() {
     let workflow = include_str!("../.github/workflows/release.yml");
     let publish = job_body(workflow, "publish-crate");
+    assert!(publish.contains("if: needs.classify.outputs.stable == 'true'"));
     assert!(publish.contains("https://github.com/A3S-Lab/Search/issues/8"));
     assert!(publish.contains("exit 1"));
     for forbidden in [
