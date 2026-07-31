@@ -27,7 +27,7 @@ fn stable_release_uses_a_pinned_independent_verifier_in_a_protected_environment(
     assert!(verifier.contains("environment: stable-release"));
     assert!(verifier.contains("python-version: \"3.12.12\""));
     assert!(
-        verifier.contains("uses: A3S-Lab/SearchVerifier@dff7ff44012d685187bbb877e473aaf95c4995be")
+        verifier.contains("uses: A3S-Lab/SearchVerifier@93f8e5db93b3b68a886f90d56395883e98fdf2e0")
     );
     assert!(verifier.contains("name: frozen-crate-${{ needs.classify.outputs.version }}"));
     assert!(verifier.contains("evaluated-commit: ${{ github.sha }}"));
@@ -201,7 +201,7 @@ fn crate_publication_uses_the_same_pinned_exact_byte_uploader_without_candidate_
     assert!(publish.contains("name: frozen-crate-${{ needs.classify.outputs.version }}"));
     assert!(publish.contains("name: release-evidence-${{ needs.classify.outputs.version }}"));
     assert!(publish
-        .contains("uses: A3S-Lab/SearchVerifier/publish@dff7ff44012d685187bbb877e473aaf95c4995be"));
+        .contains("uses: A3S-Lab/SearchVerifier/publish@93f8e5db93b3b68a886f90d56395883e98fdf2e0"));
     assert!(
         publish.contains("expected-crate-sha256: ${{ needs.freeze-crate.outputs.crate_sha256 }}")
     );
@@ -230,7 +230,7 @@ fn crate_publication_uses_the_same_pinned_exact_byte_uploader_without_candidate_
 #[test]
 fn verifier_and_uploader_are_pinned_to_the_same_immutable_revision() {
     let workflow = include_str!("../.github/workflows/release.yml");
-    let revision = "dff7ff44012d685187bbb877e473aaf95c4995be";
+    let revision = "93f8e5db93b3b68a886f90d56395883e98fdf2e0";
     let verifier = job_body(workflow, "commercial-search-gates");
     let publish = job_body(workflow, "publish-crate");
 
