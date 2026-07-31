@@ -134,7 +134,7 @@ headless retries from zero through ten. `--limit` controls displayed results;
 provider-side result limits belong in ACL.
 
 > [!NOTE]
-> `main` currently declares version `2.2.1`. Every stable tag remains
+> `main` currently declares version `2.2.2`. Every stable tag remains
 > fail-closed until the protected sealed campaign authorizes its exact frozen
 > crate, as tracked by [Search issue #8](https://github.com/A3S-Lab/Search/issues/8).
 
