@@ -24,6 +24,7 @@ mod browser;
 mod plan;
 
 use browser::execute_headless_tier;
+pub(crate) use browser::HeadlessBrowser;
 use plan::EngineTier;
 pub(crate) use plan::EngineTierPlan;
 
@@ -37,6 +38,7 @@ pub(crate) struct CascadeRequest<'a> {
     pub timeout: Duration,
     pub proxy: Option<&'a str>,
     pub config: Option<&'a SearchConfig>,
+    pub browser: HeadlessBrowser,
 }
 
 #[derive(Clone, Default)]
@@ -346,6 +348,7 @@ mod tests {
                 timeout: Duration::MAX,
                 proxy: None,
                 config: None,
+                browser: HeadlessBrowser::Chrome,
             },
         )
         .await

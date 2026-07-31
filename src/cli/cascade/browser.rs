@@ -4,6 +4,26 @@ use std::time::Instant;
 
 use a3s_search::{EngineFailure, SearchResults};
 
+/// Browser backend used by the CLI headless tier.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum HeadlessBrowser {
+    /// Installed Chrome, Chromium, or a previously managed Chrome runtime.
+    #[default]
+    Chrome,
+    /// Explicit Lightpanda runtime.
+    Lightpanda,
+}
+
+#[cfg(not(feature = "headless"))]
+impl HeadlessBrowser {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Chrome => "chrome",
+            Self::Lightpanda => "lightpanda",
+        }
+    }
+}
+
 #[cfg(feature = "headless")]
 use std::{sync::Arc, time::Duration};
 
@@ -12,13 +32,10 @@ use futures::future::join_all;
 
 #[cfg(feature = "headless")]
 use a3s_search::{
-    a3s_use_browser::{BrowserPool, BrowserPoolConfig, PageRenderer},
+    a3s_use_browser::{BrowserPool, BrowserPoolConfig, BrowserProvider, PageRenderer},
     engines::{Baidu, Google},
     BrowserFetcher, Engine, PageFetcher, RetryBudget, WaitStrategy,
 };
-
-#[cfg(all(feature = "headless", feature = "lightpanda"))]
-use a3s_search::a3s_use_browser::{BrowserBackend, BrowserProvider};
 
 #[cfg(feature = "headless")]
 use super::tier_timeout;
@@ -40,11 +57,15 @@ pub(super) async fn execute_headless_tier(
         return deadline_exhausted("headless");
     }
 
-    let pool_config = browser_pool_config(request.proxy, deadline).await;
-    #[cfg(feature = "lightpanda")]
-    let isolate_pools = pool_config.provider.backend() == BrowserBackend::Lightpanda;
-    #[cfg(not(feature = "lightpanda"))]
-    let isolate_pools = false;
+    let pool_config = match browser_pool_config(request.proxy, request.browser) {
+        Ok(config) => config,
+        Err(failure) => {
+            let mut results = SearchResults::new();
+            results.add_failure(failure);
+            return results;
+        }
+    };
+    let isolate_pools = request.browser == HeadlessBrowser::Lightpanda;
     let shared_pool = (!isolate_pools).then(|| Arc::new(BrowserPool::new(pool_config.clone())));
     let mut cleanup = BrowserPoolCleanup::default();
     if let Some(pool) = shared_pool.as_ref() {
@@ -71,10 +92,14 @@ pub(super) async fn execute_headless_tier(
             pool
         });
         let renderer: Arc<dyn PageRenderer> = pool;
-        let fetcher = || -> Arc<dyn PageFetcher> {
+        let fetcher = |selector: &str| -> Arc<dyn PageFetcher> {
             Arc::new(
                 BrowserFetcher::from_renderer(Arc::clone(&renderer))
-                    .with_wait(WaitStrategy::Load)
+                    .with_wait(headless_wait_strategy(
+                        request.browser,
+                        selector,
+                        render_budget,
+                    ))
                     .with_timeout(render_budget)
                     .with_total_timeout(render_budget)
                     .with_retries(1, 100)
@@ -83,13 +108,13 @@ pub(super) async fn execute_headless_tier(
         };
         match shortcut.as_str() {
             "g" => {
-                let engine = Google::new(fetcher());
+                let engine = Google::new(fetcher("#search"));
                 let engine_config =
                     configured_engine_config(request.config, engine.config().clone());
                 search.add_engine(engine.with_config(engine_config));
             }
             "baidu" => {
-                let engine = Baidu::new(fetcher());
+                let engine = Baidu::new(fetcher("#content_left"));
                 let engine_config =
                     configured_engine_config(request.config, engine.config().clone());
                 search.add_engine(engine.with_config(engine_config));
@@ -117,7 +142,7 @@ pub(super) async fn execute_headless_tier(
 
 #[cfg(not(feature = "headless"))]
 pub(super) async fn execute_headless_tier(
-    _request: &CascadeRequest<'_>,
+    request: &CascadeRequest<'_>,
     _controls: &SharedControls,
     shortcuts: &[String],
     _deadline: Instant,
@@ -128,56 +153,58 @@ pub(super) async fn execute_headless_tier(
         results.add_failure(EngineFailure::new(
             shortcut,
             "headless_unavailable",
-            "rebuild a3s-search with the headless feature",
+            format!(
+                "the {} backend requires a3s-search to be built with the headless feature",
+                request.browser.as_str()
+            ),
         ));
     }
     results
 }
 
 #[cfg(feature = "headless")]
-async fn browser_pool_config(proxy: Option<&str>, deadline: Instant) -> BrowserPoolConfig {
-    let config = BrowserPoolConfig {
-        proxy_url: proxy.map(str::to_string),
-        ..BrowserPoolConfig::default()
+fn browser_pool_config(
+    proxy: Option<&str>,
+    browser: HeadlessBrowser,
+) -> Result<BrowserPoolConfig, EngineFailure> {
+    let provider = match browser {
+        HeadlessBrowser::Chrome => BrowserProvider::DiscoveredChrome,
+        HeadlessBrowser::Lightpanda => lightpanda_provider()?,
     };
-
-    #[cfg(feature = "lightpanda")]
-    {
-        let fallback = config.clone();
-        let detection = tokio::task::spawn_blocking(move || detect_browser_pool_config(config));
-        match tokio::time::timeout(
-            deadline.saturating_duration_since(Instant::now()),
-            detection,
-        )
-        .await
-        {
-            Ok(Ok(config)) => config,
-            Ok(Err(_)) | Err(_) => fallback,
-        }
-    }
-
-    #[cfg(not(feature = "lightpanda"))]
-    {
-        config
-    }
+    Ok(BrowserPoolConfig {
+        proxy_url: proxy.map(str::to_string),
+        provider,
+        ..BrowserPoolConfig::default()
+    })
 }
 
 #[cfg(all(feature = "headless", feature = "lightpanda"))]
-fn detect_browser_pool_config(mut config: BrowserPoolConfig) -> BrowserPoolConfig {
-    use a3s_search::a3s_use_browser::{browser_statuses, ManagedBrowser};
+fn lightpanda_provider() -> Result<BrowserProvider, EngineFailure> {
+    Ok(BrowserProvider::DiscoveredLightpanda)
+}
 
-    if let Some(status) = browser_statuses()
-        .into_iter()
-        .find(|status| status.available && status.path.is_some())
-    {
-        if let Some(path) = status.path {
-            config.provider = match status.browser {
-                ManagedBrowser::Chrome => BrowserProvider::ChromeExecutable(path),
-                ManagedBrowser::Lightpanda => BrowserProvider::LightpandaExecutable(path),
-            };
-        }
+#[cfg(all(feature = "headless", not(feature = "lightpanda")))]
+fn lightpanda_provider() -> Result<BrowserProvider, EngineFailure> {
+    Err(EngineFailure::new(
+        "lightpanda",
+        "headless_backend_unavailable",
+        "Lightpanda is an explicit optional backend; rebuild with the lightpanda Cargo feature",
+    ))
+}
+
+#[cfg(feature = "headless")]
+fn headless_wait_strategy(
+    browser: HeadlessBrowser,
+    selector: &str,
+    timeout: Duration,
+) -> WaitStrategy {
+    match browser {
+        HeadlessBrowser::Chrome => WaitStrategy::Selector {
+            css: selector.to_string(),
+            timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+        },
+        HeadlessBrowser::Lightpanda => WaitStrategy::Load,
     }
-    config
 }
 
 #[cfg(feature = "headless")]
@@ -218,5 +245,71 @@ impl Drop for BrowserPoolCleanup {
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_browser_default_is_chrome() {
+        assert_eq!(HeadlessBrowser::default(), HeadlessBrowser::Chrome);
+    }
+
+    #[cfg(feature = "headless")]
+    #[test]
+    fn default_pool_is_pinned_to_discovered_chrome() {
+        let config = browser_pool_config(Some("http://127.0.0.1:8080"), HeadlessBrowser::default())
+            .expect("Chrome pool configuration");
+
+        assert!(matches!(config.provider, BrowserProvider::DiscoveredChrome));
+        assert_eq!(config.proxy_url.as_deref(), Some("http://127.0.0.1:8080"));
+    }
+
+    #[cfg(feature = "headless")]
+    #[test]
+    fn chrome_waits_for_search_results_but_lightpanda_uses_load() {
+        let chrome = headless_wait_strategy(
+            HeadlessBrowser::Chrome,
+            "#search",
+            Duration::from_millis(1_500),
+        );
+        assert!(matches!(
+            chrome,
+            WaitStrategy::Selector {
+                css,
+                timeout_ms: 1_500
+            } if css == "#search"
+        ));
+        assert!(matches!(
+            headless_wait_strategy(
+                HeadlessBrowser::Lightpanda,
+                "#search",
+                Duration::from_secs(1)
+            ),
+            WaitStrategy::Load
+        ));
+    }
+
+    #[cfg(all(feature = "headless", not(feature = "lightpanda")))]
+    #[test]
+    fn lightpanda_requires_explicit_cargo_feature() {
+        let failure = browser_pool_config(None, HeadlessBrowser::Lightpanda)
+            .expect_err("Lightpanda must not be implicit in a default build");
+
+        assert_eq!(failure.kind, "headless_backend_unavailable");
+    }
+
+    #[cfg(all(feature = "headless", feature = "lightpanda"))]
+    #[test]
+    fn explicit_lightpanda_selection_uses_lightpanda_provider() {
+        let config = browser_pool_config(None, HeadlessBrowser::Lightpanda)
+            .expect("compiled Lightpanda pool configuration");
+
+        assert!(matches!(
+            config.provider,
+            BrowserProvider::DiscoveredLightpanda
+        ));
     }
 }
