@@ -37,6 +37,27 @@ impl SearchQuality {
     /// Evaluates a result set against a query without publisher, topic, or
     /// language-specific rules.
     pub fn evaluate(query: &str, results: &SearchResults, alignment_threshold: f64) -> Self {
+        Self::evaluate_results(query, results.items().iter(), alignment_threshold)
+    }
+
+    fn evaluate_ranked_head(
+        query: &str,
+        results: &SearchResults,
+        alignment_threshold: f64,
+        result_limit: usize,
+    ) -> Self {
+        Self::evaluate_results(
+            query,
+            results.items().iter().take(result_limit),
+            alignment_threshold,
+        )
+    }
+
+    fn evaluate_results<'a>(
+        query: &str,
+        results: impl IntoIterator<Item = &'a SearchResult>,
+        alignment_threshold: f64,
+    ) -> Self {
         let alignment_threshold = normalized_threshold(alignment_threshold);
         let mut hosts = HashSet::new();
         let mut engines = HashSet::new();
@@ -45,7 +66,7 @@ impl SearchQuality {
         let mut aligned_result_count = 0usize;
         let mut alignment_total = 0.0;
 
-        for result in results.items() {
+        for result in results {
             let Ok(url) = url::Url::parse(result.url.trim()) else {
                 continue;
             };
@@ -120,6 +141,20 @@ impl SearchQualityFloor {
             min_query_match: 0.35,
             min_mean_query_match: 0.30,
         }
+    }
+
+    /// Evaluates the smallest ranked result prefix that could satisfy this
+    /// floor. Provider tail rows outside that caller-visible evidence window
+    /// cannot force an otherwise sufficient cascade to run another tier, and
+    /// stronger rows below a weak head cannot be cherry-picked into a pass.
+    pub fn evaluate(&self, query: &str, results: &SearchResults) -> SearchQuality {
+        let result_limit = self
+            .min_usable_results
+            .max(self.min_unique_hosts)
+            .max(self.min_contributing_engines)
+            .max(self.min_aligned_results)
+            .max(self.min_consensus_results);
+        SearchQuality::evaluate_ranked_head(query, results, self.min_query_match, result_limit)
     }
 
     /// Returns whether the observed quality satisfies this floor.
@@ -224,7 +259,7 @@ impl SearchCascade {
 
     /// Returns the quality of all tiers merged so far.
     pub fn quality(&self) -> SearchQuality {
-        SearchQuality::evaluate(&self.query.query, &self.results, self.floor.min_query_match)
+        self.floor.evaluate(&self.query.query, &self.results)
     }
 
     /// Returns whether a lower tier is still required.
@@ -251,28 +286,32 @@ impl SearchCascade {
 /// Measures how much of a query is represented by a result without topic,
 /// publisher, or language-specific rules.
 ///
-/// Multi-term queries use length-weighted term coverage so one generic word
-/// cannot satisfy a longer request. Queries that do not expose multiple word
-/// boundaries use normalized Unicode character n-grams. In both cases visible
-/// title and snippet text drive alignment. The URL is only a weak auxiliary
-/// signal, so a query-shaped path cannot substitute for provider-visible
-/// result text.
+/// Multi-term queries combine length-weighted exact-unit coverage with
+/// normalized Unicode character n-grams so one generic word cannot satisfy a
+/// longer request while partial unsegmented or inflected evidence remains
+/// observable. In all cases visible title and snippet text drive alignment.
+/// The URL is only a weak auxiliary signal, so a query-shaped path cannot
+/// substitute for provider-visible result text.
 pub fn query_match_score(query: &str, result: &SearchResult) -> f64 {
     const TITLE_WEIGHT: f64 = 0.50;
     const SNIPPET_WEIGHT: f64 = 0.45;
     const URL_WEIGHT: f64 = 1.0 - TITLE_WEIGHT - SNIPPET_WEIGHT;
 
     let query_units = normalized_query_units(query);
-    let query_characters = normalized_characters(query);
+    let query_characters = query_units
+        .iter()
+        .flat_map(|unit| unit.iter().copied())
+        .collect::<Vec<_>>();
     if query_characters.is_empty() {
         return 0.0;
     }
 
     let field_score = |visible: &str| {
+        let character_score = character_gram_coverage(&query_characters, visible);
         if query_units.len() > 1 {
-            query_unit_coverage(&query_units, visible)
+            query_unit_coverage(&query_units, visible).max(character_score)
         } else {
-            character_gram_coverage(&query_characters, visible)
+            character_score
         }
     };
     let title_score = field_score(&result.title);

@@ -81,7 +81,7 @@ a3s-acl = "0.2"
 
 # Typed rendering supplied by the independent A3S Browser repository.
 # Search never invokes the A3S Use facade, Browser driver, or MCP surface.
-a3s-use-browser = { version = "=0.3.0", git = "https://github.com/A3S-Lab/Browser", rev = "1830c7b6896b0a38637eba2b61a386bf8a36eada", optional = true }
+a3s-use-browser = { version = "=0.3.2", git = "https://github.com/A3S-Lab/Browser", rev = "a4a270f9ca335ceee60c5d9e086ae05005fb7abf", optional = true }
 
 # Self-update
 a3s-updater = "0.2"

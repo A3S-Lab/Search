@@ -41,6 +41,45 @@ fn query_alignment_is_domain_and_language_neutral() {
 }
 
 #[test]
+fn partial_character_evidence_aligns_unsegmented_multi_clause_queries() {
+    let query = "跨境交通运行表现 官方统计";
+    let relevant = result(
+        "https://evidence.example/transport",
+        "跨境交通运行年度统计",
+        "公共机构发布跨境交通运行表现数据",
+    );
+    let noise = result(
+        "https://noise.example/dining",
+        "城市餐饮年度榜单",
+        "介绍本地餐厅和季节菜单",
+    );
+
+    let relevant_score = query_match_score(query, &relevant);
+    assert!(relevant_score >= 0.35, "observed {relevant_score}");
+    assert!(relevant_score > query_match_score(query, &noise));
+}
+
+#[test]
+fn character_evidence_recovers_inflected_terms_in_long_questions() {
+    let query =
+        "What evidence explains why coastal barriers failed while inland defenses survived?";
+    let relevant = result(
+        "https://evidence.example/defenses",
+        "Why coastal barriers fail while inland defenses survive",
+        "Evidence explaining the different outcomes and their limits.",
+    );
+    let noise = result(
+        "https://noise.example/coast",
+        "Coastal travel guide",
+        "Restaurants, hotels, and seasonal events.",
+    );
+
+    let relevant_score = query_match_score(query, &relevant);
+    assert!(relevant_score >= 0.35, "observed {relevant_score}");
+    assert!(relevant_score > query_match_score(query, &noise));
+}
+
+#[test]
 fn multi_term_alignment_rejects_generic_word_and_boilerplate_matches() {
     let query = "global renewable energy outlook IEA IRENA World Bank policy reports";
     let generic = result(
@@ -126,25 +165,115 @@ fn default_floor_rejects_partial_capacity_and_weak_set_averages() {
 }
 
 #[test]
-fn repeated_query_terms_do_not_inflate_alignment() {
-    let once = query_match_score(
-        "distributed tracing sampling specification",
-        &result(
-            "https://example.test/tracing",
-            "Distributed tracing specification",
-            "Sampling semantics",
-        ),
-    );
-    let repeated = query_match_score(
-        "distributed distributed tracing sampling specification",
-        &result(
-            "https://example.test/tracing",
-            "Distributed tracing specification",
-            "Sampling semantics",
-        ),
-    );
+fn quality_floor_evaluates_the_ranked_head_without_cherry_picking_the_tail() {
+    let query = "distributed tracing sampling specification";
+    let floor = SearchQualityFloor::for_limit(3);
+    let mut strong_head = SearchResults::new();
+    for index in 0..3 {
+        strong_head.add_result(
+            result(
+                &format!("https://evidence-{index}.example/specification"),
+                "Distributed tracing sampling specification",
+                "Normative propagation and sampling requirements",
+            )
+            .with_engine("opaque-source", index + 1),
+        );
+    }
+    for index in 0..12 {
+        strong_head.add_result(
+            result(
+                &format!("https://tail-{index}.example/index"),
+                "General technology index",
+                "Unrelated directory entry",
+            )
+            .with_engine("opaque-source", index + 4),
+        );
+    }
 
-    assert_eq!(once, repeated);
+    let all_results = SearchQuality::evaluate(query, &strong_head, floor.min_query_match);
+    assert!(all_results.mean_query_match < floor.min_mean_query_match);
+    let head_quality = floor.evaluate(query, &strong_head);
+    assert_eq!(head_quality.usable_result_count, 3);
+    assert!(floor.is_met(&head_quality));
+
+    let mut weak_head = SearchResults::new();
+    for index in 0..3 {
+        weak_head.add_result(
+            result(
+                &format!("https://noise-{index}.example/index"),
+                "General technology index",
+                "Unrelated directory entry",
+            )
+            .with_engine("opaque-source", index + 1),
+        );
+    }
+    for index in 0..3 {
+        weak_head.add_result(
+            result(
+                &format!("https://later-{index}.example/specification"),
+                "Distributed tracing sampling specification",
+                "Normative propagation and sampling requirements",
+            )
+            .with_engine("opaque-source", index + 4),
+        );
+    }
+
+    assert!(!floor.is_met(&floor.evaluate(query, &weak_head)));
+}
+
+#[test]
+fn quality_floor_head_accounts_for_contributing_engine_requirement() {
+    let query = "distributed tracing sampling specification";
+    let mut floor = SearchQualityFloor::for_limit(1);
+    floor.min_contributing_engines = 3;
+
+    let mut results = SearchResults::new();
+    for index in 0..3 {
+        results.add_result(
+            result(
+                &format!("https://evidence-{index}.example/specification"),
+                "Distributed tracing sampling specification",
+                "Normative propagation and sampling requirements",
+            )
+            .with_engine(format!("opaque-source-{index}"), 1),
+        );
+    }
+
+    let quality = floor.evaluate(query, &results);
+    assert_eq!(quality.usable_result_count, 3);
+    assert_eq!(quality.contributing_engine_count, 3);
+    assert!(floor.is_met(&quality));
+}
+
+#[test]
+fn repeated_query_units_do_not_inflate_alignment_across_scripts() {
+    let cases = [
+        (
+            "distributed tracing sampling specification",
+            "distributed distributed tracing sampling specification",
+            result(
+                "https://example.test/tracing",
+                "Distributed tracing specification",
+                "Sampling semantics",
+            ),
+        ),
+        (
+            "跨境交通 运行表现 官方统计",
+            "跨境交通 跨境交通 运行表现 官方统计",
+            result(
+                "https://example.test/transport",
+                "跨境交通运行年度统计",
+                "公共机构发布运行表现数据",
+            ),
+        ),
+    ];
+
+    for (once, repeated, evidence) in cases {
+        assert_eq!(
+            query_match_score(once, &evidence),
+            query_match_score(repeated, &evidence)
+        );
+    }
 }
 
 #[test]

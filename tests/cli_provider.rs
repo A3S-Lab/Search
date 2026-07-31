@@ -118,6 +118,51 @@ fn anysearch_cli_uses_typed_acl_and_emits_full_provider_report() {
 }
 
 #[test]
+fn verbose_json_keeps_stdout_machine_readable() {
+    let server = MockServer::start(vec![MockResponse::json(
+        200,
+        br#"{
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "structuredContent": {
+                    "results": [{
+                        "title": "Rust",
+                        "url": "https://www.rust-lang.org/",
+                        "snippet": "A language empowering everyone"
+                    }]
+                },
+                "content": []
+            }
+        }"#,
+    )]);
+    let config = config_file(&format!(
+        r#"
+        provider "anysearch" {{
+            endpoint = "{}"
+            api_key = null
+        }}
+        "#,
+        server.endpoint
+    ));
+
+    let output = run_search_with_args("rust async", "anysearch", &config, &["--verbose"]);
+
+    assert!(
+        output.status.success(),
+        "CLI failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: Value = serde_json::from_slice(&output.stdout)
+        .expect("verbose CLI stdout must contain only the JSON document");
+    assert_eq!(payload["query"], "rust async");
+    assert!(
+        !output.stderr.is_empty(),
+        "verbose diagnostics must be written to stderr"
+    );
+}
+
+#[test]
 fn tavily_cli_emits_answers_relevance_content_usage_and_metadata() {
     let server = MockServer::start(vec![MockResponse::json(
         200,
