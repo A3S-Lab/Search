@@ -236,6 +236,10 @@ jobs:
   # ───────────────────────────────────────────────
   build-cli:
     name: Build / ${{ matrix.name }}
+    if: |
+      always() &&
+      !cancelled() &&
+      needs.commercial-release-gate.result == 'success'
     needs: commercial-release-gate
     strategy:
       fail-fast: false
@@ -500,3 +504,24 @@ jobs:
           git diff --cached --quiet && echo "No changes" && exit 0
           git commit -m "a3s-search: update to ${VERSION}"
           git push
+
+  release-outcome:
+    name: Verify release outcome
+    if: always() && !cancelled()
+    needs: [classify, github-release, update-homebrew]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require expected release outputs
+        env:
+          STABLE: ${{ needs.classify.outputs.stable }}
+          GITHUB_RELEASE_RESULT: ${{ needs.github-release.result }}
+          HOMEBREW_RESULT: ${{ needs.update-homebrew.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_RELEASE_RESULT" = success
+          if [ "$STABLE" = true ]; then
+            test "$HOMEBREW_RESULT" = success
+          else
+            test "$HOMEBREW_RESULT" = skipped
+          fi
