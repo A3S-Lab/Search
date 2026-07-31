@@ -21,7 +21,7 @@ request reports.
 - Deterministic URL deduplication, rich-field merging, duplicate evidence
   suppression, and consensus ranking
 - Typed ACL configuration with redacted credential sources
-- Headless A3S Browser discovery by default, plus conventional HTTP and RSS engines
+- Chrome/Chromium-backed A3S Browser search by default, plus conventional HTTP and RSS engines
 - Query answers, suggestions, images, full text, favicons, relevance, usage, and reports
 - Bounded provider responses and sanitized provider errors
 - Bundled Codex Skill in every release archive
@@ -48,13 +48,14 @@ Cargo features:
 
 | Feature | Purpose |
 | --- | --- |
-| `headless` (default) | Enable A3S Browser rendering for Google, Baidu, and JavaScript pages |
-| `lightpanda` (default) | Add the Lightpanda backend; implies `headless` |
+| `headless` (default) | Enable Chrome/Chromium rendering for Google, Baidu, and JavaScript pages |
+| `lightpanda` | Add the explicit Lightpanda backend; implies `headless` |
 
 Provider APIs do not require either browser feature. Build with
 `--no-default-features` only when the host intentionally cannot run a browser;
 the CLI then starts with its HTTP/RSS tier before trying configured or built-in
-API providers.
+API providers. Native Windows builds use Chrome/Chromium; on a Windows host,
+Lightpanda requires running A3S Search inside WSL2.
 
 ## CLI quick start
 
@@ -107,6 +108,13 @@ a3s-search "query" --engines ddg,wiki,anysearch,tavily
 a3s-search "query" --language en-US --time-range month
 a3s-search "query" --safesearch moderate --timeout 20
 a3s-search "query" --format compact
+```
+
+Chrome/Chromium is the default headless backend. Lightpanda is never selected
+implicitly; builds that enable its Cargo feature can request it explicitly:
+
+```bash
+cargo run --features lightpanda -- "query" --browser lightpanda
 ```
 
 `--limit` limits displayed results. Provider-side result limits belong in ACL.

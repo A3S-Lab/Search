@@ -23,6 +23,23 @@ jobs:
       - name: Format check
         run: cargo fmt -- --check
 
+      - name: Check browser feature boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          default_tree="$(cargo tree -e normal --locked)"
+          grep -q 'chromiumoxide' <<<"$default_tree"
+          default_features="$(cargo tree -e features -i a3s-use-browser --locked)"
+          if grep -q 'feature "lightpanda"' <<<"$default_features"; then
+            echo "default Search must use Chrome/Chromium without enabling Lightpanda" >&2
+            exit 1
+          fi
+          minimal_tree="$(cargo tree --no-default-features -e normal --locked)"
+          if grep -q 'chromiumoxide' <<<"$minimal_tree"; then
+            echo "minimal Search must not compile the browser/CDP dependency stack" >&2
+            exit 1
+          fi
+
       - name: Clippy (no default features)
         run: cargo clippy --all-targets --no-default-features --locked -- -D warnings
 

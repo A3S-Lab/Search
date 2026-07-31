@@ -12,7 +12,9 @@ use a3s_search::{EngineConfig, SafeSearch, SearchConfig, SearchQuery, TimeRange}
 
 mod cli;
 
-use cli::cascade::{execute_cascade, CascadeRequest, EngineTierPlan, DEFAULT_TIMEOUT_SECONDS};
+use cli::cascade::{
+    execute_cascade, CascadeRequest, EngineTierPlan, HeadlessBrowser, DEFAULT_TIMEOUT_SECONDS,
+};
 use cli::output::{print_cascade_results, OutputFormat};
 use cli::provider::{list_engines, load_search_config};
 use cli::proxy::report_proxy_scope;
@@ -79,6 +81,10 @@ struct Cli {
     /// Proxy URL (e.g., http://127.0.0.1:8080 or socks5://127.0.0.1:1080)
     #[arg(short, long)]
     proxy: Option<String>,
+
+    /// Headless browser backend (Chrome also discovers Chromium)
+    #[arg(long, value_enum, default_value_t)]
+    browser: HeadlessBrowser,
 
     /// ACL configuration file
     #[arg(short = 'c', long)]
@@ -200,6 +206,7 @@ async fn main() -> Result<()> {
                     time_range: cli.time_range,
                     format: cli.format,
                     proxy: cli.proxy,
+                    browser: cli.browser,
                     config: cli.config,
                 })
                 .await
@@ -225,6 +232,7 @@ async fn main() -> Result<()> {
                 println!("      --time-range <RANGE> day, week, month, year");
                 println!("  -f, --format <FORMAT>    Output: text, json, compact");
                 println!("  -p, --proxy <URL>        Proxy URL (http/https/socks5)");
+                println!("      --browser <BACKEND>  Headless backend: chrome, lightpanda (default: chrome)");
                 println!("  -c, --config <PATH>      ACL configuration file");
                 println!("  -v, --verbose            Enable debug logging");
                 println!("  -h, --help               Show help");
@@ -247,6 +255,7 @@ struct SearchArgs {
     time_range: Option<TimeRangeArg>,
     format: OutputFormat,
     proxy: Option<String>,
+    browser: HeadlessBrowser,
     config: Option<PathBuf>,
 }
 
@@ -309,6 +318,7 @@ async fn run_search(args: SearchArgs) -> Result<()> {
             timeout: Duration::from_secs(timeout),
             proxy: args.proxy.as_deref(),
             config: config.as_ref(),
+            browser: args.browser,
         },
     )
     .await?;
@@ -613,6 +623,18 @@ mod tests {
         let cli = Cli::parse_from(["a3s-search", "query", "-e", "g,ddg", "--headless"]);
         assert!(cli.headless);
         assert_eq!(cli.engines, Some(vec!["g".to_string(), "ddg".to_string()]));
+    }
+
+    #[test]
+    fn test_cli_browser_defaults_to_chrome() {
+        let cli = Cli::parse_from(["a3s-search", "query"]);
+        assert_eq!(cli.browser, HeadlessBrowser::Chrome);
+    }
+
+    #[test]
+    fn test_cli_lightpanda_requires_explicit_selection() {
+        let cli = Cli::parse_from(["a3s-search", "query", "--browser", "lightpanda"]);
+        assert_eq!(cli.browser, HeadlessBrowser::Lightpanda);
     }
 
     #[test]
