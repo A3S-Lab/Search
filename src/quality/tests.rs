@@ -80,6 +80,87 @@ fn character_evidence_recovers_inflected_terms_in_long_questions() {
 }
 
 #[test]
+fn unsegmented_composite_queries_match_distributed_concepts_without_accepting_noise() {
+    let cases = [
+        (
+            "工业储能成本收益风险证据",
+            result(
+                "https://evidence.example/storage",
+                "工业储能项目评估",
+                "研究分别说明储能成本、预期收益、实施风险和支持证据。",
+            ),
+            result(
+                "https://noise.example/industry",
+                "工业项目年度目录",
+                "汇总企业名称、地址和联系电话。",
+            ),
+        ),
+        (
+            "港湾自動化便益リスク証拠",
+            result(
+                "https://evidence.example/port",
+                "港湾自動化の評価",
+                "導入の便益、運用リスク、費用と検証証拠を整理する。",
+            ),
+            result(
+                "https://noise.example/port",
+                "港湾の観光案内",
+                "飲食店と季節イベントを紹介する。",
+            ),
+        ),
+        (
+            "산업배터리비용편익위험근거",
+            result(
+                "https://evidence.example/battery",
+                "산업 배터리 사업 평가",
+                "비용, 편익, 운영 위험과 판단 근거를 각각 검토한다.",
+            ),
+            result(
+                "https://noise.example/battery",
+                "산업 행사 일정",
+                "전시장 위치와 방문 시간을 안내한다.",
+            ),
+        ),
+    ];
+
+    for (query, relevant, noise) in cases {
+        let relevant_score = query_match_score(query, &relevant);
+        let noise_score = query_match_score(query, &noise);
+        assert!(
+            relevant_score >= 0.35,
+            "{query}: distributed evidence scored {relevant_score}"
+        );
+        assert!(
+            noise_score < 0.18,
+            "{query}: unrelated material scored {noise_score}"
+        );
+    }
+}
+
+#[test]
+fn mixed_script_queries_require_visible_evidence_from_each_substantive_script() {
+    let query = "WebTransport 与 HTTP/3 迁移差异";
+    let native_context = result(
+        "https://evidence.example/web-transport",
+        "WebTransport 与 HTTP/3 的迁移差异",
+        "中文说明连接迁移、双向传输和兼容性边界。",
+    );
+    let other_script_only = result(
+        "https://partial.example/web-transport",
+        "WebTransport and HTTP/3 migration differences",
+        "An English comparison of connection migration and compatibility.",
+    );
+
+    let native_score = query_match_score(query, &native_context);
+    let partial_score = query_match_score(query, &other_script_only);
+    assert!(native_score >= 0.35, "native context scored {native_score}");
+    assert!(
+        partial_score < 0.35,
+        "missing-script evidence scored {partial_score}"
+    );
+}
+
+#[test]
 fn multi_term_alignment_rejects_generic_word_and_boilerplate_matches() {
     let query = "global renewable energy outlook IEA IRENA World Bank policy reports";
     let generic = result(
