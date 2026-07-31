@@ -129,7 +129,7 @@ An explicit `--engines` list is never expanded. `--limit` controls displayed
 results; provider-side result limits belong in ACL.
 
 > [!NOTE]
-> `main` currently declares version `2.2.0-rc.1`. The latest crates.io release
+> `main` currently declares version `2.2.0-rc.2`. The latest crates.io release
 > is older because stable publication remains fail-closed while
 > [Search issue #8](https://github.com/A3S-Lab/Search/issues/8) is open.
 

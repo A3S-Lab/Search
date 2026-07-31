@@ -113,15 +113,23 @@ fn every_release_write_path_is_transitively_blocked_by_the_aggregate_gate() {
 #[test]
 fn prerelease_can_publish_github_binaries_without_registry_or_homebrew() {
     let workflow = include_str!("../.github/workflows/release.yml");
+    let build = job_body(workflow, "build-cli");
     let publish = job_body(workflow, "publish-crate");
     let github = job_body(workflow, "github-release");
     let homebrew = job_body(workflow, "update-homebrew");
+    let outcome = job_body(workflow, "release-outcome");
 
+    assert!(build.contains("always() &&"));
+    assert!(build.contains("!cancelled() &&"));
+    assert!(build.contains("needs.commercial-release-gate.result == 'success'"));
     assert!(publish.contains("if: needs.classify.outputs.stable == 'true'"));
     assert!(github.contains("needs.classify.outputs.stable == 'false'"));
     assert!(github.contains("needs.publish-crate.result == 'skipped'"));
     assert!(github.contains("PRERELEASE_FLAG=\"--prerelease\""));
     assert!(homebrew.contains("needs.classify.outputs.stable == 'true'"));
+    assert!(outcome.contains("needs.github-release.result"));
+    assert!(outcome.contains("test \"$GITHUB_RELEASE_RESULT\" = success"));
+    assert!(outcome.contains("test \"$HOMEBREW_RESULT\" = skipped"));
 }
 
 #[test]
