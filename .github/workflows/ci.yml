@@ -58,4 +58,6 @@ jobs:
         run: cargo doc --no-deps --all-features --locked
 
       - name: Release archive contract
-        run: scripts/test-release-package.sh
+        run: |
+          scripts/test-release-package.sh
+          scripts/test-freeze-crate.sh

@@ -1041,6 +1041,7 @@ cargo clippy --all-targets --all-features --locked -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --locked
 cargo package --locked
 scripts/test-release-package.sh
+scripts/test-freeze-crate.sh
 ```
 
 The provider contract tests use loopback mock servers and verify protocol,
@@ -1070,8 +1071,9 @@ least 40 distinct cases. There is no 24-hour requirement and repeated queries
 cannot be counted as additional independent evidence.
 
 The canary requires an independently built deployment driver, an all-features
-candidate binary, their precommitted SHA-256 identities, a sealed query corpus,
-a tier manifest, and a new absolute path for the append-only receipt log:
+candidate binary, the exact frozen `.crate`, their precommitted SHA-256
+identities, a sealed query corpus, a tier manifest, and a new absolute path for
+the append-only receipt log:
 
 ```bash
 A3S_SEARCH_EVALUATED_COMMIT=<full-40-character-commit> \
@@ -1079,6 +1081,8 @@ A3S_SEARCH_LIVE_CANARY_DRIVER=/secure/search-canary-driver \
 A3S_SEARCH_LIVE_CANARY_DRIVER_SHA256=sha256:<driver-digest> \
 A3S_SEARCH_LIVE_CANARY_CANDIDATE_BIN=/secure/a3s-search \
 A3S_SEARCH_LIVE_CANARY_CANDIDATE_SHA256=sha256:<candidate-digest> \
+A3S_SEARCH_LIVE_CANARY_FROZEN_CRATE=/secure/a3s-search-<version>.crate \
+A3S_SEARCH_LIVE_CANARY_FROZEN_CRATE_SHA256=sha256:<crate-digest> \
 A3S_SEARCH_LIVE_CANARY_QUERY_CORPUS=/secure/search-canary-cases.json \
 A3S_SEARCH_LIVE_CANARY_QUERY_CORPUS_SHA256=sha256:<corpus-digest> \
 A3S_SEARCH_LIVE_CANARY_TIER_MANIFEST=/secure/search-canary-tiers.json \
@@ -1119,16 +1123,27 @@ second-tier or final-tier escalation, and resource growth. Position-based
 escalation gates remain valid for any sealed transport order. The verifier
 recomputes generic query-match quality after clearing candidate-supplied
 scores. Raw attempt receipts are appended and flushed before evaluation, and
-the final report binds the receipt-log digest. Driver, candidate, corpus, and
-manifest paths are rehashed before and after every attempt and again after
-driver shutdown; any persistent identity change fails the campaign.
+the final report binds the receipt-log digest. Driver, candidate, frozen crate,
+corpus, and manifest paths are rehashed before and after every attempt and
+again after driver shutdown; any persistent identity change fails the
+campaign.
 
-Those path checks assume a trusted driver and controlled, non-adversarial
-artifact storage. They detect accidental or persistent replacement but do not
-prove which bytes were opened between a digest check and execution. The
-external verifier must freeze the evaluated artifacts with a read-only mount,
-content-addressed object, or equivalent descriptor-based execution before it
-can attest the exact bytes.
+Tag workflows package the crate again in an unprivileged, credential-free job
+after CI. `scripts/freeze-crate.sh` places the one exact `.crate` and a
+canonical `a3s/search-frozen-crate/v1` identity manifest in the
+`frozen-crate-<version>` workflow artifact. The manifest binds the tag, full
+commit, package name/version, byte length, crate SHA-256, and source manifest
+and lockfile SHA-256 identities. Stable publication remains downstream from
+that job and fail-closed.
+
+The live canary rehashes the frozen crate alongside the driver, candidate,
+corpus, and tier manifest before and after every attempt and after driver
+shutdown. Those path checks assume a trusted driver and controlled,
+non-adversarial artifact storage. They detect accidental or persistent
+replacement but do not prove which bytes were opened between a digest check
+and execution. The external verifier must freeze the evaluated artifacts with
+a read-only mount, content-addressed object, or equivalent descriptor-based
+execution before it can attest the exact bytes.
 
 This repository-side ignored test is useful evidence but cannot authorize its
 own release. Registry publication remains fail-closed for every tag, and stable
