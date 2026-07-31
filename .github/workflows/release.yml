@@ -118,16 +118,89 @@ jobs:
       - name: Package verification
         run: cargo package --locked
 
-  commercial-search-gates:
-    name: Stable release evidence (blocked)
-    if: needs.classify.outputs.stable == 'true'
+  freeze-crate:
+    name: Freeze exact crate bytes
     needs: [classify, ci]
     runs-on: ubuntu-latest
+    outputs:
+      crate_sha256: ${{ steps.identity.outputs.crate_sha256 }}
+      manifest_sha256: ${{ steps.identity.outputs.manifest_sha256 }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
     steps:
-      - name: Refuse candidate-repository commercial certification
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2 peeled commit
+
+      - name: Package and freeze
         shell: bash
         run: |
           set -euo pipefail
+          version="${{ needs.classify.outputs.version }}"
+          cargo package --locked
+          scripts/freeze-crate.sh \
+            "target/package/a3s-search-${version}.crate" \
+            frozen-crate \
+            "$GITHUB_SHA" \
+            "$GITHUB_REF"
+
+      - name: Export frozen identities
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import hashlib
+          import json
+          import pathlib
+
+          manifest_path = pathlib.Path("frozen-crate/frozen-crate.json")
+          manifest_bytes = manifest_path.read_bytes()
+          manifest = json.loads(manifest_bytes)
+          print(f"crate_sha256={manifest['package']['sha256']}")
+          print(
+              "manifest_sha256=sha256:"
+              + hashlib.sha256(manifest_bytes).hexdigest()
+          )
+          PY
+
+      - name: Upload frozen crate
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: frozen-crate-${{ needs.classify.outputs.version }}
+          path: frozen-crate
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+
+  commercial-search-gates:
+    name: Stable release evidence (blocked)
+    if: needs.classify.outputs.stable == 'true'
+    needs: [classify, ci, freeze-crate]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse candidate-repository commercial certification
+        env:
+          FROZEN_CRATE_SHA256: ${{ needs.freeze-crate.outputs.crate_sha256 }}
+          FROZEN_MANIFEST_SHA256: ${{ needs.freeze-crate.outputs.manifest_sha256 }}
+          FROZEN_ARTIFACT_ID: ${{ needs.freeze-crate.outputs.artifact_id }}
+          FROZEN_ARTIFACT_DIGEST: ${{ needs.freeze-crate.outputs.artifact_digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$FROZEN_CRATE_SHA256"
+          test -n "$FROZEN_MANIFEST_SHA256"
+          test -n "$FROZEN_ARTIFACT_ID"
+          test -n "$FROZEN_ARTIFACT_DIGEST"
           echo "Stable publication requires an external pinned verifier" >&2
           echo "bound to the exact frozen .crate bytes and raw campaign receipts." >&2
           echo "Tracking: https://github.com/A3S-Lab/Search/issues/8" >&2
@@ -136,13 +209,14 @@ jobs:
   commercial-release-gate:
     name: Stable release gate
     if: always() && !cancelled()
-    needs: [classify, ci, commercial-search-gates]
+    needs: [classify, ci, freeze-crate, commercial-search-gates]
     runs-on: ubuntu-latest
     steps:
       - name: Require all applicable evidence
         env:
           CLASSIFY_RESULT: ${{ needs.classify.result }}
           CI_RESULT: ${{ needs.ci.result }}
+          FROZEN_CRATE_RESULT: ${{ needs.freeze-crate.result }}
           COMMERCIAL_RESULT: ${{ needs.commercial-search-gates.result }}
           STABLE: ${{ needs.classify.outputs.stable }}
         shell: bash
@@ -150,6 +224,7 @@ jobs:
           set -euo pipefail
           test "$CLASSIFY_RESULT" = success
           test "$CI_RESULT" = success
+          test "$FROZEN_CRATE_RESULT" = success
           if [ "$STABLE" = true ]; then
             test "$COMMERCIAL_RESULT" = success
           else

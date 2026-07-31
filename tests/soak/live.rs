@@ -40,6 +40,8 @@ const DRIVER_ENV: &str = "A3S_SEARCH_LIVE_CANARY_DRIVER";
 const DRIVER_SHA256_ENV: &str = "A3S_SEARCH_LIVE_CANARY_DRIVER_SHA256";
 const CANDIDATE_BIN_ENV: &str = "A3S_SEARCH_LIVE_CANARY_CANDIDATE_BIN";
 const CANDIDATE_SHA256_ENV: &str = "A3S_SEARCH_LIVE_CANARY_CANDIDATE_SHA256";
+const FROZEN_CRATE_ENV: &str = "A3S_SEARCH_LIVE_CANARY_FROZEN_CRATE";
+const FROZEN_CRATE_SHA256_ENV: &str = "A3S_SEARCH_LIVE_CANARY_FROZEN_CRATE_SHA256";
 const RECEIPT_LOG_ENV: &str = "A3S_SEARCH_LIVE_CANARY_RECEIPT_LOG";
 const REQUEST_TIMEOUT_CEILING: Duration = Duration::from_secs(60);
 
@@ -105,6 +107,8 @@ async fn sealed_live_tiered_canary_meets_release_floor() {
     let evaluated_commit = evaluated_commit();
     let candidate = required_absolute_file(CANDIDATE_BIN_ENV);
     let candidate_identity = required_sha256_identity(CANDIDATE_SHA256_ENV);
+    let frozen_crate = required_absolute_file(FROZEN_CRATE_ENV);
+    let frozen_crate_identity = required_sha256_identity(FROZEN_CRATE_SHA256_ENV);
     let driver_path = required_absolute_file(DRIVER_ENV);
     let driver_identity = required_sha256_identity(DRIVER_SHA256_ENV);
     let receipt_log_path = std::path::PathBuf::from(required_env(RECEIPT_LOG_ENV));
@@ -152,6 +156,8 @@ async fn sealed_live_tiered_canary_meets_release_floor() {
             &driver_identity,
             &candidate,
             &candidate_identity,
+            &frozen_crate,
+            &frozen_crate_identity,
         ) {
             record_artifact_violation(
                 error,
@@ -252,6 +258,8 @@ async fn sealed_live_tiered_canary_meets_release_floor() {
             &driver_identity,
             &candidate,
             &candidate_identity,
+            &frozen_crate,
+            &frozen_crate_identity,
         ) {
             record_artifact_violation(
                 error,
@@ -285,6 +293,8 @@ async fn sealed_live_tiered_canary_meets_release_floor() {
         &driver_identity,
         &candidate,
         &candidate_identity,
+        &frozen_crate,
+        &frozen_crate_identity,
     ) {
         record_artifact_violation(
             error,
@@ -326,9 +336,10 @@ async fn sealed_live_tiered_canary_meets_release_floor() {
     println!(
         "LIVE_CANARY_REPORT={}",
         json!({
-            "schema_version": 6,
+            "schema_version": 7,
             "package_version": env!("CARGO_PKG_VERSION"),
             "evaluated_commit": evaluated_commit,
+            "frozen_crate_sha256": frozen_crate_identity,
             "driver_sha256": driver.driver_identity,
             "candidate_sha256": driver.candidate_identity,
             "query_corpus": campaign.query_identity,

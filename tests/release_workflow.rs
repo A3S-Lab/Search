@@ -42,6 +42,49 @@ fn stable_release_fails_closed_without_executing_candidate_code_on_a_privileged_
 }
 
 #[test]
+fn release_freezes_one_exact_crate_before_external_evidence_is_considered() {
+    let workflow = include_str!("../.github/workflows/release.yml");
+    let freeze = job_body(workflow, "freeze-crate");
+    let commercial = job_body(workflow, "commercial-search-gates");
+    let aggregate = job_body(workflow, "commercial-release-gate");
+
+    assert!(freeze.contains("needs: [classify, ci]"));
+    assert!(freeze.contains("ref: ${{ github.sha }}"));
+    assert!(freeze.contains("persist-credentials: false"));
+    assert!(freeze.contains("cargo package --locked"));
+    assert!(freeze.contains("scripts/freeze-crate.sh"));
+    assert!(freeze.contains("name: frozen-crate-${{ needs.classify.outputs.version }}"));
+    assert!(freeze.contains("if-no-files-found: error"));
+    assert!(freeze.contains("crate_sha256: ${{ steps.identity.outputs.crate_sha256 }}"));
+    assert!(freeze.contains("artifact_id: ${{ steps.upload.outputs.artifact-id }}"));
+    assert!(freeze.contains("artifact_digest: ${{ steps.upload.outputs.artifact-digest }}"));
+    assert!(commercial.contains("needs: [classify, ci, freeze-crate]"));
+    assert!(aggregate.contains("needs: [classify, ci, freeze-crate, commercial-search-gates]"));
+    assert!(aggregate.contains("FROZEN_CRATE_RESULT: ${{ needs.freeze-crate.result }}"));
+    assert!(aggregate.contains("test \"$FROZEN_CRATE_RESULT\" = success"));
+}
+
+#[test]
+fn frozen_crate_job_has_no_release_credentials_or_publication_path() {
+    let workflow = include_str!("../.github/workflows/release.yml");
+    let freeze = job_body(workflow, "freeze-crate");
+
+    for forbidden in [
+        "contents: write",
+        "environment:",
+        "secrets.",
+        "CARGO_REGISTRY_TOKEN",
+        "cargo publish",
+        "self-hosted",
+    ] {
+        assert!(
+            !freeze.contains(forbidden),
+            "frozen crate job must remain unprivileged: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn every_release_write_path_is_transitively_blocked_by_the_aggregate_gate() {
     let workflow = include_str!("../.github/workflows/release.yml");
     let aggregate = job_body(workflow, "commercial-release-gate");
@@ -50,7 +93,7 @@ fn every_release_write_path_is_transitively_blocked_by_the_aggregate_gate() {
     let github = job_body(workflow, "github-release");
     let homebrew = job_body(workflow, "update-homebrew");
 
-    assert!(aggregate.contains("needs: [classify, ci, commercial-search-gates]"));
+    assert!(aggregate.contains("needs: [classify, ci, freeze-crate, commercial-search-gates]"));
     assert!(aggregate.contains("if: always() && !cancelled()"));
     assert!(build.contains("needs: commercial-release-gate"));
     assert!(publish.contains("needs: commercial-release-gate"));
@@ -80,7 +123,13 @@ fn cancellation_cannot_continue_into_release_artifacts_or_publication() {
 #[test]
 fn candidate_checkouts_bind_to_the_trigger_commit_without_persisted_credentials() {
     let workflow = include_str!("../.github/workflows/release.yml");
-    for job in ["classify", "ci", "build-cli", "github-release"] {
+    for job in [
+        "classify",
+        "ci",
+        "freeze-crate",
+        "build-cli",
+        "github-release",
+    ] {
         let body = job_body(workflow, job);
         assert!(
             body.contains("ref: ${{ github.sha }}"),
