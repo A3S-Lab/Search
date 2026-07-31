@@ -478,11 +478,16 @@ when a caller needs to manage execution separately. The
 quality floor is caller-configurable and uses only generic signals: usable
 result count, normalized host diversity, contributing engines, independent
 engine consensus, per-result Unicode query/text alignment, and mean alignment.
+It evaluates the smallest leading prefix of the final ranking that could meet
+the selected floor. This keeps unseen provider tail noise from triggering an
+otherwise unnecessary tier while preventing stronger low-ranked rows from
+being cherry-picked over a weak result head.
 Multi-term alignment measures length-weighted query-unit coverage and gives
 visible titles and snippets authority over a weak URL signal, preventing a
 query-shaped path, one generic word, or page boilerplate from satisfying a
-longer query. Queries without multiple word boundaries fall back to normalized
-Unicode character n-grams.
+longer query. Normalized character n-gram evidence recovers partial unsegmented
+matches and common word-form changes, and repeated query units are collapsed
+before both scoring paths so repetition cannot inflate alignment.
 The default floor does not force consensus; research callers can require it
 without embedding publisher or topic rules. `for_limit` asks for at most five
 usable results, up to three normalized hosts, at least half of the target

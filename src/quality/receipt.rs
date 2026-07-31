@@ -45,7 +45,7 @@ pub struct SearchCascadeReceiptV1 {
     pub query: SearchQueryBindingV1,
     /// Caller-selected generic quality floor.
     pub quality_floor: SearchQualityFloor,
-    /// Quality of the final canonically merged result set.
+    /// Quality of the floor-sized ranked head of the final merged result set.
     pub final_quality: SearchQuality,
     /// Deterministic identity of every caller-visible final result field.
     pub result_set: SearchResultsBindingV1,
@@ -75,11 +75,9 @@ impl SearchCascadeReceiptV1 {
             return Err(SearchCascadeReceiptError::OutputWithoutExecutedTier);
         }
 
-        let recomputed = SearchQuality::evaluate(
-            &self.query.value.query,
-            results,
-            self.quality_floor.min_query_match,
-        );
+        let recomputed = self
+            .quality_floor
+            .evaluate(&self.query.value.query, results);
         if self.final_quality != recomputed {
             return Err(SearchCascadeReceiptError::FinalQualityMismatch);
         }

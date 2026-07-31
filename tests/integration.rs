@@ -521,6 +521,7 @@ mod lightpanda_tests {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use super::fixture_server::FixtureServer;
     use a3s_search::{
         browser::{BrowserFetcher, BrowserPool, BrowserPoolConfig, BrowserProvider},
         engines::Google,
@@ -677,17 +678,21 @@ mod lightpanda_tests {
         pool.shutdown().await;
     }
 
-    /// Fetch `httpbin.org/html` — a plain HTML fixture with known content.
+    /// Fetch a deterministic localhost page through the installed Lightpanda binary.
     #[tokio::test]
-    async fn test_lightpanda_fetch_httpbin_html() {
+    async fn test_lightpanda_fetch_local_html_fixture() {
         require_lp!(pool);
+        let server = FixtureServer::start(
+            "<!DOCTYPE html><html><body><main>LIGHTPANDA_LOCAL_FIXTURE</main></body></html>",
+        );
 
-        let html = fetch_with(pool.clone(), "https://httpbin.org/html", WaitStrategy::Load).await;
+        let html = fetch_with(pool.clone(), &server.url, WaitStrategy::Load).await;
 
         assert!(!html.is_empty(), "HTML must not be empty");
         assert!(
-            html.to_lowercase().contains("<html"),
-            "Response must contain an <html> tag"
+            html.contains("LIGHTPANDA_LOCAL_FIXTURE"),
+            "Response must contain the fixture marker, got: {}",
+            &html[..html.len().min(500)]
         );
 
         pool.shutdown().await;
@@ -752,56 +757,31 @@ mod lightpanda_tests {
         pool.shutdown().await;
     }
 
-    /// `WaitStrategy::Selector` with a present element must not time out.
+    /// Lightpanda command rendering cannot promise selector wait semantics.
     #[tokio::test]
-    async fn test_lightpanda_wait_strategy_selector_found() {
-        require_lp!(pool);
-
-        let html = fetch_with(
-            pool.clone(),
-            "https://example.com",
-            WaitStrategy::Selector {
-                css: "h1".to_string(),
-                timeout_ms: 5000,
-            },
-        )
-        .await;
-
-        assert!(!html.is_empty(), "HTML must not be empty");
-        assert!(
-            html.contains("Example Domain"),
-            "h1 content must be present"
-        );
-
-        pool.shutdown().await;
-    }
-
-    /// A missing selector is a typed wait timeout rather than a false success.
-    #[tokio::test]
-    async fn test_lightpanda_wait_strategy_selector_not_found_is_an_error() {
+    async fn test_lightpanda_selector_wait_is_explicitly_unsupported() {
         require_lp!(pool);
 
         let result = BrowserFetcher::new(Arc::clone(&pool))
             .with_wait(WaitStrategy::Selector {
-                css: "div.this-element-does-not-exist-xyz".to_string(),
-                timeout_ms: 500,
+                css: "h1".to_string(),
+                timeout_ms: 5000,
             })
             .with_retries(0, 0)
             .fetch("https://example.com")
             .await;
 
-        let error = result.expect_err("missing selector must fail the wait condition");
-        assert!(error.to_string().contains("use.browser.wait_timeout"));
+        let error = result.expect_err("Lightpanda selector waits must fail explicitly");
+        assert!(error.to_string().contains("use.browser.unsupported"));
 
         pool.shutdown().await;
     }
 
     // ─── custom user agent ──────────────────────────────────────────────────
 
-    /// `with_user_agent()` must override the UA sent to the server.
-    /// Verified against httpbin's UA echo endpoint.
+    /// Lightpanda must reject an exact UA override instead of silently ignoring it.
     #[tokio::test]
-    async fn test_lightpanda_custom_user_agent() {
+    async fn test_lightpanda_exact_user_agent_is_explicitly_unsupported() {
         require_lp!(pool);
         let custom_ua = "A3S-SearchBot/1.0 (lightpanda test)";
 
@@ -809,16 +789,11 @@ mod lightpanda_tests {
             .with_wait(WaitStrategy::Load)
             .with_user_agent(custom_ua);
 
-        // A3S Browser applies the override before navigating the initial document.
-        let result = fetcher.fetch("https://example.com").await;
-        assert!(
-            result.is_ok(),
-            "Fetch with custom UA should not error: {:?}",
-            result.err()
-        );
-        let html = result.unwrap();
-        assert!(!html.is_empty(), "Response must not be empty");
-        println!("  UA-override fetch ok ({} bytes)", html.len());
+        let error = fetcher
+            .fetch("https://example.com")
+            .await
+            .expect_err("Lightpanda exact user-agent overrides must fail explicitly");
+        assert!(error.to_string().contains("use.browser.unsupported"));
 
         pool.shutdown().await;
     }

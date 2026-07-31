@@ -56,8 +56,8 @@ dependencies = [
 
 [[package]]
 name = "a3s-use-browser"
-version = "0.3.0"
-source = "git+https://github.com/A3S-Lab/Browser?rev=1830c7b6896b0a38637eba2b61a386bf8a36eada#1830c7b6896b0a38637eba2b61a386bf8a36eada"
+version = "0.3.2"
+source = "git+https://github.com/A3S-Lab/Browser?rev=a4a270f9ca335ceee60c5d9e086ae05005fb7abf#a4a270f9ca335ceee60c5d9e086ae05005fb7abf"
 dependencies = [
  "a3s-use-core",
  "async-trait",
