@@ -349,7 +349,7 @@ mod tests {
     fn config_enforces_documented_bounds_and_depth() {
         let config = TavilyConfig::new().unwrap();
         assert_eq!(config.endpoint().as_str(), DEFAULT_ENDPOINT);
-        assert_eq!(config.max_results(), 5);
+        assert_eq!(config.max_results(), 10);
         assert!(!config.include_usage);
         assert_eq!(config.clone().with_max_results(0).unwrap().max_results(), 0);
         assert!(config.clone().with_max_results(21).is_err());

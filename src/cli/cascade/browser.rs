@@ -1,8 +1,9 @@
 //! Lazy browser-tier construction and cleanup.
 
+use std::collections::BTreeMap;
 use std::time::Instant;
 
-use a3s_search::{EngineFailure, EngineOutcomeKind, SearchReport, SearchResults};
+use a3s_search::{EngineFailure, EngineOutcomeKind, SearchQuery, SearchReport, SearchResults};
 
 const RETRY_OBSERVATION_SCHEMA: &str = "a3s/search-retry-observation/v1";
 
@@ -62,12 +63,10 @@ use futures::future::join_all;
 #[cfg(feature = "headless")]
 use a3s_search::{
     a3s_use_browser::{BrowserPool, BrowserPoolConfig, BrowserProvider, PageRenderer},
-    engines::{Baidu, Google},
+    engines::{Baidu, BingBrowser, BraveBrowser, Google},
     BrowserFetcher, Engine, PageFetcher, RetryBudget, WaitStrategy,
 };
 
-#[cfg(feature = "headless")]
-use super::tier_timeout;
 #[cfg(feature = "headless")]
 use super::{configured_search, deadline_exhausted, execute_search_tier, record_disabled_engine};
 use super::{CascadeRequest, SharedControls};
@@ -77,6 +76,7 @@ use crate::configured_engine_config;
 #[cfg(feature = "headless")]
 pub(super) async fn execute_headless_tier(
     request: &CascadeRequest<'_>,
+    query_plan: &BTreeMap<String, SearchQuery>,
     controls: &SharedControls,
     shortcuts: &[String],
     deadline: Instant,
@@ -103,11 +103,10 @@ pub(super) async fn execute_headless_tier(
     if let Some(pool) = shared_pool.as_ref() {
         cleanup.track(Arc::clone(pool));
     }
-    let render_budget = tier_timeout(
+    let render_budget = headless_render_budget(
         deadline.saturating_duration_since(Instant::now()),
         remaining_tiers,
-    )
-    .min(Duration::from_secs(5));
+    );
     let retry_budget = RetryBudget::default();
     let mut search = configured_search(request.config, controls);
     let mut setup_results = SearchResults::new();
@@ -124,14 +123,10 @@ pub(super) async fn execute_headless_tier(
             pool
         });
         let renderer: Arc<dyn PageRenderer> = pool;
-        let fetcher = |selector: &str| -> Arc<dyn PageFetcher> {
+        let fetcher = || -> Arc<dyn PageFetcher> {
             Arc::new(
                 BrowserFetcher::from_renderer(Arc::clone(&renderer))
-                    .with_wait(headless_wait_strategy(
-                        request.browser,
-                        selector,
-                        render_budget,
-                    ))
+                    .with_wait(headless_wait_strategy())
                     .with_timeout(render_budget)
                     .with_total_timeout(render_budget)
                     .with_retries(request.browser_max_retries, 100)
@@ -140,13 +135,25 @@ pub(super) async fn execute_headless_tier(
         };
         match shortcut.as_str() {
             "g" => {
-                let engine = Google::new(fetcher("#search"));
+                let engine = Google::new(fetcher());
                 let engine_config =
                     configured_engine_config(request.config, engine.config().clone());
                 search.add_engine(engine.with_config(engine_config));
             }
             "baidu" => {
-                let engine = Baidu::new(fetcher("#content_left"));
+                let engine = Baidu::new(fetcher());
+                let engine_config =
+                    configured_engine_config(request.config, engine.config().clone());
+                search.add_engine(engine.with_config(engine_config));
+            }
+            "bing_browser" => {
+                let engine = BingBrowser::new(fetcher());
+                let engine_config =
+                    configured_engine_config(request.config, engine.config().clone());
+                search.add_engine(engine.with_config(engine_config));
+            }
+            "brave_browser" => {
+                let engine = BraveBrowser::new(fetcher());
                 let engine_config =
                     configured_engine_config(request.config, engine.config().clone());
                 search.add_engine(engine.with_config(engine_config));
@@ -163,9 +170,10 @@ pub(super) async fn execute_headless_tier(
         search,
         setup_results,
         &request.query,
+        query_plan,
+        &request.query.query,
         "headless",
-        deadline,
-        remaining_tiers,
+        render_budget,
     )
     .await;
     cleanup.shutdown(deadline).await;
@@ -177,6 +185,7 @@ pub(super) async fn execute_headless_tier(
 #[cfg(not(feature = "headless"))]
 pub(super) async fn execute_headless_tier(
     request: &CascadeRequest<'_>,
+    _query_plan: &BTreeMap<String, SearchQuery>,
     _controls: &SharedControls,
     shortcuts: &[String],
     _deadline: Instant,
@@ -228,17 +237,16 @@ fn lightpanda_provider() -> Result<BrowserProvider, EngineFailure> {
 }
 
 #[cfg(feature = "headless")]
-fn headless_wait_strategy(
-    browser: HeadlessBrowser,
-    selector: &str,
-    timeout: Duration,
-) -> WaitStrategy {
-    match browser {
-        HeadlessBrowser::Chrome => WaitStrategy::Selector {
-            css: selector.to_string(),
-            timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
-        },
-        HeadlessBrowser::Lightpanda => WaitStrategy::Load,
+fn headless_wait_strategy() -> WaitStrategy {
+    WaitStrategy::Load
+}
+
+#[cfg(feature = "headless")]
+fn headless_render_budget(remaining: Duration, remaining_tiers: usize) -> Duration {
+    if remaining_tiers == 0 {
+        remaining
+    } else {
+        remaining / 2
     }
 }
 
@@ -356,27 +364,21 @@ mod tests {
 
     #[cfg(feature = "headless")]
     #[test]
-    fn chrome_waits_for_search_results_but_lightpanda_uses_load() {
-        let chrome = headless_wait_strategy(
-            HeadlessBrowser::Chrome,
-            "#search",
-            Duration::from_millis(1_500),
+    fn headless_search_readiness_does_not_depend_on_provider_dom_selectors() {
+        assert!(matches!(headless_wait_strategy(), WaitStrategy::Load));
+    }
+
+    #[cfg(feature = "headless")]
+    #[test]
+    fn final_headless_tier_can_use_the_complete_remaining_budget() {
+        assert_eq!(
+            headless_render_budget(Duration::from_secs(15), 0),
+            Duration::from_secs(15)
         );
-        assert!(matches!(
-            chrome,
-            WaitStrategy::Selector {
-                css,
-                timeout_ms: 1_500
-            } if css == "#search"
-        ));
-        assert!(matches!(
-            headless_wait_strategy(
-                HeadlessBrowser::Lightpanda,
-                "#search",
-                Duration::from_secs(1)
-            ),
-            WaitStrategy::Load
-        ));
+        assert_eq!(
+            headless_render_budget(Duration::from_secs(15), 2),
+            Duration::from_millis(7_500)
+        );
     }
 
     #[cfg(all(feature = "headless", not(feature = "lightpanda")))]

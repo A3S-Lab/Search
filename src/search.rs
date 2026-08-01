@@ -1,5 +1,6 @@
 //! Search orchestration.
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -145,6 +146,35 @@ impl Search {
 
     /// Performs a search across all configured engines.
     pub async fn search(&self, query: SearchQuery) -> Result<SearchResults> {
+        let ranking_query = query.query.clone();
+        self.search_with_ranking_query(query, ranking_query).await
+    }
+
+    /// Performs retrieval with one query while ranking against another.
+    ///
+    /// This is useful for an explicitly reported evidence-gap refinement: the
+    /// upstream engine sees `query`, while every returned result is still
+    /// scored against the caller's original `ranking_query`.
+    pub async fn search_with_ranking_query(
+        &self,
+        query: SearchQuery,
+        ranking_query: impl Into<String>,
+    ) -> Result<SearchResults> {
+        self.search_with_query_plan(query, BTreeMap::new(), ranking_query)
+            .await
+    }
+
+    /// Performs one request per engine with optional engine-specific queries.
+    ///
+    /// Unlisted engines receive `query`. Every result is ranked against the
+    /// shared `ranking_query`, and the complete plan participates in in-flight
+    /// coalescing identity. This method does not increase calls per engine.
+    pub async fn search_with_query_plan(
+        &self,
+        query: SearchQuery,
+        engine_queries: BTreeMap<String, SearchQuery>,
+        ranking_query: impl Into<String>,
+    ) -> Result<SearchResults> {
         if self.engines.is_empty() {
             return Err(SearchError::NoEngines);
         }
@@ -152,12 +182,33 @@ impl Search {
         if query.query.trim().is_empty() {
             return Err(SearchError::InvalidQuery("Query cannot be empty".into()));
         }
+        let ranking_query = ranking_query.into();
+        if ranking_query.trim().is_empty() {
+            return Err(SearchError::InvalidQuery(
+                "Ranking query cannot be empty".into(),
+            ));
+        }
+        if engine_queries
+            .iter()
+            .any(|(shortcut, query)| shortcut.trim().is_empty() || query.query.trim().is_empty())
+        {
+            return Err(SearchError::InvalidQuery(
+                "Engine query plan cannot contain empty shortcuts or queries".into(),
+            ));
+        }
 
         let Some(coalescer) = self.request_coalescer.as_ref() else {
-            return self.execute_search(query).await;
+            return self
+                .execute_search(query, engine_queries, ranking_query)
+                .await;
         };
         let key = SearchRequestKey::new(
             query.clone(),
+            engine_queries
+                .iter()
+                .map(|(shortcut, query)| (shortcut.clone(), query.clone()))
+                .collect(),
+            ranking_query.clone(),
             self.engines.iter().map(|engine| engine.config()),
             self.aggregator.ranking_config(),
             self.timeout_override,
@@ -166,7 +217,13 @@ impl Search {
         loop {
             match coalescer.acquire(key.clone()) {
                 SearchCoalescingAdmission::Leader(leader) => {
-                    let result = self.execute_search(query.clone()).await;
+                    let result = self
+                        .execute_search(
+                            query.clone(),
+                            engine_queries.clone(),
+                            ranking_query.clone(),
+                        )
+                        .await;
                     if let Ok(results) = &result {
                         leader.complete(results.clone());
                     }
@@ -177,14 +234,24 @@ impl Search {
                         return Ok(results);
                     }
                 }
-                SearchCoalescingAdmission::Bypass => return self.execute_search(query).await,
+                SearchCoalescingAdmission::Bypass => {
+                    return self
+                        .execute_search(query, engine_queries, ranking_query)
+                        .await
+                }
             }
         }
     }
 
-    async fn execute_search(&self, query: SearchQuery) -> Result<SearchResults> {
+    async fn execute_search(
+        &self,
+        query: SearchQuery,
+        engine_queries: BTreeMap<String, SearchQuery>,
+        ranking_query: String,
+    ) -> Result<SearchResults> {
         let start = Instant::now();
         let query = Arc::new(query);
+        let engine_queries = Arc::new(engine_queries);
 
         let (engines_to_use, skipped_outcomes, skipped_failures) = self.select_engines(&query);
         debug!("Searching {} engines", engines_to_use.len());
@@ -194,7 +261,10 @@ impl Search {
             .map(|attempt| {
                 let engine = attempt.engine;
                 let permit = attempt.permit;
-                let query = Arc::clone(&query);
+                let query = engine_queries
+                    .get(engine.shortcut())
+                    .cloned()
+                    .unwrap_or_else(|| query.as_ref().clone());
                 let metrics = self.metrics.as_ref().map(Arc::clone);
                 let bulkhead = self.bulkhead.clone();
                 let timeout_duration = self
@@ -366,7 +436,7 @@ impl Search {
 
         let mut search_results = self
             .aggregator
-            .aggregate_for_query(&query.query, result_sets);
+            .aggregate_for_query(&ranking_query, result_sets);
         for suggestion in suggestions {
             search_results.add_suggestion(suggestion);
         }
@@ -547,6 +617,51 @@ mod tests {
 
     struct RichEngine {
         config: EngineConfig,
+    }
+
+    struct QueryRecordingEngine {
+        config: EngineConfig,
+        calls: Arc<AtomicUsize>,
+        observed_queries: Arc<Mutex<Vec<(String, String)>>>,
+    }
+
+    impl QueryRecordingEngine {
+        fn new(
+            shortcut: &str,
+            calls: Arc<AtomicUsize>,
+            observed_queries: Arc<Mutex<Vec<(String, String)>>>,
+        ) -> Self {
+            Self {
+                config: EngineConfig {
+                    name: shortcut.to_string(),
+                    shortcut: shortcut.to_string(),
+                    categories: vec![EngineCategory::General],
+                    ..Default::default()
+                },
+                calls,
+                observed_queries,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Engine for QueryRecordingEngine {
+        fn config(&self) -> &EngineConfig {
+            &self.config
+        }
+
+        async fn search(&self, query: &SearchQuery) -> Result<Vec<SearchResult>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.observed_queries
+                .lock()
+                .unwrap()
+                .push((self.config.shortcut.clone(), query.query.clone()));
+            Ok(vec![SearchResult::new(
+                format!("https://{}.example/evidence", self.config.shortcut),
+                query.query.clone(),
+                "Original portfolio context evidence",
+            )])
+        }
     }
 
     #[async_trait]
@@ -790,6 +905,78 @@ mod tests {
         );
         assert_eq!(results.reports().len(), 1);
         assert_eq!(results.reports()[0].request_id.as_deref(), Some("req-1"));
+    }
+
+    #[tokio::test]
+    async fn refined_retrieval_is_ranked_against_the_original_query() {
+        let evidence = SearchResult::new(
+            "https://evidence.example/report",
+            "Original query evidence",
+            "Original concepts and supporting evidence",
+        );
+        let expected = crate::query_match_score("original query evidence", &evidence);
+        let mut search = Search::new();
+        search.add_engine(MockEngine::new("source", vec![evidence]));
+
+        let results = search
+            .search_with_ranking_query(
+                SearchQuery::new("missing concept refinement"),
+                "original query evidence",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(results.items()[0].query_match_score, Some(expected));
+    }
+
+    #[tokio::test]
+    async fn query_plan_calls_each_engine_once_with_its_assigned_query() {
+        let first_calls = Arc::new(AtomicUsize::new(0));
+        let second_calls = Arc::new(AtomicUsize::new(0));
+        let observed_queries = Arc::new(Mutex::new(Vec::new()));
+        let mut search = Search::new();
+        search.add_engine(QueryRecordingEngine::new(
+            "first",
+            Arc::clone(&first_calls),
+            Arc::clone(&observed_queries),
+        ));
+        search.add_engine(QueryRecordingEngine::new(
+            "second",
+            Arc::clone(&second_calls),
+            Arc::clone(&observed_queries),
+        ));
+        let query_plan = BTreeMap::from([
+            (
+                "first".to_string(),
+                SearchQuery::new("first missing evidence"),
+            ),
+            (
+                "second".to_string(),
+                SearchQuery::new("second missing evidence"),
+            ),
+        ]);
+
+        let results = search
+            .search_with_query_plan(
+                SearchQuery::new("original portfolio context"),
+                query_plan,
+                "original portfolio context",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(first_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(second_calls.load(Ordering::SeqCst), 1);
+        let mut observed = observed_queries.lock().unwrap().clone();
+        observed.sort();
+        assert_eq!(
+            observed,
+            vec![
+                ("first".to_string(), "first missing evidence".to_string()),
+                ("second".to_string(), "second missing evidence".to_string()),
+            ]
+        );
+        assert_eq!(results.outcomes().len(), 2);
     }
 
     #[tokio::test]

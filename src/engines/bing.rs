@@ -2,8 +2,11 @@
 //!
 //! Bing's RSS endpoint is used instead of the bot-sensitive HTML results page.
 
-use crate::html_engine::{selector, HtmlEngine, HtmlParser};
+use crate::html_engine::{
+    selector, validate_search_response, HtmlEngine, HtmlParser, SearchResponseSpec,
+};
 use crate::{EngineCategory, EngineConfig, Result, SearchError, SearchQuery, SearchResult};
+use base64::Engine as _;
 use scraper::Html;
 use serde::Deserialize;
 
@@ -33,13 +36,26 @@ struct BingRssItem {
 /// Bing RSS/HTML response parser.
 pub struct BingParser;
 
+/// Bing browser-rendered HTML response parser.
+pub struct BingBrowserParser;
+
 /// Bing International search engine.
 pub type Bing = HtmlEngine<BingParser>;
+
+/// Bing International search through a browser renderer.
+pub type BingBrowser = HtmlEngine<BingBrowserParser>;
 
 impl Bing {
     /// Creates a new Bing engine with a default HTTP fetcher.
     pub fn new() -> Self {
         HtmlEngine::with_fetcher(BingParser, std::sync::Arc::new(crate::HttpFetcher::new()))
+    }
+}
+
+impl BingBrowser {
+    /// Creates a browser-rendered Bing engine with the given page fetcher.
+    pub fn new(fetcher: std::sync::Arc<dyn crate::PageFetcher>) -> Self {
+        HtmlEngine::with_fetcher(BingBrowserParser, fetcher)
     }
 }
 
@@ -65,6 +81,32 @@ impl HtmlParser for BingParser {
 
     fn build_url(&self, query: &SearchQuery) -> String {
         build_bing_rss_url(query)
+    }
+
+    fn validate(&self, response: &str) -> Result<()> {
+        validate_bing_response(response)
+    }
+
+    fn parse(&self, response: &str) -> Result<Vec<SearchResult>> {
+        parse_bing_response(response)
+    }
+}
+
+impl HtmlParser for BingBrowserParser {
+    fn default_config() -> EngineConfig {
+        EngineConfig {
+            name: "Bing Browser".to_string(),
+            shortcut: "bing_browser".to_string(),
+            ..BingParser::default_config()
+        }
+    }
+
+    fn build_url(&self, query: &SearchQuery) -> String {
+        build_bing_html_url(query)
+    }
+
+    fn validate(&self, response: &str) -> Result<()> {
+        validate_bing_html_response(response)
     }
 
     fn parse(&self, response: &str) -> Result<Vec<SearchResult>> {
@@ -94,18 +136,82 @@ pub(crate) fn build_bing_rss_url(query: &SearchQuery) -> String {
     url
 }
 
+fn build_bing_html_url(query: &SearchQuery) -> String {
+    let mut url = format!(
+        "https://www.bing.com/search?q={}",
+        urlencoding::encode(&query.query)
+    );
+    if query.page > 1 {
+        let first = (query.page - 1) * 10 + 1;
+        url.push_str(&format!("&first={first}"));
+    }
+    if let Some(language) = query.language.as_deref().map(str::trim) {
+        if !language.is_empty() {
+            url.push_str("&setlang=");
+            url.push_str(&urlencoding::encode(language));
+        }
+    }
+    if let Some(range) = query.time_range {
+        use crate::query::TimeRange;
+        let filter = match range {
+            TimeRange::Day => "ex1:\"ez1\"",
+            TimeRange::Week => "ex1:\"ez2\"",
+            TimeRange::Month => "ex1:\"ez3\"",
+            TimeRange::Year => "ex1:\"ez5\"",
+        };
+        url.push_str("&filters=");
+        url.push_str(&urlencoding::encode(filter));
+    }
+    url
+}
+
 pub(crate) fn parse_bing_response(response: &str) -> Result<Vec<SearchResult>> {
-    if response.trim_start().starts_with("<?xml") || response.contains("<rss") {
+    if is_bing_rss(response) {
         return parse_bing_rss(response);
     }
 
-    if is_bing_challenge_or_home_page(response) {
-        return Err(SearchError::Parse(
-            "Bing returned a challenge or search home page instead of results".to_string(),
+    let lowercase = response.to_ascii_lowercase();
+    if lowercase.contains("b_captcha") || lowercase.contains("captcha") {
+        return Err(SearchError::Challenge(
+            "Bing returned a CAPTCHA or challenge instead of results".to_string(),
+        ));
+    }
+    if lowercase.contains("id=\"b_header\"") && !lowercase.contains("class=\"b_algo") {
+        return Err(SearchError::InvalidResponse(
+            "Bing returned its home page instead of search results".to_string(),
         ));
     }
 
     parse_bing_html(response)
+}
+
+fn is_bing_rss(response: &str) -> bool {
+    response.trim_start().starts_with("<?xml") || response.contains("<rss")
+}
+
+pub(crate) fn validate_bing_response(response: &str) -> Result<()> {
+    if is_bing_rss(response) {
+        Ok(())
+    } else {
+        validate_bing_html_response(response)
+    }
+}
+
+fn validate_bing_html_response(html: &str) -> Result<()> {
+    validate_search_response(
+        html,
+        SearchResponseSpec {
+            engine: "Bing",
+            result_selectors: &["li.b_algo"],
+            empty_selectors: &["#b_results:empty", "#b_results .b_no"],
+            challenge_selectors: &[
+                "#b_captcha",
+                ".b_captcha",
+                "form[action*=\"captcha\"]",
+                "iframe[src*=\"captcha\"]",
+            ],
+        },
+    )
 }
 
 fn parse_bing_rss(xml: &str) -> Result<Vec<SearchResult>> {
@@ -150,8 +256,8 @@ fn parse_bing_html(html: &str) -> Result<Vec<SearchResult>> {
         let url = title_elem
             .value()
             .attr("href")
-            .unwrap_or_default()
-            .to_string();
+            .map(resolve_bing_result_url)
+            .unwrap_or_default();
 
         let content = element
             .select(&snippet_sel)
@@ -167,11 +273,41 @@ fn parse_bing_html(html: &str) -> Result<Vec<SearchResult>> {
     Ok(results)
 }
 
-fn is_bing_challenge_or_home_page(html: &str) -> bool {
-    let lowercase = html.to_ascii_lowercase();
-    lowercase.contains("b_captcha")
-        || lowercase.contains("captcha")
-        || (lowercase.contains("id=\"b_header\"") && !lowercase.contains("class=\"b_algo"))
+fn resolve_bing_result_url(value: &str) -> String {
+    let Ok(url) = url::Url::parse(value) else {
+        return value.to_string();
+    };
+    let is_bing_redirect = url
+        .host_str()
+        .is_some_and(|host| host.eq_ignore_ascii_case("bing.com") || host.ends_with(".bing.com"))
+        && url.path().starts_with("/ck/");
+    if !is_bing_redirect {
+        return value.to_string();
+    }
+
+    let Some(target) = url
+        .query_pairs()
+        .find_map(|(key, value)| (key == "u").then_some(value.into_owned()))
+    else {
+        return value.to_string();
+    };
+    let decoded = if let Some(encoded) = target.strip_prefix("a1") {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(encoded)
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+    } else {
+        Some(target)
+    };
+    decoded
+        .filter(|target| {
+            url::Url::parse(target).is_ok_and(|url| {
+                matches!(url.scheme(), "http" | "https")
+                    && url.username().is_empty()
+                    && url.password().is_none()
+            })
+        })
+        .unwrap_or_else(|| value.to_string())
 }
 
 #[cfg(test)]
@@ -223,6 +359,22 @@ mod tests {
         let url = parser.build_url(&query);
         assert!(url.starts_with("https://www.bing.com/search?q=rust%20programming"));
         assert!(url.contains("format=rss"));
+    }
+
+    #[test]
+    fn browser_url_uses_html_and_propagates_the_requested_locale() {
+        let parser = BingBrowserParser;
+        let query = SearchQuery::new("portable evidence")
+            .with_page(2)
+            .with_language("fr-FR")
+            .with_time_range(TimeRange::Month);
+        let url = parser.build_url(&query);
+
+        assert!(url.starts_with("https://www.bing.com/search?q=portable%20evidence"));
+        assert!(!url.contains("format=rss"));
+        assert!(url.contains("first=11"));
+        assert!(url.contains("setlang=fr-FR"));
+        assert!(url.contains("filters="));
     }
 
     #[test]
@@ -308,6 +460,42 @@ mod tests {
         );
         assert_eq!(results[1].title, "The Rust Book");
         assert_eq!(results[1].url, "https://doc.rust-lang.org/book/");
+    }
+
+    #[test]
+    fn html_parser_decodes_bing_click_redirects_to_canonical_hosts() {
+        let parser = BingBrowserParser;
+        let html = r#"
+        <html><body>
+        <ol id="b_results">
+            <li class="b_algo">
+                <h2><a href="https://www.bing.com/ck/a?x=1&amp;u=a1aHR0cHM6Ly9kb2NzLnJ1c3QtbGFuZy5vcmcvcmVmZXJlbmNlLw&amp;ntb=1">Rust Reference</a></h2>
+                <p>Official Rust language reference.</p>
+            </li>
+        </ol>
+        </body></html>
+        "#;
+
+        let results = parser.parse(html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://docs.rust-lang.org/reference/");
+    }
+
+    #[test]
+    fn browser_parser_classifies_result_empty_challenge_and_drift_pages() {
+        let parser = BingBrowserParser;
+        let result = r#"<ol id="b_results"><li class="b_algo"></li></ol>"#;
+        let empty = r#"<ol id="b_results"></ol>"#;
+        let challenge = r#"<main id="b_captcha"><form action="/captcha"></form></main>"#;
+        let home = r#"<html><body><header id="b_header"></header></body></html>"#;
+
+        assert!(parser.validate(result).is_ok());
+        assert!(parser.validate(empty).is_ok());
+        assert_eq!(parser.validate(challenge).unwrap_err().kind(), "challenge");
+        assert_eq!(
+            parser.validate(home).unwrap_err().kind(),
+            "invalid_response"
+        );
     }
 
     #[test]

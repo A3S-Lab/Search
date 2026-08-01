@@ -71,6 +71,8 @@ struct Inner {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct SearchRequestKey {
     query: SearchQuery,
+    engine_queries: Vec<(String, SearchQuery)>,
+    ranking_query: String,
     engines: Vec<EngineFingerprint>,
     ranking: RankingFingerprint,
     timeout_override: Option<Duration>,
@@ -123,12 +125,16 @@ impl From<&EngineConfig> for EngineFingerprint {
 impl SearchRequestKey {
     pub(crate) fn new<'a>(
         query: SearchQuery,
+        engine_queries: Vec<(String, SearchQuery)>,
+        ranking_query: String,
         engines: impl IntoIterator<Item = &'a EngineConfig>,
         ranking: RankingConfig,
         timeout_override: Option<Duration>,
     ) -> Self {
         Self {
             query,
+            engine_queries,
+            ranking_query,
             engines: engines.into_iter().map(EngineFingerprint::from).collect(),
             ranking: ranking.into(),
             timeout_override,
@@ -145,7 +151,7 @@ fn canonical_f64_bits(value: f64) -> u64 {
 }
 
 pub(crate) enum SearchCoalescingAdmission {
-    Leader(SearchFlightLeader),
+    Leader(Box<SearchFlightLeader>),
     Follower(Arc<SearchFlight>),
     Bypass,
 }
@@ -214,12 +220,12 @@ impl SearchCoalescer {
         });
         flights.insert(key.clone(), Arc::clone(&flight));
         self.inner.leader_requests.fetch_add(1, Ordering::Relaxed);
-        SearchCoalescingAdmission::Leader(SearchFlightLeader {
+        SearchCoalescingAdmission::Leader(Box::new(SearchFlightLeader {
             coalescer: self.clone(),
             key,
             flight,
             finished: false,
-        })
+        }))
     }
 
     fn remove(&self, key: &SearchRequestKey, flight: &Arc<SearchFlight>) {
