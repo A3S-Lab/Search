@@ -9,13 +9,26 @@ use scraper::Html;
 /// Brave HTML parser.
 pub struct BraveParser;
 
+/// Brave browser-rendered HTML parser.
+pub struct BraveBrowserParser;
+
 /// Brave search engine.
 pub type Brave = HtmlEngine<BraveParser>;
+
+/// Brave Search through a browser renderer.
+pub type BraveBrowser = HtmlEngine<BraveBrowserParser>;
 
 impl Brave {
     /// Creates a new Brave engine with a default HTTP fetcher.
     pub fn new() -> Self {
         HtmlEngine::with_fetcher(BraveParser, std::sync::Arc::new(crate::HttpFetcher::new()))
+    }
+}
+
+impl BraveBrowser {
+    /// Creates a browser-rendered Brave engine with the given page fetcher.
+    pub fn new(fetcher: std::sync::Arc<dyn crate::PageFetcher>) -> Self {
+        HtmlEngine::with_fetcher(BraveBrowserParser, fetcher)
     }
 }
 
@@ -57,6 +70,22 @@ impl HtmlParser for BraveParser {
     }
 
     fn validate(&self, html: &str) -> Result<()> {
+        let document = Html::parse_document(html);
+        let title_selector = selector("title")?;
+        let title = document
+            .select(&title_selector)
+            .next()
+            .map(|element| element.text().collect::<String>().to_ascii_lowercase());
+        let lowercase = html.to_ascii_lowercase();
+        if title.is_some_and(|title| title.contains("captcha"))
+            || lowercase.contains(r#"page:"/captcha""#)
+            || lowercase.contains("schedule a captcha")
+        {
+            return Err(crate::SearchError::Challenge(
+                "Brave returned a CAPTCHA or challenge instead of search results".to_string(),
+            ));
+        }
+
         validate_search_response(
             html,
             SearchResponseSpec {
@@ -68,6 +97,7 @@ impl HtmlParser for BraveParser {
                     "[data-testid=\"no-results\"]",
                 ],
                 challenge_selectors: &[
+                    ".captcha-wrapper",
                     "form[action*=\"challenge\"]",
                     "iframe[src*=\"captcha\"]",
                     "[data-testid*=\"captcha\"]",
@@ -114,6 +144,28 @@ impl HtmlParser for BraveParser {
     }
 }
 
+impl HtmlParser for BraveBrowserParser {
+    fn default_config() -> EngineConfig {
+        EngineConfig {
+            name: "Brave Browser".to_string(),
+            shortcut: "brave_browser".to_string(),
+            ..BraveParser::default_config()
+        }
+    }
+
+    fn build_url(&self, query: &SearchQuery) -> String {
+        BraveParser.build_url(query)
+    }
+
+    fn validate(&self, html: &str) -> Result<()> {
+        BraveParser.validate(html)
+    }
+
+    fn parse(&self, html: &str) -> Result<Vec<SearchResult>> {
+        BraveParser.parse(html)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,6 +192,15 @@ mod tests {
     fn test_brave_default() {
         let engine = Brave::default();
         assert_eq!(engine.config().name, "Brave");
+    }
+
+    #[test]
+    fn browser_variant_has_an_independent_shortcut() {
+        let fetcher: Arc<dyn crate::PageFetcher> = Arc::new(HttpFetcher::new());
+        let engine = BraveBrowser::new(fetcher);
+
+        assert_eq!(engine.name(), "Brave Browser");
+        assert_eq!(engine.shortcut(), "brave_browser");
     }
 
     #[test]
@@ -174,10 +235,21 @@ mod tests {
         let result = r#"<main id="search-page"><div id="results"><div class="snippet" data-type="web"></div></div></main>"#;
         let empty = r#"<main id="search-page"><div id="results"><div class="no-results"></div></div></main>"#;
         let challenge = r#"<main><iframe src="/captcha/challenge"></iframe></main>"#;
+        let proof_of_work_challenge = r#"<title>Captcha - Brave Search</title><main class="captcha-wrapper"><h1>Verify you are human</h1></main>"#;
+        let scheduled_challenge =
+            r#"<title>Brave Search</title><script>data={page:"/captcha"}</script>"#;
 
         assert!(parser.validate(result).is_ok());
         assert!(parser.validate(empty).is_ok());
         assert_eq!(parser.validate(challenge).unwrap_err().kind(), "challenge");
+        assert_eq!(
+            parser.validate(proof_of_work_challenge).unwrap_err().kind(),
+            "challenge"
+        );
+        assert_eq!(
+            parser.validate(scheduled_challenge).unwrap_err().kind(),
+            "challenge"
+        );
         assert_eq!(
             parser
                 .validate("<html><body><main id=homepage></main></body></html>")

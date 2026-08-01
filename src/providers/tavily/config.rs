@@ -64,7 +64,7 @@ impl TavilyConfig {
             search_depth: TavilySearchDepth::Basic,
             search_depth_explicit: false,
             chunks_per_source: None,
-            max_results: 5,
+            max_results: 10,
             topic: TavilyTopic::General,
             topic_explicit: false,
             include_answer: TavilyAnswer::None,

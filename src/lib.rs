@@ -105,6 +105,7 @@ mod config;
 mod engine;
 mod enrich;
 mod error;
+mod evidence;
 mod extract;
 mod fetcher;
 mod fetcher_http;
@@ -149,10 +150,11 @@ pub use health::{HealthConfig, HealthMonitor};
 pub use html_engine::{selector, HtmlEngine, HtmlParser};
 pub use metrics::{Metrics, MetricsSnapshot, TimingGuard};
 pub use quality::{
-    query_match_score, SearchCascade, SearchCascadeCounts, SearchCascadeOutcomeV1,
-    SearchCascadeReceiptBindingV1, SearchCascadeReceiptError, SearchCascadeReceiptV1,
-    SearchQuality, SearchQualityFloor, SearchQueryBindingV1, SearchResultsBindingV1,
-    SearchTierDecision, SearchTierReport, SEARCH_CASCADE_RECEIPT_V1_SCHEMA,
+    query_match_score, refine_query_for_evidence, refine_query_portfolio, SearchCascade,
+    SearchCascadeCounts, SearchCascadeOutcomeV1, SearchCascadeReceiptBindingV1,
+    SearchCascadeReceiptError, SearchCascadeReceiptV1, SearchQuality, SearchQualityFloor,
+    SearchQueryBindingV1, SearchQueryRefinement, SearchResultsBindingV1, SearchTierDecision,
+    SearchTierReport, SEARCH_CASCADE_RECEIPT_V1_SCHEMA,
 };
 pub use query::{SafeSearch, SearchQuery, TimeRange};
 pub use ranking::RankingConfig;

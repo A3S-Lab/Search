@@ -6,6 +6,10 @@ use crate::ranking::calibrated_native_relevance;
 use crate::result::RankSignal;
 use crate::{query_match_score, RankingConfig, SearchResult, SearchResults};
 
+mod coverage;
+
+pub(crate) use coverage::rerank_for_query;
+
 #[derive(Debug)]
 struct Candidate {
     result: SearchResult,
@@ -130,7 +134,10 @@ impl Aggregator {
             }
         }
 
-        let results = finalize_candidates(url_map);
+        let mut results = finalize_candidates(url_map);
+        if let Some(query) = query {
+            rerank_for_query(query, &mut results);
+        }
 
         let mut search_results = SearchResults::new();
         for result in results {

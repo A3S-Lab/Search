@@ -199,10 +199,10 @@ plan:
 ```text
 SearchQuery
     │
-    ├─ 01  headless      Google through Chrome/Chromium
+    ├─ 01  headless      Brave Search + Bing through Chrome/Chromium
     │       └─ quality met? stop
     │
-    ├─ 02  HTTP / RSS    DuckDuckGo + Brave + Bing + Wikipedia
+    ├─ 02  HTTP / RSS    DuckDuckGo + Bing + Wikipedia
     │       └─ quality met? stop
     │
     └─ 03  native API    AnySearch + Tavily
@@ -211,7 +211,8 @@ SearchQuery
 
 The CLI bounds that profile:
 
-1. The first headless attempt is capped at five seconds.
+1. A non-final headless tier receives half of the remaining end-to-end
+   deadline; a final headless tier receives all remaining time.
 2. All tiers share one end-to-end deadline, 20 seconds by default.
 3. Engines inside one tier run concurrently with isolated timeouts.
 4. One source failure never discards successful results from another source.
@@ -223,6 +224,25 @@ The CLI bounds that profile:
    source membership or embedding query-specific routing.
 8. Headless retry observations are emitted as structured request reports and
    can be bounded independently from fallback activation.
+
+When a later tier is required, the CLI measures which normalized query units
+are least represented in the current ranked evidence window. It then builds a
+bounded query portfolio that partitions those gaps across the engines already
+planned for that tier. Every refinement retains deterministic context covering
+at least half of the original normalized character weight, so a retrieved row
+can still meet the unchanged original-query alignment floor. When there are
+fewer distinct refinements than engines, the portfolio is assigned again for
+transport redundancy instead of leaving one challenge-prone engine solely
+responsible for a gap. Each engine is still called at most once, and every
+returned row is scored and reranked against the original query rather than the
+retrieval refinement. This generic mechanism has no query, language, topic,
+source, publisher, or provider exceptions.
+
+Every assigned refinement is recorded in `SearchResults.reports` with schema
+`a3s/search-query-refinement/v1`, including its tier, engine shortcut,
+portfolio index, effective query, and coverage counts. Those reports are part
+of the frozen result-set and cascade-receipt bindings. Embedded callers can use
+`search_with_query_plan` for the same one-query-per-engine contract.
 
 Build with `--no-default-features` when a host must not compile or run a
 browser. The CLI profile then starts with HTTP/RSS and can continue to native
@@ -298,11 +318,13 @@ them. Explicit compatible values intentionally pin those fields.
 
 | Shortcut | Source | Transport | Built-in default |
 | --- | --- | --- | --- |
-| `g` | Google | A3S Browser | Yes |
+| `brave_browser` | Brave Search | A3S Browser | Headless build |
 | `ddg` | DuckDuckGo | HTTP | Yes |
-| `brave` | Brave Search | HTTP | Yes |
+| `brave` | Brave Search | HTTP | No-headless build |
 | `bing` | Bing International | RSS | Yes |
 | `wiki` | Wikipedia | MediaWiki JSON API | Yes |
+| `bing_browser` | Bing International | A3S Browser | Headless build |
+| `g` | Google | A3S Browser | Explicit |
 | `baidu` | Baidu | A3S Browser | Explicit |
 | `sogou` | Sogou | HTTP | Explicit |
 | `360` | 360 Search | HTTP | Explicit |
@@ -318,6 +340,15 @@ than a false empty result.
 The aggregator first deduplicates each engine response, then merges results by
 normalized URL across engines. It removes common tracking parameters and
 combines independent provenance, positions, rich fields, and rank signals.
+After fusion, a query-set coverage pass can promote complementary visible
+evidence into the ranked head when higher rows repeat concepts already
+represented. For equal marginal evidence, it prefers an unseen normalized host,
+then stronger original-query alignment, base score, and original order. The
+base first result remains authoritative, scores are unchanged, and the
+coverage pass contains no topic, language, source, or publisher rules.
+Title and snippet remain authoritative for base query alignment. Provider or
+extracted full text may supplement set coverage and the quality gate under a
+per-result limit of 256 Ki normalized characters.
 
 Each engine contributes through weighted reciprocal-rank fusion:
 
@@ -331,11 +362,19 @@ engine weight
 Provider relevance values are calibrated only within that provider response;
 incomparable API score scales are never multiplied directly across sources.
 Query alignment uses visible title and snippet text plus a weak URL signal.
-Unicode units and adaptive character n-grams let unsegmented queries collect
-evidence across the visible title and snippet. Mixed-script queries retain
-matching evidence from every substantive script, so a high-overlap result in
-only one script cannot stop fallback. The mechanism remains language-neutral
-and contains no topic, publisher, site, or provider exceptions.
+Unicode-normalized units and adaptive character n-grams combine evidence
+across the visible title and snippet. Combining marks stay inside their source
+word during query segmentation, while unsegmented ideographic text remains a
+single evidence sequence. Punctuation-connected identifiers such as protocol
+versions and document numbers remain one exact evidence atom instead of being
+matched as unrelated fragments. Mixed-script queries retain matching evidence
+from every substantive script, so a high-overlap result in only one script
+cannot stop fallback. The ranked evidence window must also cover the composite
+query as a set, and only rows that independently reach the existing local
+alignment floor may complete that coverage. Repeating or stitching weak
+subsets across five rows no longer masquerades as broad evidence. The mechanism
+remains language-neutral and contains no topic, publisher, site, or provider
+exceptions.
 
 For a display limit of ten, the default floor evaluates the leading evidence
 window against these generic signals:
@@ -345,7 +384,7 @@ window against these generic signals:
 | Usable HTTP(S) results | Up to five |
 | Distinct normalized hosts | Up to three |
 | Contributing engines | At least one |
-| Per-result query match | At least `0.35` for half the target |
+| Per-result or unique marginal query match | At least `0.35` for half the target |
 | Mean query match | At least `0.30` |
 | Cross-engine consensus | Observable, not required by default |
 
@@ -445,10 +484,10 @@ ranking {
   native_relevance_weight = 0.2
 }
 
-engine "g" {
+engine "brave_browser" {
   enabled = true
   weight = 1.2
-  timeout = 8
+  timeout = 12
 }
 
 provider "anysearch" {
@@ -576,6 +615,9 @@ async fn enrich(results: &mut SearchResults) {
 ```
 
 Failed enrichment keeps the original snippet.
+Full text supplements bounded set-level evidence checks; it does not replace
+title/snippet alignment or directly increase a result's base rank score. For
+quality gating, a matching body is capped at the same authority as a snippet.
 
 Conventional engines support a static proxy or a rotating `ProxyPool`.
 Provider APIs own separate bounded HTTP clients and intentionally do not

@@ -27,9 +27,11 @@ pub(crate) fn list_engines(config_path: Option<&Path>) -> Result<()> {
     #[cfg(feature = "headless")]
     {
         println!();
-        println!("  Headless (uses an installed Chrome/Chromium or Lightpanda):");
-        println!("    g        - Google");
-        println!("    baidu    - Baidu (百度)");
+        println!("  Headless (uses installed Chrome/Chromium; Lightpanda is optional):");
+        println!("    brave_browser - Brave Search (built-in default)");
+        println!("    bing_browser  - Bing International");
+        println!("    g             - Google");
+        println!("    baidu         - Baidu (百度)");
     }
 
     println!();

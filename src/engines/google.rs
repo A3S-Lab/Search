@@ -39,9 +39,15 @@ impl HtmlParser for GoogleParser {
     fn build_url(&self, query: &SearchQuery) -> String {
         use crate::query::{SafeSearch, TimeRange};
         let mut url = format!(
-            "https://www.google.com/search?q={}&hl=en",
+            "https://www.google.com/search?q={}",
             urlencoding::encode(&query.query)
         );
+        if let Some(language) = query.language.as_deref().map(str::trim) {
+            if !language.is_empty() {
+                url.push_str("&hl=");
+                url.push_str(&urlencoding::encode(language));
+            }
+        }
         if query.page > 1 {
             url.push_str(&format!("&start={}", (query.page - 1) * 10));
         }
@@ -176,6 +182,16 @@ mod tests {
         assert_eq!(engine.shortcut(), "g");
         assert_eq!(engine.weight(), 1.5);
         assert!(engine.is_enabled());
+    }
+
+    #[test]
+    fn build_url_uses_the_requested_locale_without_forcing_english() {
+        let parser = GoogleParser;
+        let automatic = parser.build_url(&SearchQuery::new("portable evidence"));
+        let localized = parser.build_url(&SearchQuery::new("便携式证据").with_language("zh-CN"));
+
+        assert!(!automatic.contains("hl="), "{automatic}");
+        assert!(localized.contains("hl=zh-CN"), "{localized}");
     }
 
     #[test]

@@ -17,8 +17,8 @@ mod baidu;
 #[cfg(feature = "headless")]
 mod google;
 
-pub use bing::{Bing, BingParser};
-pub use brave::{Brave, BraveParser};
+pub use bing::{Bing, BingBrowser, BingBrowserParser, BingParser};
+pub use brave::{Brave, BraveBrowser, BraveBrowserParser, BraveParser};
 pub use duckduckgo::{DuckDuckGo, DuckDuckGoParser};
 pub use wikipedia::Wikipedia;
 

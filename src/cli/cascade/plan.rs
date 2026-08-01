@@ -4,9 +4,12 @@ use std::collections::HashSet;
 
 use a3s_search::{providers::BuiltinProvider, SearchConfig};
 
+#[cfg(feature = "headless")]
+const DEFAULT_HTTP_TIER: [&str; 3] = ["ddg", "bing", "wiki"];
+#[cfg(not(feature = "headless"))]
 const DEFAULT_HTTP_TIER: [&str; 4] = ["ddg", "brave", "bing", "wiki"];
 #[cfg(feature = "headless")]
-const DEFAULT_HEADLESS_TIER: [&str; 1] = ["g"];
+const DEFAULT_HEADLESS_TIER: [&str; 2] = ["brave_browser", "bing_browser"];
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum EngineTier {
@@ -174,7 +177,7 @@ fn engine_tier(shortcut: &str) -> Option<EngineTier> {
         return Some(EngineTier::Api);
     }
     match shortcut {
-        "g" | "baidu" => Some(EngineTier::Headless),
+        "g" | "baidu" | "bing_browser" | "brave_browser" => Some(EngineTier::Headless),
         "ddg" | "brave" | "bing" | "wiki" | "sogou" | "360" | "bing_cn" => {
             Some(EngineTier::HttpRss)
         }
@@ -199,6 +202,12 @@ mod tests {
 
         #[cfg(feature = "headless")]
         assert_eq!(tiers[0].0, EngineTier::Headless);
+        #[cfg(feature = "headless")]
+        assert_eq!(tiers[0].1, ["brave_browser", "bing_browser"]);
+        #[cfg(feature = "headless")]
+        assert_eq!(plan.http_rss, ["ddg", "bing", "wiki"]);
+        #[cfg(not(feature = "headless"))]
+        assert_eq!(plan.http_rss, ["ddg", "brave", "bing", "wiki"]);
         assert!(tiers.iter().any(|(tier, _)| *tier == EngineTier::HttpRss));
         assert!(tiers.iter().any(|(tier, _)| *tier == EngineTier::Api));
         assert!(plan.unknown().is_empty());
