@@ -1,9 +1,8 @@
 //! Lazy browser-tier construction and cleanup.
 
-use std::collections::BTreeMap;
 use std::time::Instant;
 
-use a3s_search::{EngineFailure, EngineOutcomeKind, SearchQuery, SearchReport, SearchResults};
+use a3s_search::{EngineFailure, EngineOutcomeKind, SearchReport, SearchResults};
 
 const RETRY_OBSERVATION_SCHEMA: &str = "a3s/search-retry-observation/v1";
 
@@ -76,7 +75,6 @@ use crate::configured_engine_config;
 #[cfg(feature = "headless")]
 pub(super) async fn execute_headless_tier(
     request: &CascadeRequest<'_>,
-    query_plan: &BTreeMap<String, SearchQuery>,
     controls: &SharedControls,
     shortcuts: &[String],
     deadline: Instant,
@@ -170,8 +168,6 @@ pub(super) async fn execute_headless_tier(
         search,
         setup_results,
         &request.query,
-        query_plan,
-        &request.query.query,
         "headless",
         render_budget,
     )
@@ -185,7 +181,6 @@ pub(super) async fn execute_headless_tier(
 #[cfg(not(feature = "headless"))]
 pub(super) async fn execute_headless_tier(
     request: &CascadeRequest<'_>,
-    _query_plan: &BTreeMap<String, SearchQuery>,
     _controls: &SharedControls,
     shortcuts: &[String],
     _deadline: Instant,

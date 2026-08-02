@@ -99,13 +99,13 @@
 
 mod aggregator;
 mod bulkhead;
+mod cascade;
 mod circuit;
 mod coalescer;
 mod config;
 mod engine;
 mod enrich;
 mod error;
-mod evidence;
 mod extract;
 mod fetcher;
 mod fetcher_http;
@@ -113,7 +113,6 @@ mod health;
 mod html_engine;
 pub mod metrics;
 pub mod proxy;
-mod quality;
 mod query;
 mod ranking;
 mod result;
@@ -134,6 +133,12 @@ pub use bulkhead::{
     Bulkhead, BulkheadConfig, BulkheadPermit, BulkheadRejection, BulkheadRejectionKind,
     BulkheadSnapshot,
 };
+pub use cascade::{
+    RetrievalHealth, RetrievalRequirements, SearchCascade, SearchCascadeCounts,
+    SearchCascadeOutcomeV2, SearchCascadeReceiptBindingV2, SearchCascadeReceiptError,
+    SearchCascadeReceiptV2, SearchQueryBindingV1, SearchResultsBindingV2, SearchTierDecision,
+    SearchTierDecisionSource, SearchTierReport, SEARCH_CASCADE_RECEIPT_V2_SCHEMA,
+};
 pub use circuit::{
     CircuitBreaker, CircuitBreakerConfig, CircuitOpen, CircuitPermit, CircuitSnapshot,
     CircuitState, CircuitWindowConfig,
@@ -149,13 +154,6 @@ pub use fetcher_http::{HttpFetcher, PooledHttpFetcher};
 pub use health::{HealthConfig, HealthMonitor};
 pub use html_engine::{selector, HtmlEngine, HtmlParser};
 pub use metrics::{Metrics, MetricsSnapshot, TimingGuard};
-pub use quality::{
-    query_match_score, refine_query_for_evidence, refine_query_portfolio, SearchCascade,
-    SearchCascadeCounts, SearchCascadeOutcomeV1, SearchCascadeReceiptBindingV1,
-    SearchCascadeReceiptError, SearchCascadeReceiptV1, SearchQuality, SearchQualityFloor,
-    SearchQueryBindingV1, SearchQueryRefinement, SearchResultsBindingV1, SearchTierDecision,
-    SearchTierReport, SEARCH_CASCADE_RECEIPT_V1_SCHEMA,
-};
 pub use query::{SafeSearch, SearchQuery, TimeRange};
 pub use ranking::RankingConfig;
 pub use result::{

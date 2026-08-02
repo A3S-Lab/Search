@@ -106,11 +106,6 @@ pub struct SearchResult {
     /// extract the page body.
     #[serde(default)]
     pub full_text: Option<String>,
-    /// Language-neutral overlap between the query and this result's visible
-    /// title, URL, and snippet. The value is in the inclusive `0.0..=1.0`
-    /// range and is absent for results that were not ranked against a query.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub query_match_score: Option<f64>,
     #[serde(skip)]
     pub(crate) rank_signals: BTreeMap<String, RankSignal>,
 }
@@ -136,7 +131,6 @@ impl SearchResult {
             favicon: None,
             images: Vec::new(),
             full_text: None,
-            query_match_score: None,
             rank_signals: BTreeMap::new(),
         }
     }

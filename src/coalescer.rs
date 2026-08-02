@@ -71,8 +71,6 @@ struct Inner {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct SearchRequestKey {
     query: SearchQuery,
-    engine_queries: Vec<(String, SearchQuery)>,
-    ranking_query: String,
     engines: Vec<EngineFingerprint>,
     ranking: RankingFingerprint,
     timeout_override: Option<Duration>,
@@ -93,7 +91,6 @@ struct EngineFingerprint {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct RankingFingerprint {
     rrf_rank_constant_bits: u64,
-    query_alignment_weight_bits: u64,
     native_relevance_weight_bits: u64,
 }
 
@@ -101,7 +98,6 @@ impl From<RankingConfig> for RankingFingerprint {
     fn from(config: RankingConfig) -> Self {
         Self {
             rrf_rank_constant_bits: canonical_f64_bits(config.rrf_rank_constant),
-            query_alignment_weight_bits: canonical_f64_bits(config.query_alignment_weight),
             native_relevance_weight_bits: canonical_f64_bits(config.native_relevance_weight),
         }
     }
@@ -125,16 +121,12 @@ impl From<&EngineConfig> for EngineFingerprint {
 impl SearchRequestKey {
     pub(crate) fn new<'a>(
         query: SearchQuery,
-        engine_queries: Vec<(String, SearchQuery)>,
-        ranking_query: String,
         engines: impl IntoIterator<Item = &'a EngineConfig>,
         ranking: RankingConfig,
         timeout_override: Option<Duration>,
     ) -> Self {
         Self {
             query,
-            engine_queries,
-            ranking_query,
             engines: engines.into_iter().map(EngineFingerprint::from).collect(),
             ranking: ranking.into(),
             timeout_override,

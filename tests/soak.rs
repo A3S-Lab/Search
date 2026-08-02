@@ -114,7 +114,9 @@ async fn deterministic_reliability_soak() {
     let requests = counters.requests.load(Ordering::Relaxed);
     let completed = counters.completed.load(Ordering::Relaxed);
     let deadline_timeouts = counters.deadline_timeouts.load(Ordering::Relaxed);
-    let quality_failures = counters.quality_failures.load(Ordering::Relaxed);
+    let retrieval_requirement_failures = counters
+        .retrieval_requirement_failures
+        .load(Ordering::Relaxed);
     let api_only = counters.api_only.load(Ordering::Relaxed);
     let http_fallback = counters.http_fallback.load(Ordering::Relaxed);
     let headless_fallback = counters.headless_fallback.load(Ordering::Relaxed);
@@ -131,7 +133,7 @@ async fn deterministic_reliability_soak() {
             "requests": requests,
             "completed": completed,
             "deadline_timeouts": deadline_timeouts,
-            "quality_failures": quality_failures,
+            "retrieval_requirement_failures": retrieval_requirement_failures,
             "paths": {
                 "api_only": api_only,
                 "http_fallback": http_fallback,
@@ -182,8 +184,8 @@ async fn deterministic_reliability_soak() {
     assert_eq!(completed, requests, "not every request completed");
     assert_eq!(deadline_timeouts, 0, "request deadline was exceeded");
     assert_eq!(
-        quality_failures, 0,
-        "fallback exhausted below the quality floor"
+        retrieval_requirement_failures, 0,
+        "fallback exhausted below the structural retrieval requirements"
     );
     assert!(api_only > 0, "healthy API path was never observed");
     assert!(http_fallback > 0, "HTTP fallback was never observed");

@@ -7,7 +7,8 @@ const CONFIDENCE_Z_95: f64 = 1.959_963_984_540_054;
 impl LiveCanaryPolicy {
     pub(super) fn evaluate(&self, measurements: &LiveCanaryMeasurements) -> LiveCanaryGateReport {
         let nonempty = RateEstimate::new(measurements.nonempty, measurements.attempts);
-        let useful = RateEstimate::new(measurements.useful, measurements.attempts);
+        let structural_sufficiency =
+            RateEstimate::new(measurements.structurally_sufficient, measurements.attempts);
         let terminal_failures =
             RateEstimate::new(measurements.terminal_failures, measurements.attempts);
         let circuit_open = RateEstimate::new(measurements.circuit_open, measurements.engine_slots);
@@ -67,9 +68,9 @@ impl LiveCanaryPolicy {
             ));
         }
         if measurements.nonempty > measurements.completed
-            || measurements.useful > measurements.nonempty
+            || measurements.structurally_sufficient > measurements.nonempty
         {
-            violations.push("quality counters are internally inconsistent".to_string());
+            violations.push("retrieval counters are internally inconsistent".to_string());
         }
         if measurements.engine_slots == 0
             || measurements.circuit_open > measurements.engine_slots
@@ -88,10 +89,10 @@ impl LiveCanaryPolicy {
                 nonempty.lower_95, self.minimum_nonempty_rate_lcb
             ));
         }
-        if useful.lower_95 < self.minimum_useful_rate_lcb {
+        if structural_sufficiency.lower_95 < self.minimum_structural_sufficiency_rate_lcb {
             violations.push(format!(
-                "useful rate lower bound {:.6} below {:.6}",
-                useful.lower_95, self.minimum_useful_rate_lcb
+                "structural sufficiency rate lower bound {:.6} below {:.6}",
+                structural_sufficiency.lower_95, self.minimum_structural_sufficiency_rate_lcb
             ));
         }
         if terminal_failures.upper_95 > self.maximum_terminal_failure_rate_ucb {
@@ -196,7 +197,7 @@ impl LiveCanaryPolicy {
         LiveCanaryGateReport {
             passed: violations.is_empty(),
             nonempty,
-            useful,
+            structural_sufficiency,
             terminal_failures,
             circuit_open,
             rate_limited,
@@ -232,7 +233,7 @@ pub(super) struct LiveCanaryMeasurements {
     pub terminal_failures: u64,
     pub pre_execution_failures: u64,
     pub nonempty: u64,
-    pub useful: u64,
+    pub structurally_sufficient: u64,
     pub engine_slots: u64,
     pub upstream_calls: u64,
     pub retry_attempts: u64,
@@ -256,7 +257,7 @@ pub(super) struct LiveCanaryMeasurements {
 pub(super) struct LiveCanaryGateReport {
     pub passed: bool,
     pub nonempty: RateEstimate,
-    pub useful: RateEstimate,
+    pub structural_sufficiency: RateEstimate,
     pub terminal_failures: RateEstimate,
     pub circuit_open: RateEstimate,
     pub rate_limited: RateEstimate,
@@ -324,7 +325,7 @@ mod tests {
             attempt_log_terminal_records: 40,
             completed: 40,
             nonempty: 40,
-            useful: 40,
+            structurally_sufficient: 40,
             engine_slots: 100,
             upstream_calls: 100,
             retry_attempts: 2,
@@ -358,7 +359,7 @@ mod tests {
         measurements.attempt_log_terminal_records = 20;
         measurements.completed = 20;
         measurements.nonempty = 20;
-        measurements.useful = 20;
+        measurements.structurally_sufficient = 20;
         let report = policy().evaluate(&measurements);
         assert!(!report.passed);
         assert!(report
@@ -377,7 +378,7 @@ mod tests {
         measurements.terminal_failures = 5;
         measurements.pre_execution_failures = 1;
         measurements.nonempty = 35;
-        measurements.useful = 20;
+        measurements.structurally_sufficient = 20;
         measurements.p95_latency_ms = 10_001;
         measurements.p99_latency_ms = 30_001;
         measurements.retry_attempts = 50;
@@ -401,7 +402,7 @@ mod tests {
             "attempt-start log records",
             "attempt-terminal log records",
             "pre-execution terminal",
-            "useful rate",
+            "structural sufficiency rate",
             "terminal failure rate",
             "p95 latency",
             "p99 latency",

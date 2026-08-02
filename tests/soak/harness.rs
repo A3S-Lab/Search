@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 
 use a3s_search::{
     Bulkhead, BulkheadConfig, CircuitBreaker, CircuitBreakerConfig, CircuitState,
-    CircuitWindowConfig, Engine, EngineConfig, EngineOutcomeKind, Search, SearchCascade,
-    SearchCoalescer, SearchQualityFloor, SearchQuery, SearchResult, SearchResults,
+    CircuitWindowConfig, Engine, EngineConfig, EngineOutcomeKind, RetrievalRequirements, Search,
+    SearchCascade, SearchCoalescer, SearchQuery, SearchResult, SearchResults,
 };
 use async_trait::async_trait;
 
@@ -299,7 +299,7 @@ impl SoakRuntime {
     }
 
     pub(super) async fn run_query(&self, query: SearchQuery) -> RequestObservation {
-        let mut cascade = SearchCascade::new(query.clone(), SearchQualityFloor::for_limit(5));
+        let mut cascade = SearchCascade::new(query.clone(), RetrievalRequirements::for_limit(5));
         let api = self.search(self.api.clone());
         let http = self.search(self.http.clone());
         let headless = self.search(self.headless.clone());
@@ -332,7 +332,7 @@ impl SoakRuntime {
             .count() as u64;
         RequestObservation {
             tiers: cascade.reports().len(),
-            quality_met: !cascade.needs_next_tier(),
+            requirements_met: !cascade.needs_next_tier(),
             circuit_open,
             rejected,
         }
@@ -405,7 +405,7 @@ async fn search_or_empty(search: &Search, query: SearchQuery) -> SearchResults {
 #[derive(Debug)]
 pub(super) struct RequestObservation {
     pub tiers: usize,
-    pub quality_met: bool,
+    pub requirements_met: bool,
     pub circuit_open: u64,
     pub rejected: u64,
 }
@@ -415,7 +415,7 @@ pub(super) struct SoakCounters {
     pub requests: AtomicU64,
     pub completed: AtomicU64,
     pub deadline_timeouts: AtomicU64,
-    pub quality_failures: AtomicU64,
+    pub retrieval_requirement_failures: AtomicU64,
     pub api_only: AtomicU64,
     pub http_fallback: AtomicU64,
     pub headless_fallback: AtomicU64,
@@ -431,8 +431,9 @@ impl SoakCounters {
     pub(super) fn record(&self, observation: RequestObservation, elapsed: Duration) {
         self.completed.fetch_add(1, Ordering::Relaxed);
         self.latency.record(elapsed);
-        if !observation.quality_met {
-            self.quality_failures.fetch_add(1, Ordering::Relaxed);
+        if !observation.requirements_met {
+            self.retrieval_requirement_failures
+                .fetch_add(1, Ordering::Relaxed);
         }
         match observation.tiers {
             1 => &self.api_only,

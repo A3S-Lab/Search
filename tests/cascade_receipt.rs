@@ -1,24 +1,22 @@
 use a3s_search::{
-    Aggregator, SearchCascade, SearchCascadeOutcomeV1, SearchCascadeReceiptBindingV1,
-    SearchQualityFloor, SearchQuery, SearchQueryBindingV1, SearchResult, SearchTierDecision,
-    SEARCH_CASCADE_RECEIPT_V1_SCHEMA,
+    Aggregator, RetrievalRequirements, SearchCascade, SearchCascadeOutcomeV2,
+    SearchCascadeReceiptBindingV2, SearchQuery, SearchQueryBindingV1, SearchResult,
+    SearchTierDecision, SearchTierDecisionSource, SEARCH_CASCADE_RECEIPT_V2_SCHEMA,
 };
 
 #[test]
 fn downstream_callers_can_finish_serialize_and_validate_a_lazy_cascade() {
     let query = "portable public receipt";
-    let results = Aggregator::new().aggregate_for_query(
-        query,
-        vec![(
-            "generic-engine".to_string(),
-            vec![SearchResult::new(
-                "https://example.test/portable-receipt",
-                query,
-                "Portable public receipt evidence",
-            )],
+    let results = Aggregator::new().aggregate(vec![(
+        "generic-engine".to_string(),
+        vec![SearchResult::new(
+            "https://example.test/portable-receipt",
+            "opaque title",
+            "opaque snippet",
         )],
-    );
-    let mut cascade = SearchCascade::new(SearchQuery::new(query), SearchQualityFloor::for_limit(1));
+    )]);
+    let mut cascade =
+        SearchCascade::new(SearchQuery::new(query), RetrievalRequirements::for_limit(1));
     assert_eq!(
         cascade.push_tier("caller-tier", results),
         SearchTierDecision::Stop
@@ -27,12 +25,16 @@ fn downstream_callers_can_finish_serialize_and_validate_a_lazy_cascade() {
     let outcome = cascade
         .finish_with_tier_plan(["caller-tier", "unused-tier"])
         .expect("public cascade should finish");
-    assert_eq!(outcome.receipt.schema, SEARCH_CASCADE_RECEIPT_V1_SCHEMA);
+    assert_eq!(outcome.receipt.schema, SEARCH_CASCADE_RECEIPT_V2_SCHEMA);
     assert_eq!(outcome.receipt.executed_tiers.len(), 1);
-    assert!(outcome.receipt.quality_floor_met);
-    assert!(!outcome.receipt.exhausted_below_floor);
+    assert_eq!(
+        outcome.receipt.executed_tiers[0].decision_source,
+        SearchTierDecisionSource::RetrievalRequirements
+    );
+    assert!(outcome.receipt.retrieval_requirements_met);
+    assert!(!outcome.receipt.exhausted);
     assert_eq!(outcome.receipt.result_set.sha256.len(), 64);
-    let receipt_binding: SearchCascadeReceiptBindingV1 = outcome
+    let receipt_binding: SearchCascadeReceiptBindingV2 = outcome
         .receipt_binding()
         .expect("bind complete public receipt");
     receipt_binding
@@ -40,23 +42,12 @@ fn downstream_callers_can_finish_serialize_and_validate_a_lazy_cascade() {
         .expect("validate complete public receipt binding");
 
     let encoded = serde_json::to_vec(&outcome).expect("encode public outcome");
-    let decoded: SearchCascadeOutcomeV1 =
+    let decoded: SearchCascadeOutcomeV2 =
         serde_json::from_slice(&encoded).expect("decode public outcome");
     assert_eq!(
         outcome.results.items()[0].score.to_bits(),
         decoded.results.items()[0].score.to_bits(),
-        "caller-visible ranking score must be bit-stable across JSON"
-    );
-    assert_eq!(
-        outcome.results.items()[0]
-            .query_match_score
-            .expect("query alignment")
-            .to_bits(),
-        decoded.results.items()[0]
-            .query_match_score
-            .expect("decoded query alignment")
-            .to_bits(),
-        "caller-visible query alignment must be bit-stable across JSON"
+        "caller-visible rank-fusion score must be bit-stable across JSON"
     );
     decoded.validate().expect("validate public outcome");
 
