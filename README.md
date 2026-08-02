@@ -125,17 +125,11 @@ async fn main() -> a3s_search::Result<()> {
 `Search` is caller-owned. The host chooses engines, weights, timeouts, metrics,
 and shared reliability controls; the crate does not hide them in global state.
 
-> [!NOTE]
-> This README follows `main`, which contains unreleased responsibility-boundary
-> changes after tag `v2.2.5`, including cascade receipt V2. Install from Git to
-> evaluate the exact current tree:
->
-> ```bash
-> cargo install --git https://github.com/A3S-Lab/Search --locked
-> ```
->
-> Stable publication remains fail-closed behind the sealed release campaign
-> tracked by [issue #8](https://github.com/A3S-Lab/Search/issues/8).
+> [!IMPORTANT]
+> Version 3 deliberately narrows A3S Search to an embeddable metasearch
+> boundary. It retrieves, normalizes, merges, ranks, and records structural
+> fallback evidence; callers own semantic quality and research policy. See
+> [Migrating from v2](#migrating-from-v2) before upgrading.
 
 ## The metasearch boundary
 
@@ -170,6 +164,28 @@ native search API ─ SearchProvider ─ ProviderEngine ─┘
   fusion—never query-text scoring.
 - `SearchCascade` is optional. It records ordered retrieval tiers and can
   attribute a decision to either structural requirements or an external policy.
+
+## Migrating from v2
+
+Version 3 removes semantic policy from the metasearch layer and makes browser
+retrieval the default CLI path. The intentional breaking changes are:
+
+- `SearchQuality`, `SearchQualityFloor`, and `query_match_score` are removed.
+  Evaluate relevance, authority, recency, and evidence sufficiency in the host.
+- Construct `SearchCascade` with `RetrievalRequirements`. Use `push_tier` for
+  structural fallback or `push_tier_with_decision` to record an opaque decision
+  made by an external policy.
+- Consume `SearchCascadeOutcomeV2` and `SearchCascadeReceiptV2`. Receipt V2
+  records retrieval requirements, final health, decision authority, exhaustion,
+  result bindings, and counts; none of those fields is semantic approval.
+- The default Cargo feature now includes Chrome/Chromium headless retrieval.
+  Use `default-features = false` for an HTTP/API-only library build.
+- With no explicit source selection, the CLI runs `headless → HTTP/RSS → API`.
+  `--engines` remains an exact source list, and `--tier-order` accepts a complete
+  permutation when a different operational order is required.
+
+No query, topic, language, publisher, or relevance rule is embedded in the
+fallback implementation.
 
 ## Retrieval sources
 

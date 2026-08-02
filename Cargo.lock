@@ -10,7 +10,7 @@ checksum = "d2dc4eb3b0dd1b11efa0ad9bf397c97fd1d16e3eb4f9ca43872df069560d0b69"
 
 [[package]]
 name = "a3s-search"
-version = "2.2.5"
+version = "3.0.0"
 dependencies = [
  "a3s-acl",
  "a3s-updater",
