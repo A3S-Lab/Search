@@ -95,7 +95,7 @@ impl HtmlParser for BingParser {
 impl HtmlParser for BingBrowserParser {
     fn default_config() -> EngineConfig {
         EngineConfig {
-            name: "Bing Browser".to_string(),
+            name: "Bing".to_string(),
             shortcut: "bing_browser".to_string(),
             ..BingParser::default_config()
         }
@@ -350,6 +350,17 @@ mod tests {
         assert_eq!(engine.shortcut(), "bing");
         assert_eq!(engine.weight(), 1.0);
         assert!(engine.is_enabled());
+    }
+
+    #[test]
+    fn browser_variant_shares_source_identity_and_has_an_independent_shortcut() {
+        let fetcher: Arc<dyn crate::PageFetcher> = Arc::new(HttpFetcher::new());
+        let http = Bing::new();
+        let browser = BingBrowser::new(fetcher);
+
+        assert_eq!(browser.name(), http.name());
+        assert_eq!(browser.shortcut(), "bing_browser");
+        assert_ne!(browser.shortcut(), http.shortcut());
     }
 
     #[test]

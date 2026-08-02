@@ -102,6 +102,34 @@ fn tier(
     }
 }
 
+fn healthy_headless_tier(offset_ms: u64) -> TierReceipt {
+    let mut tier = tier(TierCapability::Headless, "headless", true, offset_ms);
+    let peer = "headless-peer";
+    tier.results.items_mut()[0].engines.insert(peer.to_string());
+    tier.results.items_mut()[0].positions.push(1);
+    tier.results.add_outcome(
+        serde_json::from_value(serde_json::json!({
+            "engine": peer,
+            "shortcut": peer,
+            "kind": "success",
+            "result_count": 1,
+            "duration_ms": 10
+        }))
+        .unwrap(),
+    );
+    tier.calls.push(UpstreamCallReceipt {
+        provider_scope: scope('e'),
+        engine_shortcut: peer.to_string(),
+        started_offset_ms: offset_ms,
+        ended_offset_ms: offset_ms + 10,
+        is_retry: false,
+        failure_kind: None,
+        retryable: false,
+        retry_after_seconds: None,
+    });
+    tier
+}
+
 fn receipt(tiers: Vec<TierReceipt>) -> AttemptReceipt {
     AttemptReceipt {
         message_type: "attempt".to_string(),
@@ -147,20 +175,14 @@ fn exhausted_tiers() -> Vec<TierReceipt> {
 
 #[test]
 fn healthy_first_tier_prevents_eager_fallback() {
-    let observation = evaluate(receipt(vec![tier(
-        TierCapability::Headless,
-        "headless",
-        true,
-        0,
-    )]))
-    .unwrap();
+    let observation = evaluate(receipt(vec![healthy_headless_tier(0)])).unwrap();
     assert!(observation.structurally_sufficient);
     assert!(!observation.second_tier_escalated);
     assert!(!observation.final_tier_escalated);
 
     let eager = receipt(vec![
-        tier(TierCapability::Headless, "headless", true, 0),
-        tier(TierCapability::HttpRss, "secondary", true, 20),
+        healthy_headless_tier(0),
+        tier(TierCapability::HttpRss, "secondary", false, 20),
     ]);
     assert!(evaluate(eager).is_err());
 }

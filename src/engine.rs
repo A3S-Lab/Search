@@ -24,9 +24,13 @@ pub enum EngineCategory {
 /// Configuration for a search engine.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineConfig {
-    /// Display name of the engine.
+    /// Stable logical source name used for display, provenance, and rank fusion.
+    ///
+    /// Multiple transport variants for the same upstream source must share
+    /// this name and use distinct [`Self::shortcut`] values.
     pub name: String,
-    /// Short identifier (e.g., "ddg" for DuckDuckGo).
+    /// Short identifier for one selectable source transport (for example,
+    /// `ddg` for DuckDuckGo over HTTP).
     pub shortcut: String,
     /// Categories this engine belongs to.
     pub categories: Vec<EngineCategory>,
