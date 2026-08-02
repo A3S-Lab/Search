@@ -52,13 +52,17 @@ struct SharedControls {
 pub(crate) async fn execute_cascade(
     plan: &EngineTierPlan,
     request: CascadeRequest<'_>,
+    circuit: CircuitBreaker,
 ) -> Result<SearchCascadeOutcomeV2> {
     let deadline = Instant::now()
         .checked_add(request.timeout)
         .ok_or_else(|| anyhow::anyhow!("search timeout exceeds the platform limit"))?;
     let requirements = RetrievalRequirements::for_limit(request.limit);
     let mut cascade = SearchCascade::new(request.query.clone(), requirements);
-    let controls = SharedControls::default();
+    let controls = SharedControls {
+        circuit,
+        ..SharedControls::default()
+    };
     let tiers = plan.tiers();
     let configured_tiers = tiers
         .iter()
@@ -348,6 +352,7 @@ mod tests {
                 browser: HeadlessBrowser::Chrome,
                 browser_max_retries: 1,
             },
+            CircuitBreaker::default(),
         )
         .await
         .unwrap_err();

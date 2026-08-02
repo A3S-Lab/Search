@@ -16,6 +16,7 @@ use cli::cascade::{
     execute_cascade, CascadeRequest, EngineTier, EngineTierPlan, HeadlessBrowser,
     DEFAULT_TIMEOUT_SECONDS,
 };
+use cli::circuit_state::PersistentCircuitState;
 use cli::output::{print_cascade_results, OutputFormat};
 use cli::provider::{list_engines, load_search_config};
 use cli::proxy::report_proxy_scope;
@@ -320,6 +321,23 @@ async fn run_search(args: SearchArgs) -> Result<()> {
         anyhow::bail!("No valid engines specified");
     }
     let engine_shortcuts = plan.shortcuts();
+    let persistent_circuits = match PersistentCircuitState::load_default(
+        &engine_shortcuts,
+        args.proxy.as_deref(),
+        args.browser.as_str(),
+    )
+    .await
+    {
+        Ok(state) => state,
+        Err(error) => {
+            tracing::warn!("cannot load persistent circuit state: {error}");
+            None
+        }
+    };
+    let circuit = persistent_circuits
+        .as_ref()
+        .map(PersistentCircuitState::breaker)
+        .unwrap_or_default();
     report_proxy_scope(
         args.proxy.as_deref(),
         &engine_shortcuts,
@@ -350,8 +368,15 @@ async fn run_search(args: SearchArgs) -> Result<()> {
             browser: args.browser,
             browser_max_retries: args.browser_retries,
         },
+        circuit,
     )
     .await?;
+
+    if let Some(state) = persistent_circuits {
+        if let Err(error) = state.persist(&outcome.results).await {
+            tracing::warn!("cannot persist circuit state: {error}");
+        }
+    }
 
     // Show engine errors to the user
     for (engine, error) in outcome.results.errors() {
