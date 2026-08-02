@@ -106,10 +106,11 @@ async fn deterministic_reliability_soak() {
     sampler.await.expect("resource sampler panicked");
     let resources = summarize_resources(&resource_samples.lock().unwrap());
     let coalescer = runtime.coalescer.snapshot();
-    let api_bulkhead = runtime.bulkhead.snapshot("soak_api");
-    let http_bulkhead = runtime.bulkhead.snapshot("soak_http");
-    let headless_bulkhead = runtime.bulkhead.snapshot("soak_headless");
-    let cancellation_bulkhead = runtime.bulkhead.snapshot("soak_cancellation");
+    let bulkhead_snapshots = runtime
+        .engine_shortcuts()
+        .into_iter()
+        .map(|shortcut| runtime.bulkhead.snapshot(shortcut))
+        .collect::<Vec<_>>();
 
     let requests = counters.requests.load(Ordering::Relaxed);
     let completed = counters.completed.load(Ordering::Relaxed);
@@ -117,9 +118,9 @@ async fn deterministic_reliability_soak() {
     let retrieval_requirement_failures = counters
         .retrieval_requirement_failures
         .load(Ordering::Relaxed);
-    let api_only = counters.api_only.load(Ordering::Relaxed);
+    let headless_only = counters.headless_only.load(Ordering::Relaxed);
     let http_fallback = counters.http_fallback.load(Ordering::Relaxed);
-    let headless_fallback = counters.headless_fallback.load(Ordering::Relaxed);
+    let api_fallback = counters.api_fallback.load(Ordering::Relaxed);
     let cancellation_attempts = counters.cancellation_attempts.load(Ordering::Relaxed);
     let cancellation_recovered = counters.cancellation_recovered.load(Ordering::Relaxed);
     let cancellation_failures = counters.cancellation_failures.load(Ordering::Relaxed);
@@ -135,9 +136,9 @@ async fn deterministic_reliability_soak() {
             "deadline_timeouts": deadline_timeouts,
             "retrieval_requirement_failures": retrieval_requirement_failures,
             "paths": {
-                "api_only": api_only,
+                "headless_only": headless_only,
                 "http_fallback": http_fallback,
-                "headless_fallback": headless_fallback,
+                "api_fallback": api_fallback,
             },
             "outcomes": {
                 "circuit_open": counters.circuit_open.load(Ordering::Relaxed),
@@ -187,15 +188,15 @@ async fn deterministic_reliability_soak() {
         retrieval_requirement_failures, 0,
         "fallback exhausted below the structural retrieval requirements"
     );
-    assert!(api_only > 0, "healthy API path was never observed");
-    assert!(http_fallback > 0, "HTTP fallback was never observed");
     assert!(
-        headless_fallback > 0,
-        "headless fallback was never observed"
+        headless_only > 0,
+        "healthy headless path was never observed"
     );
+    assert!(http_fallback > 0, "HTTP fallback was never observed");
+    assert!(api_fallback > 0, "API fallback was never observed");
     assert!(
-        headless_fallback < completed,
-        "headless ran for every request"
+        api_fallback < completed,
+        "the final API tier ran for every request"
     );
     assert!(
         counters.circuit_open.load(Ordering::Relaxed) > 0,
@@ -226,20 +227,18 @@ async fn deterministic_reliability_soak() {
         "a cancelled leader stranded a follower"
     );
     assert_eq!(cancellation_recovered, cancellation_attempts);
+    let tier_concurrency_limit = runtime
+        .max_concurrent
+        .saturating_mul(runtime.retrieval_tier_width());
     for probe in [
         &runtime.api_probe,
         &runtime.http_probe,
         &runtime.headless_probe,
-        &runtime.cancellation_probe,
     ] {
-        assert!(probe.max_in_flight() <= runtime.max_concurrent);
+        assert!(probe.max_in_flight() <= tier_concurrency_limit);
     }
-    for snapshot in [
-        api_bulkhead,
-        http_bulkhead,
-        headless_bulkhead,
-        cancellation_bulkhead,
-    ] {
+    assert!(runtime.cancellation_probe.max_in_flight() <= runtime.max_concurrent);
+    for snapshot in bulkhead_snapshots {
         assert_eq!(snapshot.in_flight, 0, "bulkhead permit leaked after drain");
         assert_eq!(snapshot.queued, 0, "bulkhead queue did not drain");
     }
