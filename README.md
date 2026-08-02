@@ -253,7 +253,10 @@ AnySearch Skill.
 The Tavily adapter supports depth, topic, direct answers, raw content, domain
 filters, date bounds, country boost, automatic parameters, exact matching,
 images, image descriptions, favicons, usage, and safe search. Cross-field
-requirements are validated before transport.
+requirements are validated before transport. It requests plain source text by
+default so retrieval consumers can inspect provider-native evidence without a
+second page fetch. Set `include_raw_content = "none"` in ACL or use
+`TavilyConfig::with_raw_content(TavilyRawContent::None)` to opt out.
 
 </details>
 
@@ -499,7 +502,8 @@ cargo run --features lightpanda -- "query" --browser lightpanda
 <details>
 <summary><strong>Full-text enrichment, proxies, and metrics</strong></summary>
 
-Native providers may return `full_text` directly. Snippet-only results can be
+Native providers may return `full_text` directly; AnySearch requests it and
+Tavily requests plain source text by default. Snippet-only results can be
 enriched through the same `PageFetcher` abstraction:
 
 ```rust

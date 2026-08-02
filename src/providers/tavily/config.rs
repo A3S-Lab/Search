@@ -48,7 +48,9 @@ impl TavilyConfig {
     ///
     /// `TAVILY_API_KEY` is optional. When it is absent, requests use Tavily's
     /// documented keyless access mode. `TAVILY_PROJECT` is sent only with an
-    /// authenticated request.
+    /// authenticated request. Plain source text is requested by default so
+    /// callers receive provider-native evidence without a second page fetch;
+    /// use [`TavilyRawContent::None`] to opt out.
     pub fn new() -> Result<Self> {
         let endpoint = Url::parse(DEFAULT_ENDPOINT).map_err(|_| {
             ProviderError::new(
@@ -68,7 +70,7 @@ impl TavilyConfig {
             topic: TavilyTopic::General,
             topic_explicit: false,
             include_answer: TavilyAnswer::None,
-            include_raw_content: TavilyRawContent::None,
+            include_raw_content: TavilyRawContent::Text,
             include_domains: Vec::new(),
             exclude_domains: Vec::new(),
             start_date: None,

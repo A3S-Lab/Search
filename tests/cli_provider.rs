@@ -293,6 +293,8 @@ fn tavily_cli_uses_keyless_mode_without_a_key() {
     assert_eq!(requests.len(), 1);
     assert!(requests[0].header("authorization").is_none());
     assert_eq!(requests[0].header("x-tavily-access-mode"), Some("keyless"));
+    let request: Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(request["include_raw_content"], "text");
 }
 
 #[test]
