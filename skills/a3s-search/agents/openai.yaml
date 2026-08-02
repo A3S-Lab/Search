@@ -1,4 +1,4 @@
 interface:
   display_name: "A3S Search"
-  short_description: "Search and verify current web evidence"
-  default_prompt: "Use $a3s-search to find and verify current web evidence."
+  short_description: "Retrieve structured results from multiple web sources"
+  default_prompt: "Use $a3s-search to retrieve current web results, then evaluate and verify them independently."

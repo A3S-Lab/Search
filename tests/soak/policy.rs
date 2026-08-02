@@ -4,7 +4,7 @@ use serde::Serialize;
 pub(super) struct LiveCanaryPolicy {
     pub minimum_cases: u64,
     pub minimum_nonempty_rate_lcb: f64,
-    pub minimum_useful_rate_lcb: f64,
+    pub minimum_structural_sufficiency_rate_lcb: f64,
     pub maximum_terminal_failure_rate_ucb: f64,
     pub maximum_p95_latency_ms: u64,
     pub maximum_p99_latency_ms: u64,
@@ -25,7 +25,7 @@ impl LiveCanaryPolicy {
         Self {
             minimum_cases: 40,
             minimum_nonempty_rate_lcb: 0.90,
-            minimum_useful_rate_lcb: 0.90,
+            minimum_structural_sufficiency_rate_lcb: 0.90,
             maximum_terminal_failure_rate_ucb: 0.10,
             maximum_p95_latency_ms: 10_000,
             maximum_p99_latency_ms: 30_000,
@@ -50,9 +50,9 @@ impl LiveCanaryPolicy {
                 "A3S_SEARCH_LIVE_CANARY_MIN_NONEMPTY_RATE_LCB",
                 floor.minimum_nonempty_rate_lcb,
             ),
-            minimum_useful_rate_lcb: env_value(
-                "A3S_SEARCH_LIVE_CANARY_MIN_USEFUL_RATE_LCB",
-                floor.minimum_useful_rate_lcb,
+            minimum_structural_sufficiency_rate_lcb: env_value(
+                "A3S_SEARCH_LIVE_CANARY_MIN_STRUCTURAL_SUFFICIENCY_RATE_LCB",
+                floor.minimum_structural_sufficiency_rate_lcb,
             ),
             maximum_terminal_failure_rate_ucb: env_value(
                 "A3S_SEARCH_LIVE_CANARY_MAX_TERMINAL_FAILURE_RATE_UCB",
@@ -115,7 +115,10 @@ impl LiveCanaryPolicy {
     fn assert_valid(&self) {
         for (name, value) in [
             ("minimum non-empty rate", self.minimum_nonempty_rate_lcb),
-            ("minimum useful rate", self.minimum_useful_rate_lcb),
+            (
+                "minimum structural sufficiency rate",
+                self.minimum_structural_sufficiency_rate_lcb,
+            ),
             (
                 "maximum terminal failure rate",
                 self.maximum_terminal_failure_rate_ucb,
@@ -178,8 +181,9 @@ impl LiveCanaryPolicy {
             "non-empty rate weakens the release floor"
         );
         assert!(
-            self.minimum_useful_rate_lcb >= floor.minimum_useful_rate_lcb,
-            "useful rate weakens the release floor"
+            self.minimum_structural_sufficiency_rate_lcb
+                >= floor.minimum_structural_sufficiency_rate_lcb,
+            "structural sufficiency rate weakens the release floor"
         );
         assert!(
             self.maximum_terminal_failure_rate_ucb <= floor.maximum_terminal_failure_rate_ucb,
@@ -233,7 +237,7 @@ mod tests {
         let weakeners: [fn(&mut LiveCanaryPolicy); 16] = [
             |policy| policy.minimum_cases -= 1,
             |policy| policy.minimum_nonempty_rate_lcb -= 0.01,
-            |policy| policy.minimum_useful_rate_lcb -= 0.01,
+            |policy| policy.minimum_structural_sufficiency_rate_lcb -= 0.01,
             |policy| policy.maximum_terminal_failure_rate_ucb += 0.01,
             |policy| policy.maximum_p95_latency_ms += 1,
             |policy| policy.maximum_p99_latency_ms += 1,

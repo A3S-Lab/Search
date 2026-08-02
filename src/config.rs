@@ -172,6 +172,17 @@ impl SearchConfig {
                     });
                 }
                 "ranking" => {
+                    if let Some(attribute) = block.attributes.keys().find(|attribute| {
+                        !matches!(
+                            attribute.as_str(),
+                            "rrf_rank_constant" | "native_relevance_weight"
+                        )
+                    }) {
+                        return Err(config_value_error(
+                            &format!("ranking.{attribute}"),
+                            "one of rrf_rank_constant or native_relevance_weight",
+                        ));
+                    }
                     let defaults = RankingConfig::default();
                     let candidate = RankingConfig {
                         rrf_rank_constant: block
@@ -180,12 +191,6 @@ impl SearchConfig {
                             .map(|value| value_as_f64(value, "ranking.rrf_rank_constant"))
                             .transpose()?
                             .unwrap_or(defaults.rrf_rank_constant),
-                        query_alignment_weight: block
-                            .attributes
-                            .get("query_alignment_weight")
-                            .map(|value| value_as_f64(value, "ranking.query_alignment_weight"))
-                            .transpose()?
-                            .unwrap_or(defaults.query_alignment_weight),
                         native_relevance_weight: block
                             .attributes
                             .get("native_relevance_weight")
@@ -196,7 +201,7 @@ impl SearchConfig {
                     if !candidate.is_valid() {
                         return Err(config_value_error(
                             "ranking",
-                            "a finite rank constant in 0..=1000000 and finite weights in 0..=1",
+                            "a finite rank constant in 0..=1000000 and a finite native relevance weight in 0..=1",
                         ));
                     }
                     ranking = candidate;
@@ -516,7 +521,6 @@ mod tests {
             r#"
             ranking {
                 rrf_rank_constant       = 42
-                query_alignment_weight  = 0.7
                 native_relevance_weight = 0.1
             }
             "#,
@@ -524,7 +528,6 @@ mod tests {
         .unwrap();
 
         assert_eq!(config.ranking.rrf_rank_constant, 42.0);
-        assert_eq!(config.ranking.query_alignment_weight, 0.7);
         assert_eq!(config.ranking.native_relevance_weight, 0.1);
     }
 
@@ -768,8 +771,7 @@ mod tests {
             r#"ranking { rrf_rank_constant = -1 }"#,
             r#"ranking { rrf_rank_constant = 1000001 }"#,
             r#"ranking { rrf_rank_constant = "60" }"#,
-            r#"ranking { query_alignment_weight = -0.1 }"#,
-            r#"ranking { query_alignment_weight = 1.1 }"#,
+            r#"ranking { unknown_weight = 0.8 }"#,
             r#"ranking { native_relevance_weight = -0.1 }"#,
             r#"ranking { native_relevance_weight = 1.1 }"#,
             r#"engine "ddg" { enabled = "true" }"#,

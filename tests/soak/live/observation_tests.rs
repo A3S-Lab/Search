@@ -49,9 +49,14 @@ fn provider_policies() -> Vec<Vec<ProviderPolicy>> {
         .collect()
 }
 
-fn tier(capability: TierCapability, shortcut: &str, useful: bool, offset_ms: u64) -> TierReceipt {
+fn tier(
+    capability: TierCapability,
+    shortcut: &str,
+    structurally_sufficient: bool,
+    offset_ms: u64,
+) -> TierReceipt {
     let mut results = SearchResults::new();
-    let count = if useful { 5 } else { 1 };
+    let count = if structurally_sufficient { 5 } else { 1 };
     for index in 0..count {
         results.add_result(
             SearchResult::new(
@@ -149,7 +154,7 @@ fn healthy_first_tier_prevents_eager_fallback() {
         0,
     )]))
     .unwrap();
-    assert!(observation.useful);
+    assert!(observation.structurally_sufficient);
     assert!(!observation.second_tier_escalated);
     assert!(!observation.final_tier_escalated);
 
@@ -216,29 +221,6 @@ fn explicit_pre_execution_failure_is_distinct_and_fact_free() {
         Some(FailureStage::PreExecution)
     );
     assert_eq!(observation.upstream_calls, 0);
-}
-
-#[test]
-fn verifier_ignores_candidate_supplied_query_match_scores() {
-    let tiers: Vec<_> = [
-        (TierCapability::Headless, "headless", 0),
-        (TierCapability::HttpRss, "http", 20),
-        (TierCapability::Api, "api", 40),
-    ]
-    .into_iter()
-    .map(|(capability, shortcut, offset)| {
-        let mut tier = tier(capability, shortcut, true, offset);
-        for (index, result) in tier.results.items_mut().iter_mut().enumerate() {
-            result.url = format!("https://unrelated-{index}.invalid/no-overlap");
-            result.title = "unrelated material".to_string();
-            result.content = "different evidence".to_string();
-            result.query_match_score = Some(1.0);
-        }
-        tier
-    })
-    .collect();
-    let observation = evaluate(receipt(tiers)).unwrap();
-    assert!(!observation.useful);
 }
 
 #[test]

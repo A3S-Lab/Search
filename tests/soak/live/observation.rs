@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use a3s_search::{
-    EngineOutcome, EngineOutcomeKind, SearchCascade, SearchQualityFloor, SearchQuery,
+    EngineOutcome, EngineOutcomeKind, RetrievalRequirements, SearchCascade, SearchQuery,
 };
 
 use super::corpus::{LiveCanaryQuery, ProviderPolicy, TierCapability};
@@ -11,7 +11,7 @@ use super::rate::is_rate_limited;
 #[derive(Debug)]
 pub(super) struct AttemptObservation {
     pub nonempty: bool,
-    pub useful: bool,
+    pub structurally_sufficient: bool,
     pub second_tier_escalated: bool,
     pub final_tier_escalated: bool,
     pub engine_slots: u64,
@@ -52,7 +52,7 @@ pub(super) fn evaluate_attempt(
     if terminal == Some(FailureStage::PreExecution) {
         return Ok(AttemptObservation {
             nonempty: false,
-            useful: false,
+            structurally_sufficient: false,
             second_tier_escalated: false,
             final_tier_escalated: false,
             engine_slots: 0,
@@ -68,8 +68,10 @@ pub(super) fn evaluate_attempt(
     }
 
     let tier_count = receipt.tiers.len();
-    let mut cascade =
-        SearchCascade::new(canary_search_query(query), SearchQualityFloor::for_limit(5));
+    let mut cascade = SearchCascade::new(
+        canary_search_query(query),
+        RetrievalRequirements::for_limit(5),
+    );
     let mut outcomes = Vec::new();
     let mut calls = Vec::new();
     let mut shortcuts = HashSet::new();
@@ -77,7 +79,7 @@ pub(super) fn evaluate_attempt(
     let mut second_tier_escalated = false;
     let mut final_tier_escalated = false;
 
-    for (index, mut tier) in receipt.tiers.into_iter().enumerate() {
+    for (index, tier) in receipt.tiers.into_iter().enumerate() {
         if tier.capability != capabilities[index] {
             return Err("attempt tier does not match the sealed capability order".to_string());
         }
@@ -85,15 +87,15 @@ pub(super) fn evaluate_attempt(
             return Err("attempt tier does not match the sealed deployment profile".to_string());
         }
         if index > 0 && !cascade.needs_next_tier() {
-            return Err("driver eagerly executed a tier after quality was satisfied".to_string());
+            return Err(
+                "driver eagerly executed a tier after retrieval requirements were satisfied"
+                    .to_string(),
+            );
         }
         match index {
             1 => second_tier_escalated = true,
             2 => final_tier_escalated = true,
             _ => {}
-        }
-        for result in tier.results.items_mut() {
-            result.query_match_score = None;
         }
         let tier_outcomes = tier.results.outcomes();
         if tier_outcomes.is_empty() {
@@ -135,7 +137,7 @@ pub(super) fn evaluate_attempt(
         .count() as u64;
     Ok(AttemptObservation {
         nonempty: !cascade.results().items().is_empty(),
-        useful: !cascade.needs_next_tier(),
+        structurally_sufficient: !cascade.needs_next_tier(),
         second_tier_escalated,
         final_tier_escalated,
         engine_slots: outcomes.len() as u64,

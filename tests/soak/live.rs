@@ -239,9 +239,9 @@ async fn sealed_live_tiered_canary_meets_release_floor() {
                     measurements.nonempty = measurements
                         .nonempty
                         .saturating_add(u64::from(observation.nonempty));
-                    measurements.useful = measurements
-                        .useful
-                        .saturating_add(u64::from(observation.useful));
+                    measurements.structurally_sufficient = measurements
+                        .structurally_sufficient
+                        .saturating_add(u64::from(observation.structurally_sufficient));
                 }
             }
             Err(error) => {

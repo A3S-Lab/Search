@@ -86,8 +86,8 @@ keeps useful output and degraded-path diagnostics together:
 | `outcomes` | Success, empty, failure, timeout, local rejection, or circuit-open state for every selected engine |
 
 When an application adds a caller-defined `SearchCascade`,
-`SearchCascadeOutcomeV1` also binds the query, results, tier decisions, and
-quality state into a verifiable receipt.
+`SearchCascadeOutcomeV2` also binds the query, results, structural health,
+tier decisions, and decision authority into a verifiable receipt.
 
 ### Try the companion CLI
 
@@ -107,7 +107,7 @@ repository:
 cargo install --git https://github.com/A3S-Lab/Search --locked
 ```
 
-Run the CLI's default quality-gated profile:
+Run the CLI's default structurally gated profile:
 
 ```bash
 a3s-search "Rust async runtime guidance" --format json --limit 10
@@ -145,15 +145,16 @@ provider-side result limits belong in ACL.
 | One search boundary inside your application | Caller-owned `Search`, typed queries, and structured results |
 | More than one fragile endpoint | Browser, HTTP/RSS, and API transports behind one `Engine` contract |
 | Results that remain explainable | Per-engine provenance, normalized rank signals, typed failures, and request reports |
-| Independent evidence without duplicate noise | Canonical URL merging and weighted reciprocal-rank fusion |
+| Independent source consensus without duplicate noise | Canonical URL merging and weighted reciprocal-rank fusion |
 | Safe integration into long-lived runtimes | Shared circuits, bulkheads, retry budgets, and in-flight request coalescing |
 | Caller-owned routing and fallback | Direct source selection or a lazily executed `SearchCascade` |
 | Provider extensibility | A provider-neutral `SearchProvider` protocol adapted through `ProviderEngine` |
 | Configuration without secret leakage | Typed ACL and redacted environment credential sources |
 
-The runtime ranker contains no query-topic, host, publisher, named-entity, or
-language exceptions. Application-specific policy stays above the search
-kernel, and the library does not impose the CLI's source order.
+The runtime contains no query-text matching, query decomposition, evidence
+coverage scoring, publisher rules, topic rules, or language-specific logic.
+Application-specific and semantic policy stays above the search kernel, and
+the library does not impose the CLI's source order.
 
 ## How the engine works
 
@@ -169,9 +170,9 @@ Custom ────┘                                  │
 HTTP / RSS engines ───────── Engine ──────────┤
 Browser engines ─ PageFetcher ─ Engine ───────┘
                                                  │
-                          Aggregator ─ SearchQuality ─ SearchResults
+                   Aggregator ──────────────── SearchResults
                                                  │
-                                  SearchCascadeReceiptV1
+             RetrievalHealth ─ SearchCascade ─ SearchCascadeReceiptV2
 ```
 
 - `SearchProvider` models typed API capabilities, requests, readiness, rich
@@ -180,17 +181,20 @@ Browser engines ─ PageFetcher ─ Engine ───────┘
   applies provider-neutral output normalization.
 - `Search` owns parallel execution, timeouts, optional shared controls, typed
   outcomes, and partial failures.
-- `Aggregator` owns URL normalization, evidence merging, provenance, and rank
+- `Aggregator` owns URL normalization, field merging, provenance, and rank
   fusion.
-- `SearchCascade` owns generic quality decisions and a caller-declared lazy
-  tier plan.
+- `RetrievalHealth` observes result structure and typed engine outcomes without
+  reading query or result text.
+- `SearchCascade` executes a caller-declared lazy tier plan. Its default
+  decision uses structural requirements; an external policy can provide an
+  explicitly attributed decision.
 
 A basic embedded search does not require a cascade. Applications can add
 engines directly and receive one `SearchResults` container. Add
-`SearchCascade` only when the host needs ordered fallback, quality-based early
-stop, and a receipt of the executed prefix.
+`SearchCascade` only when the host needs ordered operational fallback,
+structural early stop, and a receipt of the executed prefix.
 
-### CLI quality-gated profile
+### CLI retrieval cascade
 
 The companion CLI supplies one opinionated profile for interactive use. Without
 an explicit source list or ACL source selection, it uses this browser-first
@@ -200,10 +204,10 @@ plan:
 SearchQuery
     │
     ├─ 01  headless      Brave Search + Bing through Chrome/Chromium
-    │       └─ quality met? stop
+    │       └─ structural requirements met? stop
     │
     ├─ 02  HTTP / RSS    DuckDuckGo + Bing + Wikipedia
-    │       └─ quality met? stop
+    │       └─ structural requirements met? stop
     │
     └─ 03  native API    AnySearch + Tavily
             └─ finish with results + cascade receipt
@@ -216,8 +220,9 @@ The CLI bounds that profile:
 2. All tiers share one end-to-end deadline, 20 seconds by default.
 3. Engines inside one tier run concurrently with isolated timeouts.
 4. One source failure never discards successful results from another source.
-5. A tier is skipped once the combined result set satisfies the generic
-   quality floor.
+5. A tier is skipped once the combined result set satisfies caller-visible
+   structural requirements: usable HTTP(S) results, distinct hosts,
+   contributing engines, and optional cross-engine consensus.
 6. Explicit CLI sources are exact. Enabled ACL sources replace the built-in
    plan when source blocks are present.
 7. A complete `--tier-order` can change transport priority without changing
@@ -225,29 +230,16 @@ The CLI bounds that profile:
 8. Headless retry observations are emitted as structured request reports and
    can be bounded independently from fallback activation.
 
-When a later tier is required, the CLI measures which normalized query units
-are least represented in the current ranked evidence window. It then builds a
-bounded query portfolio that partitions those gaps across the engines already
-planned for that tier. Every refinement retains deterministic context covering
-at least half of the original normalized character weight, so a retrieved row
-can still meet the unchanged original-query alignment floor. When there are
-fewer distinct refinements than engines, the portfolio is assigned again for
-transport redundancy instead of leaving one challenge-prone engine solely
-responsible for a gap. Each engine is still called at most once, and every
-returned row is scored and reranked against the original query rather than the
-retrieval refinement. This generic mechanism has no query, language, topic,
-source, publisher, or provider exceptions.
-
-Every assigned refinement is recorded in `SearchResults.reports` with schema
-`a3s/search-query-refinement/v1`, including its tier, engine shortcut,
-portfolio index, effective query, and coverage counts. Those reports are part
-of the frozen result-set and cascade-receipt bindings. Embedded callers can use
-`search_with_query_plan` for the same one-query-per-engine contract.
+Every tier receives the exact same typed `SearchQuery`. The CLI does not infer
+missing concepts, rewrite the query, score result text, or decide whether the
+pages answer the request. Higher-level systems such as DeepResearch own those
+operations and can issue subsequent searches explicitly.
 
 Build with `--no-default-features` when a host must not compile or run a
 browser. The CLI profile then starts with HTTP/RSS and can continue to native
-APIs. Library callers can instead name their own tiers, set their own quality
-floor, and create expensive resources only inside `run_tier_if_needed`.
+APIs. Library callers can instead name their own tiers, set structural
+`RetrievalRequirements`, and create expensive resources only inside
+`run_tier_if_needed`.
 
 See the complete public surface on [docs.rs](https://docs.rs/a3s-search).
 
@@ -335,67 +327,49 @@ verification, consent, and anti-bot pages become typed transient `challenge`
 failures. An unrelated successful HTTP page becomes `invalid_response` rather
 than a false empty result.
 
-## Ranking and quality evidence
+## Rank fusion and retrieval health
 
-The aggregator first deduplicates each engine response, then merges results by
+The aggregator deduplicates each engine response, then merges results by
 normalized URL across engines. It removes common tracking parameters and
-combines independent provenance, positions, rich fields, and rank signals.
-After fusion, a query-set coverage pass can promote complementary visible
-evidence into the ranked head when higher rows repeat concepts already
-represented. For equal marginal evidence, it prefers an unseen normalized host,
-then stronger original-query alignment, base score, and original order. The
-base first result remains authoritative, scores are unchanged, and the
-coverage pass contains no topic, language, source, or publisher rules.
-Title and snippet remain authoritative for base query alignment. Provider or
-extracted full text may supplement set coverage and the quality gate under a
-per-result limit of 256 Ki normalized characters.
+combines provenance, provider positions, rich fields, and rank signals. It
+never tokenizes the query or reads title, snippet, URL, or full text to infer
+semantic relevance.
 
 Each engine contributes through weighted reciprocal-rank fusion:
 
 ```text
 engine weight
 × reciprocal rank
-× bounded query-alignment factor
 × provider-local relevance factor
 ```
 
 Provider relevance values are calibrated only within that provider response;
 incomparable API score scales are never multiplied directly across sources.
-Query alignment uses visible title and snippet text plus a weak URL signal.
-Unicode-normalized units and adaptive character n-grams combine evidence
-across the visible title and snippet. Combining marks stay inside their source
-word during query segmentation, while unsegmented ideographic text remains a
-single evidence sequence. Punctuation-connected identifiers such as protocol
-versions and document numbers remain one exact evidence atom instead of being
-matched as unrelated fragments. Mixed-script queries retain matching evidence
-from every substantive script, so a high-overlap result in only one script
-cannot stop fallback. The ranked evidence window must also cover the composite
-query as a set, and only rows that independently reach the existing local
-alignment floor may complete that coverage. Repeating or stitching weak
-subsets across five rows no longer masquerades as broad evidence. The mechanism
-remains language-neutral and contains no topic, publisher, site, or provider
-exceptions.
+Provider-native relevance is preserved as source data; A3S Search neither
+claims it is comparable across providers nor replaces it with handcrafted text
+matching.
 
-For a display limit of ten, the default floor evaluates the leading evidence
-window against these generic signals:
+`RetrievalHealth` observes only these non-semantic signals:
 
-| Signal | Default expectation |
+| Signal | Meaning |
 | --- | --- |
-| Usable HTTP(S) results | Up to five |
-| Distinct normalized hosts | Up to three |
-| Contributing engines | At least one |
-| Per-result or unique marginal query match | At least `0.35` for half the target |
-| Mean query match | At least `0.30` |
-| Cross-engine consensus | Observable, not required by default |
+| Usable and invalid result counts | Whether result URLs are structurally usable HTTP(S) URLs |
+| Distinct normalized hosts | Source diversity visible in the merged result set |
+| Contributing engines | Provenance retained after URL fusion |
+| Cross-engine consensus | A URL independently returned by multiple engines |
+| Typed engine outcomes | Success, empty, failure, timeout, rejection, or circuit-open counts |
 
-Applications can require stronger consensus or a different floor. The
-built-in floor deliberately does not claim to measure publisher authority,
-factual correctness, recency, viewpoint coverage, or completeness.
+`RetrievalRequirements::for_limit` supplies a conservative CLI early-stop
+default. Embedded callers can set different structural requirements. If a
+caller needs semantic relevance, evidence coverage, conflict detection,
+authority, recency, or completeness, it must evaluate those properties outside
+A3S Search. `push_tier_with_decision` can record that external decision without
+attempting to reproduce it.
 
-If every declared tier runs below the floor, the CLI returns the remaining
-evidence with `quality_floor_met = false` and
-`exhausted_below_floor = true`. Downstream products can fail closed on that
-state.
+If every declared tier runs while the final decision still requests fallback,
+the receipt returns `exhausted = true`. Independently,
+`retrieval_requirements_met` states whether the final result structure meets
+the recorded requirements.
 
 ### Verifiable cascade receipts
 
@@ -404,8 +378,8 @@ receipt that binds:
 
 - the complete typed query;
 - the configured tier plan and executed prefix;
-- every tier quality decision;
-- the ordered final results and rich evidence fields;
+- every tier health observation, decision, and decision authority;
+- the ordered final results and rich provider fields;
 - failures, reports, outcomes, counts, and timing metadata.
 
 `receipt_binding()` calculates a domain-separated canonical SHA-256 over the
@@ -480,7 +454,6 @@ timeout {
 
 ranking {
   rrf_rank_constant       = 60
-  query_alignment_weight  = 0.8
   native_relevance_weight = 0.2
 }
 
@@ -614,10 +587,8 @@ async fn enrich(results: &mut SearchResults) {
 }
 ```
 
-Failed enrichment keeps the original snippet.
-Full text supplements bounded set-level evidence checks; it does not replace
-title/snippet alignment or directly increase a result's base rank score. For
-quality gating, a matching body is capped at the same authority as a snippet.
+Failed enrichment keeps the original snippet. Full text is returned as caller
+data and never changes rank fusion or cascade decisions inside A3S Search.
 
 Conventional engines support a static proxy or a rotating `ProxyPool`.
 Provider APIs own separate bounded HTTP clients and intentionally do not
@@ -647,17 +618,12 @@ The test strategy separates deterministic correctness from live availability:
 
 - loopback provider-contract tests verify protocols, authentication,
   normalization, and sanitized failures;
-- the checked-in quality corpus verifies ranking and generalization invariants;
+- deterministic aggregation tests verify URL normalization, deduplication,
+  provenance, rank fusion, and stable receipts without content judgments;
 - deterministic fault injection exercises throttle, empty response, recovery,
   cancellation, concurrency, and resource drainage;
 - a bounded one-pass live canary evaluates a sealed corpus without requiring a
   24-hour soak.
-
-Run the reproducible ranking gate:
-
-```bash
-cargo test --locked --test quality_eval
-```
 
 Run the opt-in bounded reliability soak:
 
@@ -690,8 +656,8 @@ skills/a3s-search/SKILL.md
 skills/a3s-search/agents/openai.yaml
 ```
 
-The Skill guides coding agents through source selection, structured evidence,
-credential handling, ACL, quality receipts, and partial failures.
+The Skill guides coding agents through source selection, structured retrieval,
+credential handling, ACL, structural receipts, and partial failures.
 
 ## A3S ecosystem
 
@@ -704,9 +670,9 @@ A3S Search is independently usable and also serves higher-level A3S products:
 
 ## Contributing
 
-Issues and focused pull requests are welcome. Keep runtime ranking and quality
-rules domain-neutral, add regression coverage for changed behavior, and run
-the relevant no-default and all-feature checks before submitting.
+Issues and focused pull requests are welcome. Keep semantic evaluation outside
+the retrieval kernel, add regression coverage for changed behavior, and run the
+relevant no-default and all-feature checks before submitting.
 
 ## License
 

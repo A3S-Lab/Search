@@ -1,4 +1,4 @@
-//! Frozen V1 identity for complete caller-visible search results.
+//! Frozen V2 identity for complete caller-visible search results.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -9,7 +9,7 @@ use crate::{
     SearchResult, SearchResults, SearchUsage,
 };
 
-const SEARCH_RESULTS_BINDING_V1_DOMAIN: &[u8] = b"a3s/search-results-binding/v1\0";
+const SEARCH_RESULTS_BINDING_V2_DOMAIN: &[u8] = b"a3s/search-results-binding/v2\0";
 const MAX_METADATA_DEPTH: usize = 64;
 
 /// A deterministic identity of every caller-visible field in [`SearchResults`].
@@ -20,12 +20,12 @@ const MAX_METADATA_DEPTH: usize = 64;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[non_exhaustive]
-pub struct SearchResultsBindingV1 {
-    /// Lowercase hexadecimal SHA-256 over the frozen V1 result encoding.
+pub struct SearchResultsBindingV2 {
+    /// Lowercase hexadecimal SHA-256 over the frozen V2 result encoding.
     pub sha256: String,
 }
 
-impl SearchResultsBindingV1 {
+impl SearchResultsBindingV2 {
     /// Binds the complete caller-visible search result container.
     pub fn new(results: &SearchResults) -> Result<Self, SearchCascadeReceiptError> {
         Ok(Self {
@@ -143,11 +143,6 @@ fn encode_result(
 
     encoder.label("full_text");
     encoder.optional_string(result.full_text.as_deref());
-    encoder.label("query_match_score");
-    encoder.optional_f64(
-        result.query_match_score,
-        &format!("{path}.query_match_score"),
-    )?;
     Ok(())
 }
 
@@ -323,7 +318,7 @@ struct StableEncoder {
 impl StableEncoder {
     fn new() -> Self {
         let mut hasher = Sha256::new();
-        hasher.update(SEARCH_RESULTS_BINDING_V1_DOMAIN);
+        hasher.update(SEARCH_RESULTS_BINDING_V2_DOMAIN);
         Self { hasher }
     }
 

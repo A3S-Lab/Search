@@ -3,7 +3,7 @@
 use anyhow::Result;
 use clap::ValueEnum;
 
-use a3s_search::{SearchCascadeOutcomeV1, SearchResults};
+use a3s_search::{SearchCascadeOutcomeV2, SearchResults};
 
 /// CLI output format.
 #[derive(Clone, Copy, ValueEnum, Debug)]
@@ -18,7 +18,7 @@ pub(crate) enum OutputFormat {
 
 pub(crate) fn print_cascade_results(
     query: &str,
-    outcome: &SearchCascadeOutcomeV1,
+    outcome: &SearchCascadeOutcomeV2,
     limit: usize,
     format: OutputFormat,
 ) -> Result<()> {
@@ -63,13 +63,13 @@ pub(crate) fn print_cascade_results(
                 .collect::<Vec<_>>()
                 .join(" -> ");
             println!(
-                "Cascade: {} | quality floor: {} | receipt: {}",
+                "Cascade: {} | retrieval requirements: {} | receipt: {}",
                 if executed.is_empty() {
                     "none"
                 } else {
                     &executed
                 },
-                if outcome.receipt.quality_floor_met {
+                if outcome.receipt.retrieval_requirements_met {
                     "met"
                 } else {
                     "not met"
@@ -92,7 +92,7 @@ pub(crate) fn print_cascade_results(
 
 pub(crate) fn cascade_json_output(
     query: &str,
-    outcome: &SearchCascadeOutcomeV1,
+    outcome: &SearchCascadeOutcomeV2,
     limit: usize,
 ) -> Result<serde_json::Value> {
     outcome.validate()?;
@@ -138,14 +138,16 @@ pub(crate) fn truncate_str(value: &str, max_bytes: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use a3s_search::{SearchCascade, SearchQualityFloor, SearchQuery, SearchResult, SearchResults};
+    use a3s_search::{
+        RetrievalRequirements, SearchCascade, SearchQuery, SearchResult, SearchResults,
+    };
 
     use super::*;
 
     #[test]
-    fn cascade_json_binds_the_complete_plan_quality_and_results() {
+    fn cascade_json_binds_the_complete_plan_health_and_results() {
         let query = SearchQuery::new("portable research query");
-        let mut cascade = SearchCascade::new(query.clone(), SearchQualityFloor::for_limit(1));
+        let mut cascade = SearchCascade::new(query.clone(), RetrievalRequirements::for_limit(1));
         let mut results = SearchResults::new();
         results.add_result(
             SearchResult::new(
@@ -160,7 +162,10 @@ mod tests {
         let output = cascade_json_output(&query.query, &outcome.unwrap(), 1).unwrap();
 
         assert_eq!(output["cascade_receipt"]["configured_tiers"][0], "headless");
-        assert_eq!(output["cascade_receipt"]["quality_floor_met"], true);
+        assert_eq!(
+            output["cascade_receipt"]["retrieval_requirements_met"],
+            true
+        );
         assert_eq!(
             output["cascade_receipt_binding"]["sha256"]
                 .as_str()

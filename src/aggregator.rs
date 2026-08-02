@@ -4,11 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use crate::ranking::calibrated_native_relevance;
 use crate::result::RankSignal;
-use crate::{query_match_score, RankingConfig, SearchResult, SearchResults};
-
-mod coverage;
-
-pub(crate) use coverage::rerank_for_query;
+use crate::{RankingConfig, SearchResult, SearchResults};
 
 #[derive(Debug)]
 struct Candidate {
@@ -64,24 +60,6 @@ impl Aggregator {
     /// 3. Score calculation
     /// 4. Sorting by score
     pub fn aggregate(&self, engine_results: Vec<(String, Vec<SearchResult>)>) -> SearchResults {
-        self.aggregate_internal(None, engine_results)
-    }
-
-    /// Aggregates results and applies language-neutral query alignment as a
-    /// bounded ranking signal.
-    pub fn aggregate_for_query(
-        &self,
-        query: &str,
-        engine_results: Vec<(String, Vec<SearchResult>)>,
-    ) -> SearchResults {
-        self.aggregate_internal(Some(query), engine_results)
-    }
-
-    fn aggregate_internal(
-        &self,
-        query: Option<&str>,
-        engine_results: Vec<(String, Vec<SearchResult>)>,
-    ) -> SearchResults {
         let mut url_map: HashMap<String, Candidate> = HashMap::new();
 
         for (engine_name, results) in engine_results {
@@ -93,11 +71,9 @@ impl Aggregator {
                 let normalized = result.normalized_url();
                 let position = (position + 1) as u32;
                 let relevance = normalized_relevance(result.relevance_score);
-                let query_match = query.map(|query| query_match_score(query, &result));
                 let contribution = saturating_product([
                     self.engine_weight(&engine_name),
                     self.ranking.reciprocal_rank_score(position),
-                    self.ranking.query_alignment_factor(query_match),
                     self.ranking.native_relevance_factor(relevance_percentile),
                 ]);
                 let signal = RankSignal {
@@ -109,7 +85,6 @@ impl Aggregator {
                 result.engines.clear();
                 result.positions.clear();
                 result.score = 0.0;
-                result.query_match_score = query_match;
                 result.rank_signals.clear();
 
                 if let Some(candidate) = url_map.get_mut(&normalized) {
@@ -134,10 +109,7 @@ impl Aggregator {
             }
         }
 
-        let mut results = finalize_candidates(url_map);
-        if let Some(query) = query {
-            rerank_for_query(query, &mut results);
-        }
+        let results = finalize_candidates(url_map);
 
         let mut search_results = SearchResults::new();
         for result in results {
@@ -266,11 +238,6 @@ fn sort_ranked_results(results: &mut [SearchResult]) {
         b.score
             .total_cmp(&a.score)
             .then_with(|| b.engines.len().cmp(&a.engines.len()))
-            .then_with(|| {
-                b.query_match_score
-                    .unwrap_or_default()
-                    .total_cmp(&a.query_match_score.unwrap_or_default())
-            })
             .then_with(|| a.normalized_url().cmp(&b.normalized_url()))
             .then_with(|| a.title.cmp(&b.title))
     });
@@ -292,7 +259,7 @@ fn saturating_score_add(total: f64, contribution: f64) -> f64 {
     }
 }
 
-fn saturating_product(values: [f64; 4]) -> f64 {
+fn saturating_product(values: [f64; 3]) -> f64 {
     values.into_iter().fold(1.0, |product, value| {
         let next = product * value;
         if next.is_finite() {
@@ -327,12 +294,6 @@ fn merge_results(existing: &mut SearchResult, new: SearchResult) {
         normalized_relevance(existing.relevance_score),
         normalized_relevance(new.relevance_score),
     ) {
-        (Some(existing), Some(new)) => Some(existing.max(new)),
-        (Some(existing), None) => Some(existing),
-        (None, Some(new)) => Some(new),
-        (None, None) => None,
-    };
-    existing.query_match_score = match (existing.query_match_score, new.query_match_score) {
         (Some(existing), Some(new)) => Some(existing.max(new)),
         (Some(existing), None) => Some(existing),
         (None, Some(new)) => Some(new),
@@ -439,7 +400,6 @@ mod tests {
 
     #[test]
     fn repeated_mid_rank_evidence_outweighs_isolated_first_positions() {
-        let query = "durable replay protocol";
         let aligned = |url: &str, label: &str| {
             SearchResult::new(
                 url,
@@ -447,27 +407,24 @@ mod tests {
                 "Durable replay protocol evidence",
             )
         };
-        let aggregated = Aggregator::new().aggregate_for_query(
-            query,
-            vec![
-                (
-                    "first".to_string(),
-                    vec![
-                        aligned("https://isolated-first.example", "field note"),
-                        aligned("https://index-first.example", "index"),
-                        aligned("https://shared.example/specification", "specification"),
-                    ],
-                ),
-                (
-                    "second".to_string(),
-                    vec![
-                        aligned("https://isolated-second.example", "field note"),
-                        aligned("https://index-second.example", "index"),
-                        aligned("https://shared.example/specification", "specification"),
-                    ],
-                ),
-            ],
-        );
+        let aggregated = Aggregator::new().aggregate(vec![
+            (
+                "first".to_string(),
+                vec![
+                    aligned("https://isolated-first.example", "field note"),
+                    aligned("https://index-first.example", "index"),
+                    aligned("https://shared.example/specification", "specification"),
+                ],
+            ),
+            (
+                "second".to_string(),
+                vec![
+                    aligned("https://isolated-second.example", "field note"),
+                    aligned("https://index-second.example", "index"),
+                    aligned("https://shared.example/specification", "specification"),
+                ],
+            ),
+        ]);
 
         assert_eq!(
             aggregated.items()[0].normalized_url(),
@@ -477,7 +434,6 @@ mod tests {
 
     #[test]
     fn provider_local_duplicates_do_not_consume_rank_positions() {
-        let query = "bounded transport recovery";
         let primary = || {
             SearchResult::new(
                 "https://primary.example/recovery?utm_source=provider",
@@ -495,26 +451,23 @@ mod tests {
             .with_relevance_score(0.7)
         };
 
-        let without_duplicate = Aggregator::new().aggregate_for_query(
-            query,
-            vec![("provider".to_string(), vec![primary(), independent()])],
-        );
-        let with_duplicate = Aggregator::new().aggregate_for_query(
-            query,
-            vec![(
-                "provider".to_string(),
-                vec![
-                    primary(),
-                    SearchResult::new(
-                        "http://www.primary.example/recovery/",
-                        "Bounded transport recovery specification",
-                        "Normative recovery behavior, examples, and limits",
-                    )
-                    .with_relevance_score(0.8),
-                    independent(),
-                ],
-            )],
-        );
+        let without_duplicate = Aggregator::new().aggregate(vec![(
+            "provider".to_string(),
+            vec![primary(), independent()],
+        )]);
+        let with_duplicate = Aggregator::new().aggregate(vec![(
+            "provider".to_string(),
+            vec![
+                primary(),
+                SearchResult::new(
+                    "http://www.primary.example/recovery/",
+                    "Bounded transport recovery specification",
+                    "Normative recovery behavior, examples, and limits",
+                )
+                .with_relevance_score(0.8),
+                independent(),
+            ],
+        )]);
 
         let baseline = without_duplicate.items();
         let repeated = with_duplicate.items();
@@ -537,7 +490,6 @@ mod tests {
 
     #[test]
     fn provider_native_score_scales_do_not_penalize_cross_engine_consensus() {
-        let query = "bounded transport recovery";
         let primary = || {
             SearchResult::new(
                 "https://primary.example/recovery",
@@ -545,55 +497,52 @@ mod tests {
                 "Normative recovery behavior and limits",
             )
         };
-        let aggregated = Aggregator::new().aggregate_for_query(
-            query,
-            vec![
-                (
-                    "narrow-scale".to_string(),
-                    vec![
-                        primary().with_relevance_score(0.22),
-                        SearchResult::new(
-                            "https://secondary.example/recovery",
-                            "Bounded transport recovery analysis",
-                            "Independent recovery analysis",
-                        )
-                        .with_relevance_score(0.18),
-                    ],
-                ),
-                (
-                    "unscored".to_string(),
-                    vec![SearchResult::new(
-                        "https://overview.example/recovery",
-                        "Bounded transport recovery overview",
-                        "A brief overview",
-                    )],
-                ),
-                (
-                    "wide-scale".to_string(),
-                    vec![
-                        SearchResult::new(
-                            "https://other.example/transport",
-                            "Transport notes",
-                            "Partial notes",
-                        )
-                        .with_relevance_score(0.98),
-                        SearchResult::new(
-                            "https://other.example/retries",
-                            "Retry notes",
-                            "Generic retries",
-                        )
-                        .with_relevance_score(0.97),
-                        SearchResult::new(
-                            "https://other.example/timeouts",
-                            "Timeout notes",
-                            "Generic timeouts",
-                        )
-                        .with_relevance_score(0.96),
-                        primary().with_relevance_score(0.95),
-                    ],
-                ),
-            ],
-        );
+        let aggregated = Aggregator::new().aggregate(vec![
+            (
+                "narrow-scale".to_string(),
+                vec![
+                    primary().with_relevance_score(0.22),
+                    SearchResult::new(
+                        "https://secondary.example/recovery",
+                        "Bounded transport recovery analysis",
+                        "Independent recovery analysis",
+                    )
+                    .with_relevance_score(0.18),
+                ],
+            ),
+            (
+                "unscored".to_string(),
+                vec![SearchResult::new(
+                    "https://overview.example/recovery",
+                    "Bounded transport recovery overview",
+                    "A brief overview",
+                )],
+            ),
+            (
+                "wide-scale".to_string(),
+                vec![
+                    SearchResult::new(
+                        "https://other.example/transport",
+                        "Transport notes",
+                        "Partial notes",
+                    )
+                    .with_relevance_score(0.98),
+                    SearchResult::new(
+                        "https://other.example/retries",
+                        "Retry notes",
+                        "Generic retries",
+                    )
+                    .with_relevance_score(0.97),
+                    SearchResult::new(
+                        "https://other.example/timeouts",
+                        "Timeout notes",
+                        "Generic timeouts",
+                    )
+                    .with_relevance_score(0.96),
+                    primary().with_relevance_score(0.95),
+                ],
+            ),
+        ]);
 
         assert_eq!(
             aggregated.items()[0].normalized_url(),

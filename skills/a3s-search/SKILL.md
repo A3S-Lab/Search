@@ -1,6 +1,6 @@
 ---
 name: a3s-search
-description: Search, compare, and verify current web evidence with the a3s-search CLI and its native AnySearch and Tavily providers. Use for web research, fact checking, source discovery, current-event verification, domain-filtered search, or collecting structured answers, citations, full text, images, relevance scores, provider reports, and partial-failure evidence.
+description: Retrieve structured web results from multiple sources with the a3s-search CLI and its native AnySearch and Tavily providers. Use for source discovery, current web retrieval, domain-filtered search, or collecting URLs, snippets, full text, images, provider relevance, request reports, provenance, and partial-failure diagnostics. The calling agent remains responsible for query planning, semantic evaluation, corroboration, and conclusions.
 ---
 
 # A3S Search
@@ -15,11 +15,13 @@ Use the CLI first. Request JSON whenever evidence must be inspected, compared, o
    a3s-search engines
    ```
 
-2. Start with the default quality-gated cascade unless the task requires a
+2. Start with the default structurally gated cascade unless the task requires a
    constrained source set. The CLI tries headless discovery first, then public
    HTTP/RSS engines, then native API providers, and stops when the generic
-   quality floor is met. All tiers share one deadline. An explicit `--engines`
-   list runs only those sources and is never expanded.
+   retrieval requirements are met. Those requirements cover usable URLs,
+   distinct hosts, provenance, and optional cross-engine consensus; they do not
+   measure whether pages answer the query. All tiers share one deadline. An
+   explicit `--engines` list runs only those sources and is never expanded.
 
    When selecting providers deliberately:
 
@@ -53,13 +55,14 @@ Use the CLI first. Request JSON whenever evidence must be inspected, compared, o
 
 4. Inspect `answers`, `results`, `images`, `reports`, `failures`, `outcomes`,
    `cascade_receipt`, and `cascade_receipt_binding`. Check the executed tier
-   prefix and `quality_floor_met`; if the floor remains unmet after all declared
-   tiers, treat retrieval as incomplete and refine or decompose the query
-   instead of presenting weak results as sufficient. Preserve URLs, provider
-   reports, relevance scores, dates, and full text when they support the
-   conclusion. Do not claim that a provider succeeded unless the JSON evidence
-   shows it. Treat `auto_parameters_truncated` or `metadata_truncated` as a
-   signal that auxiliary provider metadata was safely shortened.
+   prefix, `retrieval_requirements_met`, `exhausted`, and each tier's
+   `decision_source`. These fields prove structural state only. Independently
+   evaluate relevance, authority, evidence coverage, conflict, and whether to
+   refine or decompose the query before presenting conclusions. Preserve URLs,
+   provider reports, relevance scores, dates, and full text when they support
+   the conclusion. Do not claim that a provider succeeded unless the JSON
+   evidence shows it. Treat `auto_parameters_truncated` or
+   `metadata_truncated` as a signal that auxiliary provider metadata was safely shortened.
    Treat `_a3s_normalization.changed = true` as evidence that invalid or
    oversized provider-controlled output was safely normalized; inspect its
    counters before relying on omitted evidence.
@@ -141,8 +144,9 @@ automatically selected depth or topic.
 ## Handle partial failures
 
 Treat provider warnings and the JSON `failures` and `outcomes` entries as
-evidence. Continue with usable results when one source fails and the receipt's
-quality floor is met. Disclose material failed paths and avoid conclusions that
-depend only on missing evidence. Retry with one source at a time to isolate
-authentication, quota, timeout, challenge, browser-runtime, or configuration
-failures.
+operational evidence. Continue with usable results when one source fails and
+the result set is sufficient for the caller's independently evaluated purpose.
+Do not treat `retrieval_requirements_met` as semantic approval. Disclose
+material failed paths and avoid conclusions that depend only on missing
+evidence. Retry with one source at a time to isolate authentication, quota,
+timeout, challenge, browser-runtime, or configuration failures.

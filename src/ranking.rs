@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use crate::SearchResult;
 
 const DEFAULT_RRF_RANK_CONSTANT: f64 = 60.0;
-const DEFAULT_QUERY_ALIGNMENT_WEIGHT: f64 = 0.8;
 const DEFAULT_NATIVE_RELEVANCE_WEIGHT: f64 = 0.2;
 const MAX_RRF_RANK_CONSTANT: f64 = 1_000_000.0;
 
@@ -23,8 +22,6 @@ pub struct RankingConfig {
     /// Larger values make evidence repeated across engines more important
     /// relative to small position differences inside one engine.
     pub rrf_rank_constant: f64,
-    /// Strength of query/title/snippet alignment in `0.0..=1.0`.
-    pub query_alignment_weight: f64,
     /// Strength of provider-local native relevance in `0.0..=1.0`.
     pub native_relevance_weight: f64,
 }
@@ -40,10 +37,6 @@ impl RankingConfig {
             } else {
                 defaults.rrf_rank_constant
             },
-            query_alignment_weight: normalized_weight(
-                self.query_alignment_weight,
-                defaults.query_alignment_weight,
-            ),
             native_relevance_weight: normalized_weight(
                 self.native_relevance_weight,
                 defaults.native_relevance_weight,
@@ -54,14 +47,6 @@ impl RankingConfig {
     pub(crate) fn reciprocal_rank_score(self, position: u32) -> f64 {
         let position = position.max(1);
         (self.rrf_rank_constant + 1.0) / (self.rrf_rank_constant + f64::from(position))
-    }
-
-    pub(crate) fn query_alignment_factor(self, alignment: Option<f64>) -> f64 {
-        let Some(alignment) = alignment else {
-            return 1.0;
-        };
-        let alignment = normalized_unit_interval(alignment, 0.0);
-        (1.0 - self.query_alignment_weight) + self.query_alignment_weight * alignment
     }
 
     pub(crate) fn native_relevance_factor(self, percentile: f64) -> f64 {
@@ -78,7 +63,6 @@ impl Default for RankingConfig {
     fn default() -> Self {
         Self {
             rrf_rank_constant: DEFAULT_RRF_RANK_CONSTANT,
-            query_alignment_weight: DEFAULT_QUERY_ALIGNMENT_WEIGHT,
             native_relevance_weight: DEFAULT_NATIVE_RELEVANCE_WEIGHT,
         }
     }
@@ -170,7 +154,6 @@ mod tests {
     fn invalid_policy_values_fall_back_as_one_policy() {
         let invalid = RankingConfig {
             rrf_rank_constant: f64::INFINITY,
-            query_alignment_weight: -1.0,
             native_relevance_weight: f64::NAN,
         };
 

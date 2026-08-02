@@ -76,9 +76,6 @@ dom_smoothie = "0.18"
 url = "2"
 urlencoding = "2"
 base64 = "0.22"
-unicode_categories = "0.1"
-unicode-normalization = "0.1"
-unicode-script = "0.5"
 
 # Configuration file parsing
 a3s-acl = "0.2"

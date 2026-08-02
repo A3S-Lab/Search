@@ -6,7 +6,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 use super::{
-    SearchCascade, SearchQuality, SearchQualityFloor, SearchTierDecision, SearchTierReport,
+    RetrievalHealth, RetrievalRequirements, SearchCascade, SearchTierDecision,
+    SearchTierDecisionSource, SearchTierReport,
 };
 use crate::SearchResults;
 
@@ -16,11 +17,11 @@ mod result_binding;
 mod wire;
 
 pub use query_binding::SearchQueryBindingV1;
-pub use receipt_binding::SearchCascadeReceiptBindingV1;
-pub use result_binding::SearchResultsBindingV1;
+pub use receipt_binding::SearchCascadeReceiptBindingV2;
+pub use result_binding::SearchResultsBindingV2;
 
-/// Stable schema identifier for [`SearchCascadeReceiptV1`].
-pub const SEARCH_CASCADE_RECEIPT_V1_SCHEMA: &str = "a3s/search-cascade-receipt/v1";
+/// Stable schema identifier for [`SearchCascadeReceiptV2`].
+pub const SEARCH_CASCADE_RECEIPT_V2_SCHEMA: &str = "a3s/search-cascade-receipt/v2";
 
 /// Counts that bind a cascade receipt to its returned result container.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,38 +36,39 @@ pub struct SearchCascadeCounts {
     pub outcomes: usize,
 }
 
-/// Version-one audit record for one caller-defined lazy tier cascade.
-#[derive(Debug, Clone, PartialEq)]
+/// Version-two audit record for one caller-defined lazy retrieval cascade.
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct SearchCascadeReceiptV1 {
+pub struct SearchCascadeReceiptV2 {
     /// Exact receipt schema identifier.
     pub schema: String,
     /// Query and complete typed query identity.
     pub query: SearchQueryBindingV1,
-    /// Caller-selected generic quality floor.
-    pub quality_floor: SearchQualityFloor,
-    /// Quality of the floor-sized ranked head of the final merged result set.
-    pub final_quality: SearchQuality,
+    /// Caller-selected structural fallback requirements.
+    pub retrieval_requirements: RetrievalRequirements,
+    /// Structural and operational health of the final merged result set.
+    pub final_health: RetrievalHealth,
     /// Deterministic identity of every caller-visible final result field.
-    pub result_set: SearchResultsBindingV1,
+    pub result_set: SearchResultsBindingV2,
     /// Ordered opaque identifiers for every available tier.
     pub configured_tiers: Vec<String>,
     /// Ordered reports for tiers the caller records as executed.
     pub executed_tiers: Vec<SearchTierReport>,
-    /// Whether final quality satisfies `quality_floor`.
-    pub quality_floor_met: bool,
-    /// Whether every tier in the caller-declared plan is reported as executed
-    /// without satisfying the floor.
-    pub exhausted_below_floor: bool,
+    /// Whether final health satisfies `retrieval_requirements`.
+    pub retrieval_requirements_met: bool,
+    /// Whether every configured tier ran while the final decision still asks
+    /// for another tier.
+    pub exhausted: bool,
     /// Counts derived from the returned result container.
     pub counts: SearchCascadeCounts,
 }
 
-impl SearchCascadeReceiptV1 {
+impl SearchCascadeReceiptV2 {
     /// Validates the receipt against its returned results.
     ///
-    /// This proves structural self-consistency. Authenticity still requires an
-    /// external trusted signature, digest log, or equivalent authority.
+    /// This proves structural self-consistency only. In particular, an
+    /// external-policy decision is recorded but never semantically re-evaluated
+    /// by A3S Search.
     pub fn validate(&self, results: &SearchResults) -> Result<(), SearchCascadeReceiptError> {
         self.validate_internal()?;
         validate_result_counts(&self.counts, results)?;
@@ -75,24 +77,27 @@ impl SearchCascadeReceiptV1 {
             return Err(SearchCascadeReceiptError::OutputWithoutExecutedTier);
         }
 
-        let recomputed = self
-            .quality_floor
-            .evaluate(&self.query.value.query, results);
-        if self.final_quality != recomputed {
-            return Err(SearchCascadeReceiptError::FinalQualityMismatch);
+        let recomputed = RetrievalHealth::observe(results);
+        if self.final_health != recomputed {
+            return Err(SearchCascadeReceiptError::FinalHealthMismatch);
         }
-
+        if self.final_health.usable_result_count + self.final_health.invalid_result_count
+            != results.items().len()
+        {
+            return Err(SearchCascadeReceiptError::InvalidHealthState {
+                field: "final_health.result_counts".to_string(),
+            });
+        }
         Ok(())
     }
 
-    fn validate_internal(&self) -> Result<(), SearchCascadeReceiptError> {
-        if self.schema != SEARCH_CASCADE_RECEIPT_V1_SCHEMA {
+    pub(super) fn validate_internal(&self) -> Result<(), SearchCascadeReceiptError> {
+        if self.schema != SEARCH_CASCADE_RECEIPT_V2_SCHEMA {
             return Err(SearchCascadeReceiptError::UnsupportedSchema {
                 actual: self.schema.clone(),
             });
         }
         self.query.validate()?;
-        validate_floor(&self.quality_floor)?;
         validate_tier_plan(&self.configured_tiers)?;
 
         if self.executed_tiers.len() > self.configured_tiers.len() {
@@ -104,17 +109,19 @@ impl SearchCascadeReceiptV1 {
             if self.configured_tiers.get(index) != Some(&report.tier) {
                 return Err(SearchCascadeReceiptError::TierPlanMismatch { index });
             }
-            validate_quality(
-                &report.combined_quality,
-                &format!("executed_tiers[{index}]"),
+            validate_health(
+                &report.combined_health,
+                &format!("executed_tiers[{index}].combined_health"),
             )?;
-            let expected = if self.quality_floor.is_met(&report.combined_quality) {
-                SearchTierDecision::Stop
-            } else {
-                SearchTierDecision::Continue
-            };
-            if report.decision != expected {
-                return Err(SearchCascadeReceiptError::InvalidTierDecision { index });
+            if report.decision_source == SearchTierDecisionSource::RetrievalRequirements {
+                let expected = if self.retrieval_requirements.is_met(&report.combined_health) {
+                    SearchTierDecision::Stop
+                } else {
+                    SearchTierDecision::Continue
+                };
+                if report.decision != expected {
+                    return Err(SearchCascadeReceiptError::InvalidTierDecision { index });
+                }
             }
             if report.decision == SearchTierDecision::Stop && index + 1 != self.executed_tiers.len()
             {
@@ -126,20 +133,25 @@ impl SearchCascadeReceiptV1 {
             return Err(SearchCascadeReceiptError::InvalidResultDigest);
         }
 
-        validate_quality(&self.final_quality, "final_quality")?;
+        validate_health(&self.final_health, "final_health")?;
         if let Some(last) = self.executed_tiers.last() {
-            if last.combined_quality != self.final_quality {
-                return Err(SearchCascadeReceiptError::FinalTierQualityMismatch);
+            if last.combined_health != self.final_health {
+                return Err(SearchCascadeReceiptError::FinalTierHealthMismatch);
             }
         }
 
-        let quality_floor_met = self.quality_floor.is_met(&self.final_quality);
-        if self.quality_floor_met != quality_floor_met {
-            return Err(SearchCascadeReceiptError::QualityFloorStateMismatch);
+        let requirements_met = self.retrieval_requirements.is_met(&self.final_health);
+        if self.retrieval_requirements_met != requirements_met {
+            return Err(SearchCascadeReceiptError::RequirementsStateMismatch);
         }
-        let exhausted_below_floor =
-            !quality_floor_met && self.executed_tiers.len() == self.configured_tiers.len();
-        if self.exhausted_below_floor != exhausted_below_floor {
+        let needs_more = self
+            .executed_tiers
+            .last()
+            .map_or(!requirements_met, |report| {
+                report.decision == SearchTierDecision::Continue
+            });
+        let exhausted = needs_more && self.executed_tiers.len() == self.configured_tiers.len();
+        if self.exhausted != exhausted {
             return Err(SearchCascadeReceiptError::ExhaustionStateMismatch);
         }
 
@@ -147,7 +159,7 @@ impl SearchCascadeReceiptV1 {
     }
 }
 
-impl Serialize for SearchCascadeReceiptV1 {
+impl Serialize for SearchCascadeReceiptV2 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -156,7 +168,7 @@ impl Serialize for SearchCascadeReceiptV1 {
     }
 }
 
-impl<'de> Deserialize<'de> for SearchCascadeReceiptV1 {
+impl<'de> Deserialize<'de> for SearchCascadeReceiptV2 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -165,33 +177,29 @@ impl<'de> Deserialize<'de> for SearchCascadeReceiptV1 {
     }
 }
 
-/// Final merged results paired with their version-one cascade receipt.
+/// Final merged results paired with their version-two cascade receipt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[non_exhaustive]
-pub struct SearchCascadeOutcomeV1 {
+pub struct SearchCascadeOutcomeV2 {
     /// Internally self-consistent cascade receipt.
-    pub receipt: SearchCascadeReceiptV1,
+    pub receipt: SearchCascadeReceiptV2,
     /// Canonically merged search output.
     pub results: SearchResults,
 }
 
-impl SearchCascadeOutcomeV1 {
+impl SearchCascadeOutcomeV2 {
     /// Validates the receipt and returned results as one outcome.
     pub fn validate(&self) -> Result<(), SearchCascadeReceiptError> {
         self.receipt.validate(&self.results)
     }
 
     /// Returns the canonical identity of the complete validated receipt.
-    ///
-    /// The digest detects receipt substitution when compared with a trusted
-    /// expected value. It does not prove execution, precommitment, or signer
-    /// authenticity by itself.
     pub fn receipt_binding(
         &self,
-    ) -> Result<SearchCascadeReceiptBindingV1, SearchCascadeReceiptError> {
+    ) -> Result<SearchCascadeReceiptBindingV2, SearchCascadeReceiptError> {
         self.validate()?;
-        SearchCascadeReceiptBindingV1::new(&self.receipt)
+        SearchCascadeReceiptBindingV2::new(&self.receipt)
     }
 }
 
@@ -199,7 +207,7 @@ impl SearchCascadeOutcomeV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum SearchCascadeReceiptError {
-    /// Receipt schema is not version one.
+    /// Receipt schema is unsupported.
     #[error("unsupported search cascade receipt schema: {actual}")]
     UnsupportedSchema { actual: String },
     /// Query digest is malformed or does not bind the typed query.
@@ -214,16 +222,16 @@ pub enum SearchCascadeReceiptError {
     /// A result field cannot be represented by the frozen digest encoding.
     #[error("search cascade result set has an invalid value at {field}")]
     InvalidResultValue { field: String },
-    /// A floating-point quality or floor value is non-finite or impossible.
-    #[error("search cascade receipt has an invalid quality value at {field}")]
-    InvalidQualityValue { field: String },
+    /// A structural health record contains impossible counts.
+    #[error("search cascade receipt has an invalid retrieval health state at {field}")]
+    InvalidHealthState { field: String },
     /// Configured tier identifiers are empty or repeated.
     #[error("search cascade receipt has an invalid tier plan at index {index}: {reason}")]
     InvalidTierPlan { index: usize, reason: &'static str },
     /// Executed tiers are not the exact ordered prefix of configured tiers.
     #[error("search cascade executed tier does not match its plan at index {index}")]
     TierPlanMismatch { index: usize },
-    /// A tier decision does not agree with its recorded combined quality.
+    /// A structural tier decision disagrees with its recorded health.
     #[error("search cascade tier decision is invalid at index {index}")]
     InvalidTierDecision { index: usize },
     /// Work is recorded after an earlier tier stopped the cascade.
@@ -242,31 +250,26 @@ pub enum SearchCascadeReceiptError {
     /// Output exists even though no tier was recorded as executed.
     #[error("search cascade returned output without an executed tier")]
     OutputWithoutExecutedTier,
-    /// Final quality cannot be recomputed from the returned output.
-    #[error("search cascade final quality does not match returned results")]
-    FinalQualityMismatch,
-    /// Last tier quality differs from final quality.
-    #[error("search cascade final tier quality does not match final quality")]
-    FinalTierQualityMismatch,
-    /// `quality_floor_met` does not match the floor evaluation.
-    #[error("search cascade quality-floor state is inconsistent")]
-    QualityFloorStateMismatch,
-    /// `exhausted_below_floor` does not match plan execution and final quality.
+    /// Final retrieval health cannot be recomputed from the returned output.
+    #[error("search cascade final retrieval health does not match returned results")]
+    FinalHealthMismatch,
+    /// Last tier health differs from final health.
+    #[error("search cascade final tier health does not match final health")]
+    FinalTierHealthMismatch,
+    /// `retrieval_requirements_met` disagrees with structural evaluation.
+    #[error("search cascade retrieval-requirements state is inconsistent")]
+    RequirementsStateMismatch,
+    /// `exhausted` disagrees with the tier plan and final decision.
     #[error("search cascade exhaustion state is inconsistent")]
     ExhaustionStateMismatch,
 }
 
 impl SearchCascade {
-    /// Consumes the cascade and returns results with a validated V1 receipt.
-    ///
-    /// Tier identifiers are caller-defined opaque values. Executed tiers must
-    /// be the exact ordered prefix of this configured plan. A below-floor
-    /// prefix shorter than the plan remains valid and explicitly represents an
-    /// interrupted or otherwise incomplete caller-owned cascade.
+    /// Consumes the cascade and returns results with a validated V2 receipt.
     pub fn finish_with_tier_plan<I, S>(
         self,
         configured_tiers: I,
-    ) -> Result<SearchCascadeOutcomeV1, SearchCascadeReceiptError>
+    ) -> Result<SearchCascadeOutcomeV2, SearchCascadeReceiptError>
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
@@ -275,25 +278,25 @@ impl SearchCascade {
             .into_iter()
             .map(Into::into)
             .collect::<Vec<_>>();
-        let final_quality = self.quality();
-        let quality_floor_met = self.floor.is_met(&final_quality);
-        let exhausted_below_floor =
-            !quality_floor_met && self.reports.len() == configured_tiers.len();
+        let final_health = self.health();
+        let retrieval_requirements_met = self.requirements.is_met(&final_health);
+        let needs_more = self.needs_next_tier();
+        let exhausted = needs_more && self.reports.len() == configured_tiers.len();
         let counts = counts_for_results(&self.results);
-        let result_set = SearchResultsBindingV1::new(&self.results)?;
-        let receipt = SearchCascadeReceiptV1 {
-            schema: SEARCH_CASCADE_RECEIPT_V1_SCHEMA.to_string(),
+        let result_set = SearchResultsBindingV2::new(&self.results)?;
+        let receipt = SearchCascadeReceiptV2 {
+            schema: SEARCH_CASCADE_RECEIPT_V2_SCHEMA.to_string(),
             query: SearchQueryBindingV1::new(self.query),
-            quality_floor: self.floor,
-            final_quality,
+            retrieval_requirements: self.requirements,
+            final_health,
             result_set,
             configured_tiers,
             executed_tiers: self.reports,
-            quality_floor_met,
-            exhausted_below_floor,
+            retrieval_requirements_met,
+            exhausted,
             counts,
         };
-        let outcome = SearchCascadeOutcomeV1 {
+        let outcome = SearchCascadeOutcomeV2 {
             receipt,
             results: self.results,
         };
@@ -302,36 +305,25 @@ impl SearchCascade {
     }
 }
 
-fn validate_floor(floor: &SearchQualityFloor) -> Result<(), SearchCascadeReceiptError> {
-    for (field, value) in [
-        ("quality_floor.min_query_match", floor.min_query_match),
-        (
-            "quality_floor.min_mean_query_match",
-            floor.min_mean_query_match,
-        ),
-    ] {
-        if !value.is_finite() {
-            return Err(SearchCascadeReceiptError::InvalidQualityValue {
-                field: field.to_string(),
-            });
-        }
-    }
-    Ok(())
-}
-
-fn validate_quality(quality: &SearchQuality, path: &str) -> Result<(), SearchCascadeReceiptError> {
-    let mean_is_valid =
-        quality.mean_query_match.is_finite() && (0.0..=1.0).contains(&quality.mean_query_match);
-    let counts_are_possible = quality.unique_host_count <= quality.usable_result_count
-        && quality.consensus_result_count <= quality.usable_result_count
-        && quality.aligned_result_count <= quality.usable_result_count;
-    let empty_state_is_consistent = if quality.usable_result_count == 0 {
-        quality.contributing_engine_count == 0 && quality.mean_query_match == 0.0
-    } else {
-        quality.unique_host_count > 0
-    };
-    if !mean_is_valid || !counts_are_possible || !empty_state_is_consistent {
-        return Err(SearchCascadeReceiptError::InvalidQualityValue {
+fn validate_health(health: &RetrievalHealth, path: &str) -> Result<(), SearchCascadeReceiptError> {
+    let outcome_total = health
+        .successful_engine_count
+        .saturating_add(health.empty_engine_count)
+        .saturating_add(health.failed_engine_count)
+        .saturating_add(health.timed_out_engine_count)
+        .saturating_add(health.rejected_engine_count)
+        .saturating_add(health.circuit_open_engine_count);
+    let usable_counts_are_possible = health.unique_host_count <= health.usable_result_count
+        && health.consensus_result_count <= health.usable_result_count;
+    let empty_state_is_consistent = health.usable_result_count != 0
+        || (health.unique_host_count == 0
+            && health.contributing_engine_count == 0
+            && health.consensus_result_count == 0);
+    if outcome_total != health.attempted_engine_count
+        || !usable_counts_are_possible
+        || !empty_state_is_consistent
+    {
+        return Err(SearchCascadeReceiptError::InvalidHealthState {
             field: path.to_string(),
         });
     }

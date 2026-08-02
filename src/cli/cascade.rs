@@ -1,6 +1,5 @@
-//! Quality-gated CLI search cascade.
+//! Structurally gated CLI search cascade.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -12,10 +11,9 @@ use a3s_search::{
         So360Parser, Sogou, SogouParser, Wikipedia,
     },
     providers::BuiltinProvider,
-    refine_query_portfolio, Bulkhead, CircuitBreaker, Engine, EngineFailure, HttpFetcher,
-    PageFetcher, Search, SearchCascade, SearchCascadeOutcomeV1, SearchCoalescer, SearchConfig,
-    SearchError, SearchQualityFloor, SearchQuery, SearchQueryRefinement, SearchReport,
-    SearchResults,
+    Bulkhead, CircuitBreaker, Engine, EngineFailure, HttpFetcher, PageFetcher,
+    RetrievalRequirements, Search, SearchCascade, SearchCascadeOutcomeV2, SearchCoalescer,
+    SearchConfig, SearchError, SearchQuery, SearchResults,
 };
 
 use super::provider::{create_provider_engine, ensure_provider_ready};
@@ -50,24 +48,16 @@ struct SharedControls {
     coalescer: SearchCoalescer,
 }
 
-#[derive(Clone)]
-struct RefinementAssignment {
-    shortcut: String,
-    portfolio_index: usize,
-    refinement: SearchQueryRefinement,
-}
-
-/// Executes a browser-first cascade and returns results bound to a complete
-/// quality and tier receipt.
+/// Executes a lazy retrieval cascade and returns structurally bound results.
 pub(crate) async fn execute_cascade(
     plan: &EngineTierPlan,
     request: CascadeRequest<'_>,
-) -> Result<SearchCascadeOutcomeV1> {
+) -> Result<SearchCascadeOutcomeV2> {
     let deadline = Instant::now()
         .checked_add(request.timeout)
         .ok_or_else(|| anyhow::anyhow!("search timeout exceeds the platform limit"))?;
-    let floor = SearchQualityFloor::for_limit(request.limit);
-    let mut cascade = SearchCascade::new(request.query.clone(), floor);
+    let requirements = RetrievalRequirements::for_limit(request.limit);
+    let mut cascade = SearchCascade::new(request.query.clone(), requirements);
     let controls = SharedControls::default();
     let tiers = plan.tiers();
     let configured_tiers = tiers
@@ -79,40 +69,15 @@ pub(crate) async fn execute_cascade(
         if !cascade.needs_next_tier() {
             break;
         }
-        let portfolio = if index > 0 {
-            refine_query_portfolio(
-                &request.query.query,
-                cascade.results(),
-                request.limit.min(5),
-                shortcuts.len(),
-            )
-        } else {
-            Vec::new()
-        };
-        let assignments = assign_refinement_portfolio(shortcuts, &portfolio);
-        let mut query_plan = BTreeMap::new();
-        for assignment in &assignments {
-            let mut query = request.query.clone();
-            query.query.clone_from(&assignment.refinement.query);
-            query_plan.insert(assignment.shortcut.clone(), query);
-        }
         let remaining_tiers = tiers.len().saturating_sub(index + 1);
-        let mut results = match tier {
+        let results = match tier {
             EngineTier::Headless => {
-                execute_headless_tier(
-                    &request,
-                    &query_plan,
-                    &controls,
-                    shortcuts,
-                    deadline,
-                    remaining_tiers,
-                )
-                .await
+                execute_headless_tier(&request, &controls, shortcuts, deadline, remaining_tiers)
+                    .await
             }
             EngineTier::HttpRss | EngineTier::Api => {
                 execute_network_tier(
                     &request,
-                    &query_plan,
                     &controls,
                     shortcuts,
                     tier,
@@ -122,42 +87,12 @@ pub(crate) async fn execute_cascade(
                 .await?
             }
         };
-        for assignment in assignments {
-            results.add_report(refinement_report(
-                tier.receipt_name(),
-                &assignment.shortcut,
-                assignment.portfolio_index,
-                assignment.refinement,
-            ));
-        }
         cascade.push_tier(tier.receipt_name(), results);
     }
 
     let outcome = cascade.finish_with_tier_plan(configured_tiers)?;
     outcome.validate()?;
     Ok(outcome)
-}
-
-fn assign_refinement_portfolio(
-    shortcuts: &[String],
-    portfolio: &[SearchQueryRefinement],
-) -> Vec<RefinementAssignment> {
-    if portfolio.is_empty() {
-        return Vec::new();
-    }
-
-    shortcuts
-        .iter()
-        .enumerate()
-        .map(|(assignment_index, shortcut)| {
-            let portfolio_index = assignment_index % portfolio.len();
-            RefinementAssignment {
-                shortcut: shortcut.clone(),
-                portfolio_index,
-                refinement: portfolio[portfolio_index].clone(),
-            }
-        })
-        .collect()
 }
 
 fn configured_search(config: Option<&SearchConfig>, controls: &SharedControls) -> Search {
@@ -177,7 +112,6 @@ fn configured_search(config: Option<&SearchConfig>, controls: &SharedControls) -
 
 async fn execute_network_tier(
     request: &CascadeRequest<'_>,
-    query_plan: &BTreeMap<String, SearchQuery>,
     controls: &SharedControls,
     shortcuts: &[String],
     tier: EngineTier,
@@ -216,8 +150,6 @@ async fn execute_network_tier(
         search,
         setup_results,
         &request.query,
-        query_plan,
-        &request.query.query,
         tier.receipt_name(),
         budget,
     )
@@ -327,8 +259,6 @@ async fn execute_search_tier(
     mut search: Search,
     mut setup_results: SearchResults,
     query: &SearchQuery,
-    query_plan: &BTreeMap<String, SearchQuery>,
-    ranking_query: &str,
     tier: &str,
     budget: Duration,
 ) -> SearchResults {
@@ -345,12 +275,7 @@ async fn execute_search_tier(
             .saturating_sub(Duration::from_millis(100))
             .max(Duration::from_millis(1)),
     );
-    match tokio::time::timeout(
-        budget,
-        search.search_with_query_plan(query.clone(), query_plan.clone(), ranking_query),
-    )
-    .await
-    {
+    match tokio::time::timeout(budget, search.search(query.clone())).await {
         Ok(Ok(results)) => setup_results.merge(results),
         Ok(Err(error)) => setup_results.add_failure(search_error_failure(tier, &error)),
         Err(_) => setup_results.add_failure(
@@ -358,23 +283,6 @@ async fn execute_search_tier(
         ),
     }
     setup_results
-}
-
-fn refinement_report(
-    tier: &str,
-    shortcut: &str,
-    portfolio_index: usize,
-    refinement: SearchQueryRefinement,
-) -> SearchReport {
-    SearchReport::new("a3s-search/query-refinement")
-        .with_metadata("schema", "a3s/search-query-refinement/v1")
-        .with_metadata("tier", tier)
-        .with_metadata("shortcut", shortcut)
-        .with_metadata("portfolio_index", portfolio_index)
-        .with_metadata("effective_query", refinement.query)
-        .with_metadata("total_units", refinement.total_units)
-        .with_metadata("covered_units", refinement.covered_units)
-        .with_metadata("retained_units", refinement.retained_units)
 }
 
 fn tier_timeout(remaining: Duration, remaining_tiers: usize) -> Duration {
@@ -413,117 +321,6 @@ fn search_error_failure(tier: &str, error: &SearchError) -> EngineFailure {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn refinement_report_is_complete_and_bound_to_the_result_set() {
-        let mut evidence = SearchResults::new();
-        for index in 0..5 {
-            evidence.add_result(a3s_search::SearchResult::new(
-                format!("https://evidence-{index}.example/report"),
-                "Alpha evidence",
-                if index < 3 {
-                    "Beta analysis"
-                } else {
-                    "General analysis"
-                },
-            ));
-        }
-        evidence.items_mut()[0].content.push_str(" with gamma");
-        let refinement =
-            a3s_search::refine_query_for_evidence("alpha beta gamma delta epsilon", &evidence, 5)
-                .unwrap();
-        let report = refinement_report("http-rss", "bing", 1, refinement);
-
-        assert_eq!(report.engine, "a3s-search/query-refinement");
-        assert_eq!(
-            report.metadata,
-            BTreeMap::from([
-                ("covered_units".to_string(), serde_json::json!(3),),
-                (
-                    "effective_query".to_string(),
-                    serde_json::json!("alpha delta epsilon"),
-                ),
-                ("portfolio_index".to_string(), serde_json::json!(1)),
-                ("retained_units".to_string(), serde_json::json!(3),),
-                (
-                    "schema".to_string(),
-                    serde_json::json!("a3s/search-query-refinement/v1"),
-                ),
-                ("shortcut".to_string(), serde_json::json!("bing")),
-                ("tier".to_string(), serde_json::json!("http-rss")),
-                ("total_units".to_string(), serde_json::json!(5)),
-            ])
-        );
-
-        let mut substituted_report = report.clone();
-        substituted_report.metadata.insert(
-            "effective_query".to_string(),
-            serde_json::json!("different evidence query"),
-        );
-        let mut original = SearchResults::new();
-        original.add_report(report);
-        let binding = a3s_search::SearchResultsBindingV1::new(&original).unwrap();
-
-        let mut substituted = SearchResults::new();
-        substituted.add_report(substituted_report);
-        assert!(binding.validate(&substituted).is_err());
-    }
-
-    #[test]
-    fn refinement_assignment_hedges_a_single_gap_across_existing_engines() {
-        let mut evidence = SearchResults::new();
-        for index in 0..5 {
-            evidence.add_result(a3s_search::SearchResult::new(
-                format!("https://evidence-{index}.example/report"),
-                "alpha beta gamma",
-                "alpha beta gamma",
-            ));
-        }
-        let portfolio = refine_query_portfolio("alpha beta gamma delta", &evidence, 5, 3);
-        assert_eq!(portfolio.len(), 1);
-        let shortcuts = ["ddg", "bing", "wiki"].map(str::to_string);
-
-        let assignments = assign_refinement_portfolio(&shortcuts, &portfolio);
-
-        assert_eq!(assignments.len(), shortcuts.len());
-        assert!(assignments
-            .iter()
-            .all(|assignment| assignment.portfolio_index == 0));
-        assert!(assignments
-            .iter()
-            .all(|assignment| assignment.refinement == portfolio[0]));
-    }
-
-    #[test]
-    fn refinement_assignment_partitions_multiple_gaps_before_redundancy() {
-        let query = "alpha beta gamma delta";
-        let mut evidence = SearchResults::new();
-        for (index, content) in ["alpha beta", "alpha gamma", "alpha delta"]
-            .into_iter()
-            .enumerate()
-        {
-            evidence.add_result(a3s_search::SearchResult::new(
-                format!("https://evidence-{index}.example/report"),
-                "Evidence",
-                content,
-            ));
-        }
-        let portfolio = refine_query_portfolio(query, &evidence, 3, 2);
-        assert_eq!(portfolio.len(), 2);
-        let shortcuts = ["ddg", "bing", "wiki"].map(str::to_string);
-
-        let assignments = assign_refinement_portfolio(&shortcuts, &portfolio);
-
-        assert_eq!(
-            assignments
-                .iter()
-                .map(|assignment| assignment.portfolio_index)
-                .collect::<Vec<_>>(),
-            vec![0, 1, 0]
-        );
-        assert_eq!(assignments[0].refinement, assignments[2].refinement);
-        assert_ne!(assignments[0].refinement, assignments[1].refinement);
-    }
 
     #[test]
     fn tier_deadline_is_shared_fairly_across_remaining_tiers() {

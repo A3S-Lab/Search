@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::future::pending;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -159,67 +158,6 @@ async fn ranking_policy_is_part_of_the_coalescing_identity() {
     let snapshot = coalescer.snapshot();
     assert_eq!(snapshot.leader_requests, 2);
     assert_eq!(snapshot.shared_requests, 0);
-}
-
-#[tokio::test]
-async fn ranking_query_is_part_of_the_coalescing_identity() {
-    let coalescer = SearchCoalescer::default();
-    let calls = Arc::new(AtomicUsize::new(0));
-    let search = configured_search(
-        coalescer.clone(),
-        CountingEngine::new(Arc::clone(&calls), Duration::from_millis(25)),
-    );
-    let retrieval = SearchQuery::new("same evidence-gap query");
-
-    let (first, second) = tokio::join!(
-        search.search_with_ranking_query(retrieval.clone(), "first original query"),
-        search.search_with_ranking_query(retrieval, "second original query"),
-    );
-
-    assert!(first.is_ok());
-    assert!(second.is_ok());
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
-    let snapshot = coalescer.snapshot();
-    assert_eq!(snapshot.leader_requests, 2);
-    assert_eq!(snapshot.shared_requests, 0);
-}
-
-#[tokio::test]
-async fn engine_query_plan_controls_retrieval_and_coalescing_identity() {
-    let coalescer = SearchCoalescer::default();
-    let calls = Arc::new(AtomicUsize::new(0));
-    let search = configured_search(
-        coalescer.clone(),
-        CountingEngine::new(Arc::clone(&calls), Duration::from_millis(25)),
-    );
-    let mut first_plan = BTreeMap::new();
-    first_plan.insert(
-        "counting".to_string(),
-        SearchQuery::new("first evidence gap"),
-    );
-    let mut second_plan = BTreeMap::new();
-    second_plan.insert(
-        "counting".to_string(),
-        SearchQuery::new("second evidence gap"),
-    );
-
-    let (first, second) = tokio::join!(
-        search.search_with_query_plan(
-            SearchQuery::new("original query"),
-            first_plan,
-            "original query",
-        ),
-        search.search_with_query_plan(
-            SearchQuery::new("original query"),
-            second_plan,
-            "original query",
-        ),
-    );
-
-    assert_eq!(first.unwrap().items()[0].title, "first evidence gap");
-    assert_eq!(second.unwrap().items()[0].title, "second evidence gap");
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
-    assert_eq!(coalescer.snapshot().shared_requests, 0);
 }
 
 #[tokio::test]
