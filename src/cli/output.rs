@@ -3,7 +3,7 @@
 use anyhow::Result;
 use clap::ValueEnum;
 
-use a3s_search::{SearchCascadeOutcomeV2, SearchResults};
+use a3s_search::{select_structural_window, SearchCascadeOutcomeV2, SearchResult, SearchResults};
 
 /// CLI output format.
 #[derive(Clone, Copy, ValueEnum, Debug)]
@@ -24,6 +24,7 @@ pub(crate) fn print_cascade_results(
 ) -> Result<()> {
     outcome.validate()?;
     let results = &outcome.results;
+    let visible = select_structural_window(results, limit, outcome.receipt.retrieval_requirements);
     match format {
         OutputFormat::Text => {
             let binding = outcome.receipt_binding()?;
@@ -40,7 +41,7 @@ pub(crate) fn print_cascade_results(
                 println!();
             }
 
-            for (index, result) in results.items().iter().take(limit).enumerate() {
+            for (index, result) in visible.iter().enumerate() {
                 let mut engines: Vec<_> = result.engines.iter().collect();
                 engines.sort_unstable();
                 println!("{}. {}", index + 1, result.title);
@@ -82,7 +83,7 @@ pub(crate) fn print_cascade_results(
             println!("{}", serde_json::to_string_pretty(&payload)?);
         }
         OutputFormat::Compact => {
-            for result in results.items().iter().take(limit) {
+            for result in visible {
                 println!("{}\t{}", result.title, result.url);
             }
         }
@@ -97,13 +98,21 @@ pub(crate) fn cascade_json_output(
 ) -> Result<serde_json::Value> {
     outcome.validate()?;
     let mut payload = json_output(query, &outcome.results, limit);
+    let requirements = outcome.receipt.retrieval_requirements;
+    let visible = select_structural_window(&outcome.results, limit, requirements);
+    let visible_health = requirements.evaluate_items(visible.iter().copied());
+    payload["results"] = serde_json::to_value(&visible)?;
+    payload["count"] = serde_json::json!(visible.len());
+    payload["visible_retrieval_requirements_met"] =
+        serde_json::json!(requirements.is_met(&visible_health));
+    payload["visible_retrieval_health"] = serde_json::to_value(visible_health)?;
     payload["cascade_receipt"] = serde_json::to_value(&outcome.receipt)?;
     payload["cascade_receipt_binding"] = serde_json::to_value(outcome.receipt_binding()?)?;
     Ok(payload)
 }
 
 pub(crate) fn json_output(query: &str, results: &SearchResults, limit: usize) -> serde_json::Value {
-    let output: Vec<_> = results.items().iter().take(limit).collect();
+    let output: Vec<&SearchResult> = results.items().iter().take(limit).collect();
     serde_json::json!({
         "query": query,
         "results": output,
@@ -173,5 +182,51 @@ mod tests {
                 .len(),
             64
         );
+    }
+
+    #[test]
+    fn cascade_json_selects_a_structurally_healthy_visible_window() {
+        let query = SearchQuery::new("opaque query");
+        let requirements = RetrievalRequirements::for_limit(5);
+        let mut cascade = SearchCascade::new(query.clone(), requirements);
+        let mut results = SearchResults::new();
+        for (url, engine, score) in [
+            ("https://one.example/1", "first", 6.0),
+            ("https://one.example/2", "first", 5.0),
+            ("https://two.example/3", "second", 4.0),
+            ("https://two.example/4", "second", 3.0),
+            ("https://two.example/5", "second", 2.0),
+            ("https://three.example/6", "first", 1.0),
+        ] {
+            let mut result = SearchResult::new(url, "opaque", "opaque").with_engine(engine, 1);
+            result.score = score;
+            results.add_result(result);
+        }
+        cascade.push_tier("headless", results);
+        let outcome = cascade
+            .finish_with_tier_plan(["headless", "http_rss", "api"])
+            .unwrap();
+
+        let output = cascade_json_output(&query.query, &outcome, 5).unwrap();
+        let urls = output["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|result| result["url"].as_str().unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            urls,
+            vec![
+                "https://one.example/1",
+                "https://one.example/2",
+                "https://two.example/3",
+                "https://two.example/4",
+                "https://three.example/6",
+            ]
+        );
+        assert_eq!(output["visible_retrieval_health"]["unique_host_count"], 3);
+        assert_eq!(output["visible_retrieval_requirements_met"], true);
+        assert_eq!(output["total_count"], 6);
     }
 }
