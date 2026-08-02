@@ -1,154 +1,160 @@
 <svg xmlns="http://www.w3.org/2000/svg"
-     width="1200" height="430" viewBox="0 0 1200 430"
+     width="1200" height="440" viewBox="0 0 1200 440"
      role="img" aria-labelledby="title desc">
-  <title id="title">A3S Search — embeddable metasearch for Rust</title>
-  <desc id="desc">A host application composes browser, HTTP and RSS, and native API sources behind one typed Rust search boundary, then receives ranked results with provenance and partial failures.</desc>
+  <title id="title">A3S Search — one typed metasearch boundary</title>
+  <desc id="desc">Browser, HTTP and RSS, and native API source lanes converge through the A3S Search Rust kernel into ranked results with provenance and typed failures. Semantic policy remains with the caller.</desc>
 
   <defs>
-    <linearGradient id="background" x1="0" y1="0" x2="1200" y2="430" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#0d1117"/>
-      <stop offset="0.68" stop-color="#111923"/>
-      <stop offset="1" stop-color="#15152a"/>
-    </linearGradient>
-    <linearGradient id="route" x1="0" y1="0" x2="1" y2="1">
-      <stop stop-color="#6ca3ff"/>
-      <stop offset="1" stop-color="#8c83ff"/>
-    </linearGradient>
-    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-      <path d="M0 0L8 4L0 8Z" fill="#6ca3ff"/>
+    <marker id="arrow-blue" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0L8 4L0 8Z" fill="#5ea1ff"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0L8 4L0 8Z" fill="#4ed6a0"/>
     </marker>
   </defs>
 
-  <rect x="1" y="1" width="1198" height="428" rx="24"
-        fill="url(#background)" stroke="#263445" stroke-width="2"/>
-  <path d="M570 42V388" stroke="#263445" stroke-width="2"/>
+  <rect x="1" y="1" width="1198" height="438" rx="22"
+        fill="#0b0f14" stroke="#273240" stroke-width="2"/>
+  <path d="M566 36V404" stroke="#273240" stroke-width="2"/>
 
-  <g id="identity" transform="translate(58 48)">
-    <g id="route-mark" transform="translate(0 0)" fill="none" stroke-linecap="round">
-      <circle cx="24" cy="24" r="20" stroke="#6ca3ff" stroke-width="5"/>
-      <path d="M39 39L56 56" stroke="#8c83ff" stroke-width="6"/>
-      <path d="M5 17H22M7 29H27M23 5V18" stroke="#3ccf91" stroke-width="3"/>
+  <g id="identity" transform="translate(56 42)">
+    <g id="convergence-mark" transform="translate(0 2)" fill="none" stroke-linecap="round">
+      <circle cx="8" cy="7" r="6" fill="#5ea1ff" stroke="none"/>
+      <circle cx="8" cy="25" r="6" fill="#4ed6a0" stroke="none"/>
+      <circle cx="8" cy="43" r="6" fill="#f1b84b" stroke="none"/>
+      <path d="M18 7H34L52 25M18 25H52M18 43H34L52 25" stroke="#9ba9b8" stroke-width="3"/>
+      <circle cx="58" cy="25" r="8" stroke="#eef3f8" stroke-width="3"/>
     </g>
-    <text x="78" y="31" fill="#6ca3ff"
+    <text x="82" y="31" fill="#7fb6ff"
           font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
-          font-size="18" font-weight="700" letter-spacing="2">A3S / EMBEDDABLE METASEARCH</text>
+          font-size="18" font-weight="700" letter-spacing="2">RUST / EMBEDDABLE METASEARCH</text>
 
-    <text y="132" fill="#eef4fb"
+    <text y="132" fill="#f3f6f9"
           font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif"
-          font-size="70" font-weight="760" letter-spacing="-2.8">A3S Search</text>
-    <text y="184" fill="#eef4fb"
+          font-size="72" font-weight="760" letter-spacing="-3">A3S Search</text>
+    <text y="186" fill="#f3f6f9"
           font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif"
-          font-size="25" font-weight="650">Compose many search sources.</text>
-    <text y="219" fill="#b8c4d3"
+          font-size="28" font-weight="680">Many sources in.</text>
+    <text y="224" fill="#aab6c3"
           font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif"
-          font-size="25" font-weight="560">Keep one typed Rust boundary.</text>
+          font-size="28" font-weight="620">One typed result boundary out.</text>
 
-    <g transform="translate(0 258)">
-      <rect width="454" height="72" rx="8" fill="#111923" stroke="#31445b" stroke-width="2"/>
-      <text x="20" y="29" fill="#eef4fb"
+    <g transform="translate(0 264)">
+      <rect width="458" height="76" rx="10" fill="#111821" stroke="#334255" stroke-width="2"/>
+      <text x="20" y="31" fill="#f3f6f9"
             font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
-            font-size="17" font-weight="700">search.add_engine(engine);</text>
-      <text x="20" y="55" fill="#8996a8"
+            font-size="19" font-weight="700">search.add_engine(source);</text>
+      <text x="20" y="57" fill="#93a1b0"
             font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
-            font-size="17">let results = search.search(query).await?;</text>
+            font-size="18">search.search(query).await?</text>
     </g>
 
-    <g transform="translate(0 350)"
+    <g transform="translate(0 374)"
        font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
-       font-size="17" font-weight="700">
-      <circle cx="7" cy="7" r="7" fill="#6ca3ff"/>
-      <text x="24" y="14" fill="#b8c4d3">RUST LIBRARY</text>
-      <circle cx="164" cy="7" r="7" fill="#3ccf91"/>
-      <text x="181" y="14" fill="#b8c4d3">CLI</text>
-      <circle cx="245" cy="7" r="7" fill="#f0b44d"/>
-      <text x="262" y="14" fill="#b8c4d3">MIT</text>
+       font-size="18" font-weight="700">
+      <circle cx="7" cy="7" r="7" fill="#5ea1ff"/>
+      <text x="24" y="14" fill="#aab6c3">LIBRARY</text>
+      <circle cx="132" cy="7" r="7" fill="#4ed6a0"/>
+      <text x="149" y="14" fill="#aab6c3">CLI</text>
+      <circle cx="224" cy="7" r="7" fill="#f1b84b"/>
+      <text x="241" y="14" fill="#aab6c3">CALLER-OWNED POLICY</text>
     </g>
   </g>
 
-  <g id="embedded-kernel" transform="translate(610 36)">
-    <rect width="532" height="358" rx="14" fill="#0f151e" stroke="#31445b" stroke-width="2"/>
+  <g id="retrieval-kernel" transform="translate(598 34)">
+    <rect width="544" height="372" rx="14" fill="#0f151d" stroke="#334255" stroke-width="2"/>
 
-    <g transform="translate(24 23)">
-      <circle cx="8" cy="8" r="8" fill="#3ccf91"/>
-      <text x="28" y="15" fill="#eef4fb"
-            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
-            font-size="20" font-weight="700">embed://your-application</text>
-      <text x="484" y="15" fill="#8996a8" text-anchor="end"
-            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
-            font-size="16">RUST API</text>
+    <text x="24" y="31" fill="#93a1b0"
+          font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="18" font-weight="700">ONE EXACT SearchQuery</text>
+    <text x="520" y="31" text-anchor="end" fill="#4ed6a0"
+          font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="18" font-weight="700">NO HIDDEN REWRITE</text>
+    <path d="M24 48H520" stroke="#273240" stroke-width="2"/>
+
+    <g id="source-lanes" transform="translate(22 69)">
+      <g>
+        <rect width="158" height="64" rx="9" fill="#122238" stroke="#4678b8" stroke-width="2"/>
+        <circle cx="18" cy="20" r="6" fill="#5ea1ff"/>
+        <text x="34" y="27" fill="#dce9f9"
+              font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+              font-size="21" font-weight="700">Browser</text>
+        <text x="18" y="51" fill="#8da5c2"
+              font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+              font-size="18">rendered</text>
+      </g>
+
+      <g transform="translate(0 82)">
+        <rect width="158" height="64" rx="9" fill="#10251e" stroke="#388d6a" stroke-width="2"/>
+        <circle cx="18" cy="20" r="6" fill="#4ed6a0"/>
+        <text x="34" y="27" fill="#dff8ed"
+              font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+              font-size="21" font-weight="700">HTTP / RSS</text>
+        <text x="18" y="51" fill="#83b49f"
+              font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+              font-size="18">conventional</text>
+      </g>
+
+      <g transform="translate(0 164)">
+        <rect width="158" height="64" rx="9" fill="#2a2112" stroke="#9e7938" stroke-width="2"/>
+        <circle cx="18" cy="20" r="6" fill="#f1b84b"/>
+        <text x="34" y="27" fill="#faedcf"
+              font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+              font-size="21" font-weight="700">Native API</text>
+        <text x="18" y="51" fill="#c7aa74"
+              font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+              font-size="18">providers</text>
+      </g>
     </g>
-    <path d="M24 58H508" stroke="#263445" stroke-width="2"/>
 
-    <g id="engine-source" transform="translate(24 82)">
-      <rect width="148" height="66" rx="8" fill="#152235" stroke="#446da7"/>
-      <text x="16" y="27" fill="#6ca3ff"
-            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
-            font-size="20" font-weight="700">Engine</text>
-      <text x="16" y="50" fill="#b8c4d3"
-            font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-            font-size="16" font-weight="600">browser + web</text>
-    </g>
+    <path d="M180 101H204L224 183" fill="none" stroke="#5ea1ff" stroke-width="3"/>
+    <path d="M180 183H224" fill="none" stroke="#4ed6a0" stroke-width="3"/>
+    <path d="M180 265H204L224 183" fill="none" stroke="#f1b84b" stroke-width="3"/>
+    <path d="M224 183H240" stroke="#5ea1ff" stroke-width="3" marker-end="url(#arrow-blue)"/>
 
-    <g id="provider-source" transform="translate(24 174)">
-      <rect width="148" height="66" rx="8" fill="#17182a" stroke="#4c4384"/>
-      <text x="12" y="27" fill="#8c83ff"
-            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
-            font-size="16" font-weight="700">SearchProvider</text>
-      <text x="12" y="50" fill="#b8c4d3"
-            font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-            font-size="16" font-weight="600">native search APIs</text>
-    </g>
-
-    <path d="M172 115H202" stroke="#6ca3ff" stroke-width="2" marker-end="url(#arrow)"/>
-    <path d="M172 207H202" stroke="#8c83ff" stroke-width="2" marker-end="url(#arrow)"/>
-
-    <g id="search-kernel" transform="translate(208 94)">
-      <rect width="142" height="132" rx="10" fill="#131c26" stroke="#3d536d" stroke-width="2"/>
-      <text x="71" y="35" fill="#eef4fb" text-anchor="middle"
+    <g id="search" transform="translate(246 112)">
+      <rect width="116" height="142" rx="11" fill="#151d27" stroke="#5a6b7e" stroke-width="2"/>
+      <text x="58" y="37" text-anchor="middle" fill="#f3f6f9"
             font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
             font-size="24" font-weight="760">Search</text>
-      <path d="M18 51H124" stroke="#31445b"/>
-      <text x="71" y="76" fill="#b8c4d3" text-anchor="middle"
+      <path d="M16 52H100" stroke="#334255" stroke-width="2"/>
+      <text x="58" y="79" text-anchor="middle" fill="#aab6c3"
             font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-            font-size="18" font-weight="650">async fan-out</text>
-      <text x="71" y="101" fill="#b8c4d3" text-anchor="middle"
+            font-size="18" font-weight="650">fan out</text>
+      <text x="58" y="103" text-anchor="middle" fill="#aab6c3"
             font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-            font-size="18" font-weight="650">timeouts + controls</text>
-      <text x="71" y="123" fill="#3ccf91" text-anchor="middle"
+            font-size="18" font-weight="650">normalize</text>
+      <text x="58" y="127" text-anchor="middle" fill="#7fb6ff"
             font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
-            font-size="16" font-weight="700">dedupe · rank</text>
+            font-size="18" font-weight="700">fuse</text>
     </g>
 
-    <path d="M350 160H366" stroke="url(#route)" stroke-width="3" marker-end="url(#arrow)"/>
+    <path d="M362 183H382" stroke="#4ed6a0" stroke-width="3" marker-end="url(#arrow-green)"/>
 
-    <g id="typed-output" transform="translate(372 84)">
-      <rect width="136" height="156" rx="10" fill="#10271f" stroke="#3ccf91" stroke-width="2"/>
-      <text x="68" y="31" fill="#baf5dc" text-anchor="middle"
+    <g id="results" transform="translate(388 94)">
+      <rect width="132" height="178" rx="11" fill="#10241d" stroke="#4ed6a0" stroke-width="2"/>
+      <text x="66" y="32" text-anchor="middle" fill="#dff8ed"
             font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
-            font-size="17" font-weight="700">SearchResults</text>
-      <path d="M14 46H122" stroke="#28624e"/>
-      <text x="18" y="73" fill="#79c9a8"
-            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
-            font-size="16">results</text>
-      <text x="18" y="96" fill="#79c9a8"
-            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
-            font-size="16">provenance</text>
-      <text x="18" y="119" fill="#79c9a8"
-            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
-            font-size="16">failures</text>
-      <text x="18" y="142" fill="#79c9a8"
-            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
-            font-size="16">reports</text>
+            font-size="18" font-weight="760">SearchResults</text>
+      <path d="M14 47H118" stroke="#2d6e55" stroke-width="2"/>
+      <text x="18" y="76" fill="#8dd9b7"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">ranked URLs</text>
+      <text x="18" y="103" fill="#8dd9b7"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">provenance</text>
+      <text x="18" y="130" fill="#8dd9b7"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">failures</text>
+      <text x="18" y="157" fill="#8dd9b7"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">outcomes</text>
     </g>
 
-    <g id="caller-policy" transform="translate(24 274)">
-      <rect width="484" height="60" rx="8" fill="#111923" stroke="#31445b" stroke-width="2"/>
-      <text x="18" y="25" fill="#eef4fb"
+    <g id="boundary" transform="translate(22 315)">
+      <rect width="498" height="38" rx="8" fill="#111821" stroke="#334255" stroke-width="2"/>
+      <text x="16" y="25" fill="#7fb6ff"
             font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
-            font-size="18" font-weight="700">caller-owned policy</text>
-      <text x="18" y="47" fill="#8996a8"
-            font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-            font-size="17" font-weight="600">optional cascade · retrieval health · verifiable receipt</text>
+            font-size="18" font-weight="700">SEARCH: RETRIEVAL</text>
+      <text x="482" y="25" text-anchor="end" fill="#aab6c3"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="18" font-weight="700">CALLER: MEANING</text>
     </g>
   </g>
 </svg>

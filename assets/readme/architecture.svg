@@ -1,0 +1,160 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1200" height="600" viewBox="0 0 1200 600"
+     role="img" aria-labelledby="title desc">
+  <title id="title">A3S Search metasearch responsibility boundary</title>
+  <desc id="desc">One exact SearchQuery fans out through browser, HTTP and RSS, and native API engines. Search isolates execution, the aggregator normalizes URLs and performs weighted reciprocal-rank fusion, and SearchResults preserves provenance and failures. An optional structural cascade produces receipt V2 while semantic evaluation remains outside the kernel.</desc>
+
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0L8 4L0 8Z" fill="#5ea1ff"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0L8 4L0 8Z" fill="#4ed6a0"/>
+    </marker>
+  </defs>
+
+  <rect x="1" y="1" width="1198" height="598" rx="22"
+        fill="#0b0f14" stroke="#273240" stroke-width="2"/>
+
+  <g id="heading" transform="translate(52 72)">
+    <text fill="#f3f6f9"
+          font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif"
+          font-size="42" font-weight="760" letter-spacing="-1.2">A boundary, not a research agent</text>
+    <text y="35" fill="#93a1b0"
+          font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="18" font-weight="700">ONE QUERY · MANY SOURCES · EXPLAINABLE OUTPUT</text>
+  </g>
+
+  <g id="retrieval-flow" transform="translate(52 154)">
+    <g id="query">
+      <rect width="170" height="104" rx="10" fill="#121a24" stroke="#496078" stroke-width="2"/>
+      <text x="18" y="31" fill="#7fb6ff"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="18" font-weight="700">INPUT</text>
+      <text x="18" y="63" fill="#f3f6f9"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="22" font-weight="760">SearchQuery</text>
+      <text x="18" y="89" fill="#93a1b0"
+            font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+            font-size="18" font-weight="650">exact pass-through</text>
+    </g>
+
+    <path d="M170 52H202" stroke="#5ea1ff" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <g id="sources" transform="translate(212 -20)">
+      <rect width="180" height="144" rx="10" fill="#101720" stroke="#334255" stroke-width="2"/>
+      <text x="16" y="28" fill="#93a1b0"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="18" font-weight="700">SOURCE SET</text>
+      <circle cx="20" cy="56" r="6" fill="#5ea1ff"/>
+      <text x="38" y="63" fill="#dce9f9"
+            font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+            font-size="20" font-weight="700">Browser</text>
+      <circle cx="20" cy="89" r="6" fill="#4ed6a0"/>
+      <text x="38" y="96" fill="#dff8ed"
+            font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+            font-size="20" font-weight="700">HTTP / RSS</text>
+      <circle cx="20" cy="122" r="6" fill="#f1b84b"/>
+      <text x="38" y="129" fill="#faedcf"
+            font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+            font-size="20" font-weight="700">Native API</text>
+    </g>
+
+    <path d="M392 52H424" stroke="#5ea1ff" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <g id="search" transform="translate(434 0)">
+      <rect width="170" height="104" rx="10" fill="#151d27" stroke="#5a6b7e" stroke-width="2"/>
+      <text x="18" y="31" fill="#93a1b0"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="18" font-weight="700">EXECUTE</text>
+      <text x="18" y="63" fill="#f3f6f9"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="24" font-weight="760">Search</text>
+      <text x="18" y="89" fill="#93a1b0"
+            font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+            font-size="18" font-weight="650">isolate · observe</text>
+    </g>
+
+    <path d="M604 52H636" stroke="#5ea1ff" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <g id="aggregator" transform="translate(646 0)">
+      <rect width="202" height="104" rx="10" fill="#122238" stroke="#4678b8" stroke-width="2"/>
+      <text x="18" y="31" fill="#7fb6ff"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="18" font-weight="700">FUSE</text>
+      <text x="18" y="63" fill="#f3f6f9"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="22" font-weight="760">Aggregator</text>
+      <text x="18" y="89" fill="#9fb8d6"
+            font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+            font-size="18" font-weight="650">URL merge · RRF</text>
+    </g>
+
+    <path d="M848 52H880" stroke="#4ed6a0" stroke-width="3" marker-end="url(#arrow-green)"/>
+
+    <g id="results" transform="translate(890 -10)">
+      <rect width="206" height="124" rx="10" fill="#10241d" stroke="#4ed6a0" stroke-width="2"/>
+      <text x="18" y="31" fill="#7edeb3"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="18" font-weight="700">OUTPUT</text>
+      <text x="18" y="62" fill="#dff8ed"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="21" font-weight="760">SearchResults</text>
+      <text x="18" y="89" fill="#8dd9b7"
+            font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+            font-size="18" font-weight="650">rank + provenance</text>
+      <text x="18" y="112" fill="#8dd9b7"
+            font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+            font-size="18" font-weight="650">failures + reports</text>
+    </g>
+  </g>
+
+  <g id="cascade" transform="translate(52 330)">
+    <rect width="1096" height="92" rx="10" fill="#101720" stroke="#334255" stroke-width="2"/>
+    <text x="20" y="29" fill="#93a1b0"
+          font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="18" font-weight="700">OPTIONAL OPERATIONAL CASCADE</text>
+
+    <g transform="translate(20 47)"
+       font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+       font-size="19" font-weight="700">
+      <text x="0" y="19" fill="#f3f6f9">tier output</text>
+      <path d="M118 13H160" stroke="#5ea1ff" stroke-width="2" marker-end="url(#arrow)"/>
+      <text x="174" y="19" fill="#7fb6ff">RetrievalHealth</text>
+      <path d="M344 13H386" stroke="#5ea1ff" stroke-width="2" marker-end="url(#arrow)"/>
+      <text x="400" y="19" fill="#f3f6f9">requirements</text>
+      <text x="553" y="19" fill="#657386">or</text>
+      <text x="587" y="19" fill="#f1b84b">external policy</text>
+      <path d="M752 13H794" stroke="#4ed6a0" stroke-width="2" marker-end="url(#arrow-green)"/>
+      <text x="808" y="19" fill="#7edeb3">receipt V2</text>
+    </g>
+  </g>
+
+  <g id="responsibility-line" transform="translate(52 454)">
+    <g>
+      <rect width="532" height="96" rx="10" fill="#122238" stroke="#4678b8" stroke-width="2"/>
+      <text x="20" y="30" fill="#7fb6ff"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="18" font-weight="700">A3S SEARCH OWNS</text>
+      <text x="20" y="61" fill="#f3f6f9"
+            font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+            font-size="20" font-weight="680">transport · normalization · dedupe</text>
+      <text x="20" y="85" fill="#b5c9df"
+            font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+            font-size="20" font-weight="680">rank fusion · provenance · failures</text>
+    </g>
+
+    <g transform="translate(564 0)">
+      <rect width="532" height="96" rx="10" fill="#171a1f" stroke="#4c5561" stroke-width="2"/>
+      <text x="20" y="30" fill="#b6c0cb"
+            font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+            font-size="18" font-weight="700">CALLER OWNS</text>
+      <text x="20" y="61" fill="#f3f6f9"
+            font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+            font-size="20" font-weight="680">query strategy · semantic relevance</text>
+      <text x="20" y="85" fill="#b6c0cb"
+            font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+            font-size="20" font-weight="680">verification · evidence · conclusions</text>
+    </g>
+  </g>
+</svg>
