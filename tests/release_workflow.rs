@@ -1,3 +1,5 @@
+const SEARCH_VERIFIER_REVISION: &str = "1cd042ad7b3250cf953d46817397378817a3f65f";
+
 #[test]
 fn release_waits_for_the_exact_browser_crate_before_validation() {
     let workflow = include_str!("../.github/workflows/release.yml");
@@ -26,9 +28,9 @@ fn stable_release_uses_a_pinned_independent_verifier_in_a_protected_environment(
     assert!(verifier.contains("needs.classify.outputs.stable == 'true'"));
     assert!(verifier.contains("environment: stable-release"));
     assert!(verifier.contains("python-version: \"3.12.12\""));
-    assert!(
-        verifier.contains("uses: A3S-Lab/SearchVerifier@bcb5aa37af4ca9b13a7211bd709784e4af69bfeb")
-    );
+    assert!(verifier.contains(&format!(
+        "uses: A3S-Lab/SearchVerifier@{SEARCH_VERIFIER_REVISION}"
+    )));
     assert!(verifier.contains("name: frozen-crate-${{ needs.classify.outputs.version }}"));
     assert!(verifier.contains("evaluated-commit: ${{ github.sha }}"));
     assert!(verifier.contains("git-ref: ${{ github.ref }}"));
@@ -200,8 +202,9 @@ fn crate_publication_uses_the_same_pinned_exact_byte_uploader_without_candidate_
     assert!(publish.contains("python-version: \"3.12.12\""));
     assert!(publish.contains("name: frozen-crate-${{ needs.classify.outputs.version }}"));
     assert!(publish.contains("name: release-evidence-${{ needs.classify.outputs.version }}"));
-    assert!(publish
-        .contains("uses: A3S-Lab/SearchVerifier/publish@bcb5aa37af4ca9b13a7211bd709784e4af69bfeb"));
+    assert!(publish.contains(&format!(
+        "uses: A3S-Lab/SearchVerifier/publish@{SEARCH_VERIFIER_REVISION}"
+    )));
     assert!(
         publish.contains("expected-crate-sha256: ${{ needs.freeze-crate.outputs.crate_sha256 }}")
     );
@@ -230,12 +233,15 @@ fn crate_publication_uses_the_same_pinned_exact_byte_uploader_without_candidate_
 #[test]
 fn verifier_and_uploader_are_pinned_to_the_same_immutable_revision() {
     let workflow = include_str!("../.github/workflows/release.yml");
-    let revision = "bcb5aa37af4ca9b13a7211bd709784e4af69bfeb";
     let verifier = job_body(workflow, "commercial-search-gates");
     let publish = job_body(workflow, "publish-crate");
 
-    assert!(verifier.contains(&format!("A3S-Lab/SearchVerifier@{revision}")));
-    assert!(publish.contains(&format!("A3S-Lab/SearchVerifier/publish@{revision}")));
+    assert!(verifier.contains(&format!(
+        "A3S-Lab/SearchVerifier@{SEARCH_VERIFIER_REVISION}"
+    )));
+    assert!(publish.contains(&format!(
+        "A3S-Lab/SearchVerifier/publish@{SEARCH_VERIFIER_REVISION}"
+    )));
 }
 
 #[test]
