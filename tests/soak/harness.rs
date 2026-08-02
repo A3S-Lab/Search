@@ -140,10 +140,16 @@ struct FaultEngine {
 }
 
 impl FaultEngine {
-    fn new(shortcut: &str, tier: Tier, clock: Arc<PhaseClock>, probe: Arc<EngineProbe>) -> Self {
+    fn new(
+        name: &str,
+        shortcut: &str,
+        tier: Tier,
+        clock: Arc<PhaseClock>,
+        probe: Arc<EngineProbe>,
+    ) -> Self {
         Self {
             config: EngineConfig {
-                name: format!("Soak {shortcut}"),
+                name: name.to_string(),
                 shortcut: shortcut.to_string(),
                 timeout: 1,
                 ..EngineConfig::default()
@@ -166,29 +172,29 @@ impl Engine for FaultEngine {
         match self.tier {
             Tier::Api => {
                 tokio::time::sleep(Duration::from_millis(4)).await;
-                match self.clock.phase() {
-                    1 => Err(a3s_search::SearchError::RateLimited(
-                        "deterministic soak throttle".to_string(),
-                    )),
-                    2 => Ok(Vec::new()),
-                    _ => Ok(good_results(query, "api")),
-                }
+                Ok(good_results(query, &self.config.shortcut))
             }
             Tier::Http => {
                 tokio::time::sleep(Duration::from_millis(8)).await;
                 if self.clock.phase() == 2 {
                     Ok(Vec::new())
                 } else {
-                    Ok(good_results(query, "http"))
+                    Ok(good_results(query, &self.config.shortcut))
                 }
             }
             Tier::Headless => {
                 tokio::time::sleep(Duration::from_millis(12)).await;
-                Ok(good_results(query, "headless"))
+                match self.clock.phase() {
+                    1 => Err(a3s_search::SearchError::RateLimited(
+                        "deterministic soak throttle".to_string(),
+                    )),
+                    2 => Ok(Vec::new()),
+                    _ => Ok(good_results(query, &self.config.shortcut)),
+                }
             }
             Tier::Cancellation => {
                 tokio::time::sleep(Duration::from_millis(50)).await;
-                Ok(good_results(query, "cancellation"))
+                Ok(good_results(query, &self.config.shortcut))
             }
         }
     }
@@ -212,9 +218,9 @@ pub(super) struct SoakRuntime {
     pub bulkhead: Bulkhead,
     pub coalescer: SearchCoalescer,
     clock: Arc<PhaseClock>,
-    api: FaultEngine,
-    http: FaultEngine,
-    headless: FaultEngine,
+    api: [FaultEngine; 2],
+    http: [FaultEngine; 2],
+    headless: [FaultEngine; 2],
     cancellation: FaultEngine,
     pub api_probe: Arc<EngineProbe>,
     pub http_probe: Arc<EngineProbe>,
@@ -256,25 +262,56 @@ impl SoakRuntime {
             circuit,
             bulkhead,
             coalescer: SearchCoalescer::default(),
-            api: FaultEngine::new(
-                "soak_api",
-                Tier::Api,
-                Arc::clone(&clock),
-                Arc::clone(&api_probe),
-            ),
-            http: FaultEngine::new(
-                "soak_http",
-                Tier::Http,
-                Arc::clone(&clock),
-                Arc::clone(&http_probe),
-            ),
-            headless: FaultEngine::new(
-                "soak_headless",
-                Tier::Headless,
-                Arc::clone(&clock),
-                Arc::clone(&headless_probe),
-            ),
+            api: [
+                FaultEngine::new(
+                    "Soak API Alpha",
+                    "soak_api_alpha",
+                    Tier::Api,
+                    Arc::clone(&clock),
+                    Arc::clone(&api_probe),
+                ),
+                FaultEngine::new(
+                    "Soak API Beta",
+                    "soak_api_beta",
+                    Tier::Api,
+                    Arc::clone(&clock),
+                    Arc::clone(&api_probe),
+                ),
+            ],
+            http: [
+                FaultEngine::new(
+                    "Soak HTTP Alpha",
+                    "soak_http_alpha",
+                    Tier::Http,
+                    Arc::clone(&clock),
+                    Arc::clone(&http_probe),
+                ),
+                FaultEngine::new(
+                    "Soak Shared Source",
+                    "soak_http_shared",
+                    Tier::Http,
+                    Arc::clone(&clock),
+                    Arc::clone(&http_probe),
+                ),
+            ],
+            headless: [
+                FaultEngine::new(
+                    "Soak Headless Alpha",
+                    "soak_headless_alpha",
+                    Tier::Headless,
+                    Arc::clone(&clock),
+                    Arc::clone(&headless_probe),
+                ),
+                FaultEngine::new(
+                    "Soak Shared Source",
+                    "soak_headless_shared",
+                    Tier::Headless,
+                    Arc::clone(&clock),
+                    Arc::clone(&headless_probe),
+                ),
+            ],
             cancellation: FaultEngine::new(
+                "Soak Cancellation",
                 "soak_cancellation",
                 Tier::Cancellation,
                 Arc::clone(&clock),
@@ -289,23 +326,25 @@ impl SoakRuntime {
         }
     }
 
-    fn search(&self, engine: FaultEngine) -> Search {
+    fn search(&self, engines: impl IntoIterator<Item = FaultEngine>) -> Search {
         let mut search = Search::new()
             .with_circuit_breaker(self.circuit.clone())
             .with_bulkhead(self.bulkhead.clone())
             .with_request_coalescer(self.coalescer.clone());
-        search.add_engine(engine);
+        for engine in engines {
+            search.add_engine(engine);
+        }
         search
     }
 
     pub(super) async fn run_query(&self, query: SearchQuery) -> RequestObservation {
         let mut cascade = SearchCascade::new(query.clone(), RetrievalRequirements::for_limit(5));
-        let api = self.search(self.api.clone());
-        let http = self.search(self.http.clone());
         let headless = self.search(self.headless.clone());
+        let http = self.search(self.http.clone());
+        let api = self.search(self.api.clone());
         cascade
-            .run_tier_if_needed("api", || async {
-                search_or_empty(&api, query.clone()).await
+            .run_tier_if_needed("headless", || async {
+                search_or_empty(&headless, query.clone()).await
             })
             .await;
         cascade
@@ -314,9 +353,7 @@ impl SoakRuntime {
             })
             .await;
         cascade
-            .run_tier_if_needed("headless", || async {
-                search_or_empty(&headless, query).await
-            })
+            .run_tier_if_needed("api", || async { search_or_empty(&api, query).await })
             .await;
         let circuit_open = cascade
             .results()
@@ -339,7 +376,21 @@ impl SoakRuntime {
     }
 
     pub(super) fn cancellation_search(&self) -> Search {
-        self.search(self.cancellation.clone())
+        self.search([self.cancellation.clone()])
+    }
+
+    pub(super) fn engine_shortcuts(&self) -> Vec<&str> {
+        self.api
+            .iter()
+            .chain(&self.http)
+            .chain(&self.headless)
+            .chain(std::iter::once(&self.cancellation))
+            .map(|engine| engine.config.shortcut.as_str())
+            .collect()
+    }
+
+    pub(super) const fn retrieval_tier_width(&self) -> usize {
+        self.api.len()
     }
 
     pub(super) async fn exercise_bulkhead_rejection(&self) -> u64 {
@@ -368,11 +419,11 @@ impl SoakRuntime {
 
     pub(super) async fn force_recovery(&self) {
         self.clock.force_healthy.store(true, Ordering::Release);
-        for engine in [self.api.clone(), self.http.clone()] {
+        for engine in self.headless.iter().chain(&self.http).cloned() {
             let deadline = Instant::now() + Duration::from_secs(2);
             loop {
                 let shortcut = engine.config.shortcut.clone();
-                let search = self.search(engine.clone());
+                let search = self.search([engine.clone()]);
                 let results = search
                     .search(SearchQuery::new("generic recovery probe"))
                     .await
@@ -416,9 +467,9 @@ pub(super) struct SoakCounters {
     pub completed: AtomicU64,
     pub deadline_timeouts: AtomicU64,
     pub retrieval_requirement_failures: AtomicU64,
-    pub api_only: AtomicU64,
+    pub headless_only: AtomicU64,
     pub http_fallback: AtomicU64,
-    pub headless_fallback: AtomicU64,
+    pub api_fallback: AtomicU64,
     pub circuit_open: AtomicU64,
     pub rejected: AtomicU64,
     pub cancellation_attempts: AtomicU64,
@@ -436,9 +487,9 @@ impl SoakCounters {
                 .fetch_add(1, Ordering::Relaxed);
         }
         match observation.tiers {
-            1 => &self.api_only,
+            1 => &self.headless_only,
             2 => &self.http_fallback,
-            _ => &self.headless_fallback,
+            _ => &self.api_fallback,
         }
         .fetch_add(1, Ordering::Relaxed);
         self.circuit_open
@@ -492,5 +543,31 @@ impl LatencyHistogram {
 
     pub(super) fn max_ms(&self) -> u64 {
         self.max_micros.load(Ordering::Relaxed).div_ceil(1_000)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+
+    #[test]
+    fn fault_topology_preserves_source_quorum_across_transport_fallback() {
+        let runtime = SoakRuntime::new();
+
+        for tier in [&runtime.headless, &runtime.http, &runtime.api] {
+            let sources = tier
+                .iter()
+                .map(|engine| engine.config.name.as_str())
+                .collect::<HashSet<_>>();
+            assert_eq!(sources.len(), 2);
+        }
+
+        assert_eq!(runtime.headless[1].config.name, runtime.http[1].config.name);
+        assert_ne!(
+            runtime.headless[1].config.shortcut,
+            runtime.http[1].config.shortcut
+        );
     }
 }
