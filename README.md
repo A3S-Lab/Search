@@ -50,7 +50,8 @@ cargo install a3s-search
 brew install A3S-Lab/tap/a3s-search
 ```
 
-Search with the default Chrome/Chromium-first cascade:
+Search with the default API-first cascade. Installed Chrome/Chromium remains
+the final browser fallback:
 
 ```bash
 a3s-search "Rust async runtime guidance" --format json --limit 10
@@ -169,8 +170,9 @@ native search API ─ SearchProvider ─ ProviderEngine ─┘
 
 ## Migrating from v2
 
-Version 3 removes semantic policy from the metasearch layer and makes browser
-retrieval the default CLI path. The intentional breaking changes are:
+Version 3 removes semantic policy from the metasearch layer and includes
+Chrome/Chromium as the default browser fallback. The intentional breaking
+changes are:
 
 - `SearchQuality`, `SearchQualityFloor`, and `query_match_score` are removed.
   Evaluate relevance, authority, recency, and evidence sufficiency in the host.
@@ -182,7 +184,7 @@ retrieval the default CLI path. The intentional breaking changes are:
   result bindings, and counts; none of those fields is semantic approval.
 - The default Cargo feature now includes Chrome/Chromium headless retrieval.
   Use `default-features = false` for an HTTP/API-only library build.
-- With no explicit source selection, the CLI runs `headless → HTTP/RSS → API`.
+- With no explicit source selection, the CLI runs `API → HTTP/RSS → headless`.
   `--engines` remains an exact source list, and `--tier-order` accepts a complete
   permutation when a different operational order is required.
 
@@ -204,19 +206,19 @@ by the host:
 
 | Class | Shortcut | Source | Transport | Default CLI plan |
 | --- | --- | --- | --- | --- |
-| Browser | `brave_browser` | Brave Search | A3S Browser | Headless tier |
-| Browser | `bing_browser` | Bing International | A3S Browser | Headless tier |
+| Browser | `brave_browser` | Brave Search | A3S Browser | Final fallback |
+| Browser | `bing_browser` | Bing International | A3S Browser | Final fallback |
 | Browser | `g` | Google | A3S Browser | Explicit |
 | Browser | `baidu` | Baidu | A3S Browser | Explicit |
-| HTTP/RSS | `ddg` | DuckDuckGo | HTTP | HTTP/RSS tier |
-| HTTP/RSS | `bing` | Bing International | RSS | HTTP/RSS tier |
-| HTTP/RSS | `wiki` | Wikipedia | MediaWiki JSON | Explicit |
+| HTTP/RSS | `ddg` | DuckDuckGo | HTTP | Second tier |
+| HTTP/RSS | `bing` | Bing International | RSS | Second tier |
+| HTTP/RSS | `wiki` | Wikipedia | MediaWiki JSON | Second tier |
 | HTTP/RSS | `brave` | Brave Search | HTTP | No-headless build |
 | HTTP/RSS | `sogou` | Sogou | HTTP | Explicit |
 | HTTP/RSS | `360` | 360 Search | HTTP | Explicit |
 | HTTP/RSS | `bing_cn` | Bing China | RSS | Explicit |
-| Native API | `anysearch` | AnySearch | MCP / JSON-RPC 2.0 | API tier |
-| Native API | `tavily` | Tavily | REST | API tier |
+| Native API | `anysearch` | AnySearch | MCP / JSON-RPC 2.0 | Primary tier |
+| Native API | `tavily` | Tavily | REST | Primary tier |
 
 HTML engines validate the response structure before parsing. CAPTCHA,
 verification, consent, and anti-bot pages become typed transient `challenge`
@@ -279,11 +281,11 @@ The companion CLI uses this default plan when neither explicit sources nor ACL
 source selection is present:
 
 ```text
-01  headless       brave_browser + bing_browser through Chrome/Chromium
+01  native API     anysearch + tavily
         ↓ continue only when structural requirements are not met
-02  HTTP / RSS     ddg + bing
+02  HTTP / RSS     wiki + ddg + bing
         ↓ continue only when structural requirements are not met
-03  native API     anysearch + tavily
+03  headless       brave_browser + bing_browser through Chrome/Chromium
         ↓
     results + cascade receipt V2
 ```

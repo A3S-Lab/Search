@@ -5,9 +5,9 @@ use std::collections::HashSet;
 use a3s_search::{providers::BuiltinProvider, SearchConfig};
 
 #[cfg(feature = "headless")]
-const DEFAULT_HTTP_TIER: [&str; 2] = ["ddg", "bing"];
+const DEFAULT_HTTP_TIER: [&str; 3] = ["wiki", "ddg", "bing"];
 #[cfg(not(feature = "headless"))]
-const DEFAULT_HTTP_TIER: [&str; 3] = ["ddg", "brave", "bing"];
+const DEFAULT_HTTP_TIER: [&str; 4] = ["wiki", "ddg", "brave", "bing"];
 #[cfg(feature = "headless")]
 const DEFAULT_HEADLESS_TIER: [&str; 2] = ["brave_browser", "bing_browser"];
 
@@ -28,7 +28,7 @@ impl EngineTier {
     }
 }
 
-/// Ordered browser-first plan used by the CLI.
+/// Ordered API-first plan with conventional and browser fallbacks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct EngineTierPlan {
     headless: Vec<String>,
@@ -45,7 +45,7 @@ impl Default for EngineTierPlan {
             http_rss: Vec::new(),
             api: Vec::new(),
             unknown: Vec::new(),
-            order: vec![EngineTier::Headless, EngineTier::HttpRss, EngineTier::Api],
+            order: vec![EngineTier::Api, EngineTier::HttpRss, EngineTier::Headless],
         }
     }
 }
@@ -151,7 +151,7 @@ impl EngineTierPlan {
 }
 
 fn validated_order(order: Option<&[EngineTier]>) -> Result<Vec<EngineTier>, String> {
-    let default = [EngineTier::Headless, EngineTier::HttpRss, EngineTier::Api];
+    let default = [EngineTier::Api, EngineTier::HttpRss, EngineTier::Headless];
     let order = order.unwrap_or(&default);
     if order.len() != default.len()
         || order.iter().copied().collect::<HashSet<_>>()
@@ -196,21 +196,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_plan_is_browser_first_and_contains_every_fallback_class() {
+    fn default_plan_is_api_first_with_chrome_as_the_final_transport() {
         let plan = EngineTierPlan::new(None, None, None).unwrap();
         let tiers = plan.tiers();
 
+        assert_eq!(tiers[0].0, EngineTier::Api);
+        assert_eq!(tiers[0].1, ["anysearch", "tavily"]);
         #[cfg(feature = "headless")]
-        assert_eq!(tiers[0].0, EngineTier::Headless);
+        assert_eq!(tiers.last().unwrap().0, EngineTier::Headless);
         #[cfg(feature = "headless")]
-        assert_eq!(tiers[0].1, ["brave_browser", "bing_browser"]);
+        assert_eq!(plan.headless, ["brave_browser", "bing_browser"]);
         #[cfg(feature = "headless")]
-        assert_eq!(plan.http_rss, ["ddg", "bing"]);
-        assert!(plan.shortcuts().iter().all(|shortcut| shortcut != "wiki"));
+        assert_eq!(plan.http_rss, ["wiki", "ddg", "bing"]);
         #[cfg(not(feature = "headless"))]
-        assert_eq!(plan.http_rss, ["ddg", "brave", "bing"]);
+        assert_eq!(plan.http_rss, ["wiki", "ddg", "brave", "bing"]);
         assert!(tiers.iter().any(|(tier, _)| *tier == EngineTier::HttpRss));
-        assert!(tiers.iter().any(|(tier, _)| *tier == EngineTier::Api));
         assert!(plan.unknown().is_empty());
     }
 

@@ -239,7 +239,7 @@ async fn main() -> Result<()> {
                 println!("  a3s-search \"Rust\" -p http://127.0.0.1:8080\n");
                 println!("Options:");
                 println!(
-                    "  -e, --engines <ENGINES>  Exact engines/providers (omit for browser-first cascade)"
+                    "  -e, --engines <ENGINES>  Exact engines/providers (omit for API-first cascade)"
                 );
                 println!("  -l, --limit <N>          Max results (default: 10)");
                 println!("  -t, --timeout <SECS>     Shared deadline (default: 20 seconds)");
@@ -254,7 +254,7 @@ async fn main() -> Result<()> {
                     "      --browser-retries <N> Headless retries per render (default: 1; maximum: 10)"
                 );
                 println!(
-                    "      --tier-order <TIERS>  Complete tier priority (default: headless,http-rss,api)"
+                    "      --tier-order <TIERS>  Complete tier priority (default: api,http-rss,headless)"
                 );
                 println!("  -c, --config <PATH>      ACL configuration file");
                 println!("  -v, --verbose            Enable debug logging");
