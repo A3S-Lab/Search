@@ -23,6 +23,51 @@ fn terminal_failure_opens_immediately_and_is_shared() {
 }
 
 #[test]
+fn interactive_challenge_opens_immediately_without_provider_rules() {
+    let breaker = CircuitBreaker::new(CircuitBreakerConfig {
+        failure_threshold: 10,
+        open_jitter_ratio: 0.0,
+        ..Default::default()
+    });
+    breaker.acquire("browser-source").unwrap().record_failure(
+        &EngineFailure::new(
+            "Browser source",
+            "challenge",
+            "interactive verification required",
+        )
+        .with_transient(true),
+    );
+
+    assert!(breaker.acquire("browser-source").is_err());
+    assert_eq!(breaker.snapshot("browser-source").state, CircuitState::Open);
+}
+
+#[test]
+fn restored_open_state_preserves_backoff_and_half_open_admission() {
+    let breaker = CircuitBreaker::new(CircuitBreakerConfig {
+        transient_open_duration: Duration::from_millis(20),
+        open_backoff_factor: 2,
+        open_jitter_ratio: 0.0,
+        window: None,
+        ..Default::default()
+    });
+    breaker.restore_open_state("api", Duration::ZERO, 3);
+
+    let probe = breaker
+        .acquire("api")
+        .expect("an expired restored circuit must admit one probe");
+    assert!(breaker.acquire("api").is_err());
+    probe.record_failure(&transient_failure());
+
+    let snapshot = breaker.snapshot("api");
+    assert_eq!(snapshot.state, CircuitState::Open);
+    assert_eq!(snapshot.ejection_count, 4);
+    assert!(snapshot.retry_after.is_some_and(|duration| {
+        duration > Duration::from_millis(100) && duration <= Duration::from_millis(160)
+    }));
+}
+
+#[test]
 fn transient_failures_use_the_configured_threshold() {
     let breaker = CircuitBreaker::new(CircuitBreakerConfig {
         failure_threshold: 2,

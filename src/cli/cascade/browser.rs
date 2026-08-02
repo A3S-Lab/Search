@@ -43,9 +43,8 @@ pub(crate) enum HeadlessBrowser {
     Lightpanda,
 }
 
-#[cfg(not(feature = "headless"))]
 impl HeadlessBrowser {
-    const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Chrome => "chrome",
             Self::Lightpanda => "lightpanda",

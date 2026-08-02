@@ -456,9 +456,21 @@ let search = Search::new()
 ```
 
 Scope shared state to compatible tenants, credentials, endpoints, proxies,
-safe-search settings, freshness requirements, and ranking policy. The
-standalone CLI owns controls only for one command invocation; applications own
-cross-request history.
+safe-search settings, freshness requirements, and ranking policy. Embedded
+applications own their cross-request history explicitly.
+
+Short-lived CLI processes retain only typed interactive-challenge circuits
+across invocations. The versioned, locked state file contains source shortcuts,
+retry deadlines, and bounded ejection counts—never queries, result content,
+credentials, or semantic judgments. Linux uses the XDG state directory; macOS
+and Windows use their platform-local application-data directory. Set
+`A3S_SEARCH_STATE_DIR` to an absolute directory when a host needs an isolated
+state scope. A one-way transport-scope digest separates direct, proxy, Chrome,
+and Lightpanda routes without retaining proxy credentials. Challenges, rate
+limits, and terminal provider failures all open the in-process circuit
+immediately; only credential-independent challenge state crosses a process
+boundary. Expired entries admit a single half-open probe and preserve
+exponential backoff.
 
 ### Browser feature boundary
 

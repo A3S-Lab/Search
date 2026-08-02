@@ -228,6 +228,31 @@ impl CircuitBreaker {
         }
     }
 
+    /// Restores one previously persisted open circuit.
+    ///
+    /// A zero remaining duration restores an expired circuit so the next
+    /// caller receives the single half-open probe. The restored ejection count
+    /// is retained for bounded exponential backoff if that probe fails.
+    pub fn restore_open_state(&self, key: &str, retry_after: Duration, ejection_count: u32) {
+        let key = normalized_key(key);
+        let mut registry = lock_recover(&self.inner);
+        let entry = registry
+            .entries
+            .entry(key)
+            .or_insert_with(|| CircuitEntry::new(self.config.window.as_ref()));
+        entry.generation = entry.generation.wrapping_add(1);
+        entry.consecutive_failures = 0;
+        entry.consecutive_empty = 0;
+        entry.ejection_count = ejection_count.max(1);
+        entry.window.clear();
+        entry.state = EntryState::Open {
+            until: representable_deadline(
+                Instant::now(),
+                retry_after.min(self.config.max_open_duration),
+            ),
+        };
+    }
+
     fn record_success(&self, completion: PermitCompletion, duration: Duration) {
         let mut registry = lock_recover(&self.inner);
         let entry = registry
@@ -300,6 +325,7 @@ impl CircuitBreaker {
         let should_open = completion.probe
             || terminal
             || rate_limited
+            || is_interactive_challenge(&failure.kind)
             || entry.consecutive_failures >= self.config.failure_threshold.max(1)
             || window_open;
         if !should_open {
@@ -448,6 +474,10 @@ fn is_terminal_failure(kind: &str) -> bool {
 
 fn is_rate_limited(kind: &str) -> bool {
     matches!(kind, "provider_rate_limited" | "rate_limited")
+}
+
+fn is_interactive_challenge(kind: &str) -> bool {
+    kind == "challenge"
 }
 
 fn is_request_scoped_failure(kind: &str) -> bool {
