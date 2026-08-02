@@ -189,9 +189,9 @@ retrieval the default CLI path. The intentional breaking changes are:
 No query, topic, language, publisher, or relevance rule is embedded in the
 fallback implementation.
 
-Version 3.0.1 is the first published v3 release. The v3.0.0 tag was retired
-before publication after its independent live-quality gate failed; no v3.0.0
-crate or release artifact was distributed.
+Version 3.0.2 is the first distributable v3 release. The v3.0.0 and v3.0.1
+tags were retired before publication after their independent gates failed; no
+crate or release artifact for either retired version was distributed.
 
 ## Retrieval sources
 
