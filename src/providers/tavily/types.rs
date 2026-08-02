@@ -96,11 +96,11 @@ impl Serialize for TavilyAnswer {
 #[non_exhaustive]
 pub enum TavilyRawContent {
     /// Do not request source content.
-    #[default]
     None,
     /// Request Markdown source content.
     Markdown,
     /// Request plain-text source content.
+    #[default]
     Text,
 }
 
