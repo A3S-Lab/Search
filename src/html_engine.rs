@@ -13,6 +13,15 @@ use scraper::{Html, Selector};
 use crate::fetcher::PageFetcher;
 use crate::{Engine, EngineConfig, Result, SearchError, SearchQuery, SearchResult};
 
+const COMMON_CHALLENGE_SELECTORS: &[&str] = &[
+    "iframe[src*=\"challenges.cloudflare.com\"]",
+    "script[src*=\"challenges.cloudflare.com\"]",
+    "form[action*=\"/cdn-cgi/challenge-platform/\"]",
+    ".cf-turnstile",
+    "[name=\"cf-turnstile-response\"]",
+    "[id^=\"cf-chl-\"]",
+];
+
 /// Parse a CSS selector string, returning a `SearchError::Parse` on failure.
 pub fn selector(css: &str) -> Result<Selector> {
     Selector::parse(css)
@@ -42,7 +51,9 @@ pub(crate) struct SearchResponseSpec {
 pub(crate) fn validate_search_response(html: &str, spec: SearchResponseSpec) -> Result<()> {
     let document = Html::parse_document(html);
 
-    if matches_any(&document, spec.challenge_selectors)? {
+    if matches_any(&document, COMMON_CHALLENGE_SELECTORS)?
+        || matches_any(&document, spec.challenge_selectors)?
+    {
         return Err(SearchError::Challenge(format!(
             "{} returned a CAPTCHA, challenge, or consent page instead of search results",
             spec.engine
@@ -190,6 +201,19 @@ mod tests {
 
         assert_eq!(error.kind(), "challenge");
         assert!(error.is_transient());
+    }
+
+    #[test]
+    fn response_validation_detects_shared_cloudflare_challenge_surfaces() {
+        for html in [
+            r#"<main><article class="result"></article><iframe src="https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g/turnstile/if/ov2"></iframe></main>"#,
+            r#"<main><article class="result"></article><div class="cf-turnstile"></div></main>"#,
+            r#"<main><article class="result"></article><input name="cf-turnstile-response"></main>"#,
+        ] {
+            let error = validate_search_response(html, TEST_SPEC).unwrap_err();
+            assert_eq!(error.kind(), "challenge");
+            assert!(error.is_transient());
+        }
     }
 
     #[test]
