@@ -289,6 +289,12 @@ Expensive lower tiers are constructed only when needed.
 - cross-engine URL consensus;
 - typed success, empty, failure, timeout, rejection, and circuit-open counts.
 
+`RetrievalRequirements::for_limit` requires one contributing engine for a
+single-result request and two independent contributing engines when multiple
+results are requested. A tier backed by only one successful source therefore
+continues to the next configured transport without inspecting query or result
+text.
+
 Embedded callers may supply different `RetrievalRequirements` or record an
 opaque external decision through `push_tier_with_decision`. A receipt marks the
 decision source as `external_policy`; Search does not reproduce or validate its

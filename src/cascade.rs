@@ -123,7 +123,7 @@ impl RetrievalRequirements {
         Self {
             min_usable_results: target,
             min_unique_hosts: target.min(3),
-            min_contributing_engines: usize::from(target > 0),
+            min_contributing_engines: target.min(2),
             min_consensus_results: 0,
         }
     }
