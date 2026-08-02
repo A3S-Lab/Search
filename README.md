@@ -190,8 +190,9 @@ No query, topic, language, publisher, or relevance rule is embedded in the
 fallback implementation.
 
 The v3.0.0, v3.0.1, and v3.0.2 tags were retired before publication after
-their independent gates failed. No v3 crate or stable release artifact has
-been distributed yet, and retired tags are never moved or reused.
+their independent gates failed. They are never moved or reused. The v3.0.3
+candidate can enter distribution only after its exact crate bytes pass the
+new one-pass multilingual model-based verifier; a tag alone is not a release.
 
 ## Retrieval sources
 
