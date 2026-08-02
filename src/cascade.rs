@@ -5,7 +5,7 @@ use std::future::Future;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{EngineOutcomeKind, SearchQuery, SearchResults};
+use crate::{EngineOutcomeKind, SearchQuery, SearchResult, SearchResults};
 
 mod receipt;
 
@@ -56,18 +56,33 @@ pub struct RetrievalHealth {
 impl RetrievalHealth {
     /// Observes structural and operational health without inspecting result text.
     pub fn observe(results: &SearchResults) -> Self {
+        let mut health = Self::observe_items(results.items());
+        health.attempted_engine_count = results.outcomes().len();
+        for outcome in results.outcomes() {
+            let counter = match outcome.kind {
+                EngineOutcomeKind::Success => &mut health.successful_engine_count,
+                EngineOutcomeKind::Empty => &mut health.empty_engine_count,
+                EngineOutcomeKind::Failure => &mut health.failed_engine_count,
+                EngineOutcomeKind::Timeout => &mut health.timed_out_engine_count,
+                EngineOutcomeKind::Rejected => &mut health.rejected_engine_count,
+                EngineOutcomeKind::CircuitOpen => &mut health.circuit_open_engine_count,
+            };
+            *counter = counter.saturating_add(1);
+        }
+        health
+    }
+
+    /// Observes only the supplied caller-visible result rows.
+    ///
+    /// Operational outcome counters remain zero because the iterator does not
+    /// carry the complete engine-attempt record.
+    pub fn observe_items<'a>(items: impl IntoIterator<Item = &'a SearchResult>) -> Self {
         let mut health = Self::default();
         let mut hosts = HashSet::new();
         let mut engines = HashSet::new();
 
-        for result in results.items() {
-            let usable_host = url::Url::parse(result.url.trim())
-                .ok()
-                .filter(|url| matches!(url.scheme(), "http" | "https"))
-                .and_then(|url| {
-                    url.host_str()
-                        .map(|host| host.trim_start_matches("www.").to_ascii_lowercase())
-                });
+        for result in items {
+            let usable_host = normalized_usable_host(result);
             let Some(host) = usable_host else {
                 health.invalid_result_count = health.invalid_result_count.saturating_add(1);
                 continue;
@@ -83,21 +98,18 @@ impl RetrievalHealth {
 
         health.unique_host_count = hosts.len();
         health.contributing_engine_count = engines.len();
-        health.attempted_engine_count = results.outcomes().len();
-        for outcome in results.outcomes() {
-            let counter = match outcome.kind {
-                EngineOutcomeKind::Success => &mut health.successful_engine_count,
-                EngineOutcomeKind::Empty => &mut health.empty_engine_count,
-                EngineOutcomeKind::Failure => &mut health.failed_engine_count,
-                EngineOutcomeKind::Timeout => &mut health.timed_out_engine_count,
-                EngineOutcomeKind::Rejected => &mut health.rejected_engine_count,
-                EngineOutcomeKind::CircuitOpen => &mut health.circuit_open_engine_count,
-            };
-            *counter = counter.saturating_add(1);
-        }
-
         health
     }
+}
+
+pub(crate) fn normalized_usable_host(result: &SearchResult) -> Option<String> {
+    url::Url::parse(result.url.trim())
+        .ok()
+        .filter(|url| matches!(url.scheme(), "http" | "https"))
+        .and_then(|url| {
+            url.host_str()
+                .map(|host| host.trim_start_matches("www.").to_ascii_lowercase())
+        })
 }
 
 /// Caller-selected structural requirements for operational fallback.
@@ -134,6 +146,14 @@ impl RetrievalRequirements {
     /// Observes the supplied result container.
     pub fn evaluate(&self, results: &SearchResults) -> RetrievalHealth {
         RetrievalHealth::observe(results)
+    }
+
+    /// Observes a caller-visible selection without inspecting result text.
+    pub fn evaluate_items<'a>(
+        &self,
+        items: impl IntoIterator<Item = &'a SearchResult>,
+    ) -> RetrievalHealth {
+        RetrievalHealth::observe_items(items)
     }
 
     /// Returns whether the structural result requirements are met.

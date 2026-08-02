@@ -118,6 +118,7 @@ mod ranking;
 mod result;
 mod retry_budget;
 mod search;
+mod window;
 
 pub mod engines;
 pub mod providers;
@@ -162,6 +163,7 @@ pub use result::{
 };
 pub use retry_budget::{RetryBudget, RetryBudgetConfig, RetryBudgetSnapshot};
 pub use search::Search;
+pub use window::select_structural_window;
 
 #[cfg(feature = "headless")]
 pub use browser::{

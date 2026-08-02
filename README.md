@@ -189,9 +189,9 @@ retrieval the default CLI path. The intentional breaking changes are:
 No query, topic, language, publisher, or relevance rule is embedded in the
 fallback implementation.
 
-Version 3.0.2 is the first distributable v3 release. The v3.0.0 and v3.0.1
-tags were retired before publication after their independent gates failed; no
-crate or release artifact for either retired version was distributed.
+The v3.0.0, v3.0.1, and v3.0.2 tags were retired before publication after
+their independent gates failed. No v3 crate or stable release artifact has
+been distributed yet, and retired tags are never moved or reused.
 
 ## Retrieval sources
 
@@ -301,6 +301,17 @@ are requested. Browser and HTTP variants of the same upstream retain one source
 identity, so transport duplication cannot stop fallback. A tier backed by only
 one successful source therefore continues to the next configured transport
 without inspecting query or result text.
+
+The CLI applies `select_structural_window` before rendering its caller-visible
+Top-K. An already healthy ranked prefix is unchanged. If the complete candidate
+set meets the declared structure but the prefix does not, a bounded minimum-
+replacement search selects a high-ranked feasible window and preserves relative
+rank. This selection uses only URL validity, normalized hosts, logical
+source provenance, and consensus; it never reads the query, title, snippet,
+language, publisher, or topic. JSON output exposes both
+`visible_retrieval_health` and `visible_retrieval_requirements_met` so external
+verifiers can independently reject a mismatch between full-set and visible
+health.
 
 Embedded callers may supply different `RetrievalRequirements` or record an
 opaque external decision through `push_tier_with_decision`. A receipt marks the
