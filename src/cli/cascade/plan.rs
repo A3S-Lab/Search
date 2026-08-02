@@ -5,9 +5,9 @@ use std::collections::HashSet;
 use a3s_search::{providers::BuiltinProvider, SearchConfig};
 
 #[cfg(feature = "headless")]
-const DEFAULT_HTTP_TIER: [&str; 3] = ["ddg", "bing", "wiki"];
+const DEFAULT_HTTP_TIER: [&str; 2] = ["ddg", "bing"];
 #[cfg(not(feature = "headless"))]
-const DEFAULT_HTTP_TIER: [&str; 4] = ["ddg", "brave", "bing", "wiki"];
+const DEFAULT_HTTP_TIER: [&str; 3] = ["ddg", "brave", "bing"];
 #[cfg(feature = "headless")]
 const DEFAULT_HEADLESS_TIER: [&str; 2] = ["brave_browser", "bing_browser"];
 
@@ -205,9 +205,10 @@ mod tests {
         #[cfg(feature = "headless")]
         assert_eq!(tiers[0].1, ["brave_browser", "bing_browser"]);
         #[cfg(feature = "headless")]
-        assert_eq!(plan.http_rss, ["ddg", "bing", "wiki"]);
+        assert_eq!(plan.http_rss, ["ddg", "bing"]);
+        assert!(plan.shortcuts().iter().all(|shortcut| shortcut != "wiki"));
         #[cfg(not(feature = "headless"))]
-        assert_eq!(plan.http_rss, ["ddg", "brave", "bing", "wiki"]);
+        assert_eq!(plan.http_rss, ["ddg", "brave", "bing"]);
         assert!(tiers.iter().any(|(tier, _)| *tier == EngineTier::HttpRss));
         assert!(tiers.iter().any(|(tier, _)| *tier == EngineTier::Api));
         assert!(plan.unknown().is_empty());

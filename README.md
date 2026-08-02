@@ -155,7 +155,9 @@ native search API ─ SearchProvider ─ ProviderEngine ─┘
                                       optional SearchCascade ─ receipt V2
 ```
 
-- `Engine` is the minimal contract for ordinary web or media results.
+- `Engine` is the minimal contract for ordinary web or media results. Its
+  `name` is the logical source identity; transport variants share that name and
+  expose different selectable `shortcut` values.
 - `SearchProvider` models native API capabilities, readiness, rich output, and
   provider reports.
 - `ProviderEngine` adapts that provider protocol into the same runtime used by
@@ -200,7 +202,7 @@ by the host:
 | Browser | `baidu` | Baidu | A3S Browser | Explicit |
 | HTTP/RSS | `ddg` | DuckDuckGo | HTTP | HTTP/RSS tier |
 | HTTP/RSS | `bing` | Bing International | RSS | HTTP/RSS tier |
-| HTTP/RSS | `wiki` | Wikipedia | MediaWiki JSON | HTTP/RSS tier |
+| HTTP/RSS | `wiki` | Wikipedia | MediaWiki JSON | Explicit |
 | HTTP/RSS | `brave` | Brave Search | HTTP | No-headless build |
 | HTTP/RSS | `sogou` | Sogou | HTTP | Explicit |
 | HTTP/RSS | `360` | 360 Search | HTTP | Explicit |
@@ -271,7 +273,7 @@ source selection is present:
 ```text
 01  headless       brave_browser + bing_browser through Chrome/Chromium
         ↓ continue only when structural requirements are not met
-02  HTTP / RSS     ddg + bing + wiki
+02  HTTP / RSS     ddg + bing
         ↓ continue only when structural requirements are not met
 03  native API     anysearch + tavily
         ↓
@@ -289,11 +291,12 @@ Expensive lower tiers are constructed only when needed.
 - cross-engine URL consensus;
 - typed success, empty, failure, timeout, rejection, and circuit-open counts.
 
-`RetrievalRequirements::for_limit` requires one contributing engine for a
-single-result request and two independent contributing engines when multiple
-results are requested. A tier backed by only one successful source therefore
-continues to the next configured transport without inspecting query or result
-text.
+`RetrievalRequirements::for_limit` requires one logical source for a
+single-result request and two independent logical sources when multiple results
+are requested. Browser and HTTP variants of the same upstream retain one source
+identity, so transport duplication cannot stop fallback. A tier backed by only
+one successful source therefore continues to the next configured transport
+without inspecting query or result text.
 
 Embedded callers may supply different `RetrievalRequirements` or record an
 opaque external decision through `push_tier_with_decision`. A receipt marks the

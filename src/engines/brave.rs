@@ -147,7 +147,7 @@ impl HtmlParser for BraveParser {
 impl HtmlParser for BraveBrowserParser {
     fn default_config() -> EngineConfig {
         EngineConfig {
-            name: "Brave Browser".to_string(),
+            name: "Brave".to_string(),
             shortcut: "brave_browser".to_string(),
             ..BraveParser::default_config()
         }
@@ -195,12 +195,14 @@ mod tests {
     }
 
     #[test]
-    fn browser_variant_has_an_independent_shortcut() {
+    fn browser_variant_shares_source_identity_and_has_an_independent_shortcut() {
         let fetcher: Arc<dyn crate::PageFetcher> = Arc::new(HttpFetcher::new());
+        let http = Brave::new();
         let engine = BraveBrowser::new(fetcher);
 
-        assert_eq!(engine.name(), "Brave Browser");
+        assert_eq!(engine.name(), http.name());
         assert_eq!(engine.shortcut(), "brave_browser");
+        assert_ne!(engine.shortcut(), http.shortcut());
     }
 
     #[test]

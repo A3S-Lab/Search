@@ -30,9 +30,12 @@ pub struct RetrievalHealth {
     pub invalid_result_count: usize,
     /// Distinct normalized hosts represented by usable results.
     pub unique_host_count: usize,
-    /// Distinct engines that contributed at least one usable result.
+    /// Distinct logical sources that contributed at least one usable result.
+    ///
+    /// The field retains its original name for wire compatibility. Engines
+    /// exposing multiple transports must use one shared [`crate::EngineConfig::name`].
     pub contributing_engine_count: usize,
-    /// Usable results independently returned by at least two engines.
+    /// Usable results independently returned by at least two logical sources.
     pub consensus_result_count: usize,
     /// Engine attempts with a typed terminal outcome.
     pub attempted_engine_count: usize,
@@ -110,9 +113,9 @@ pub struct RetrievalRequirements {
     pub min_usable_results: usize,
     /// Minimum distinct normalized hosts.
     pub min_unique_hosts: usize,
-    /// Minimum distinct contributing engines.
+    /// Minimum distinct contributing logical sources.
     pub min_contributing_engines: usize,
-    /// Minimum results independently returned by at least two engines.
+    /// Minimum results independently returned by at least two logical sources.
     pub min_consensus_results: usize,
 }
 
