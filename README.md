@@ -93,7 +93,7 @@ Add the library and Tokio:
 
 ```toml
 [dependencies]
-a3s-search = "2"
+a3s-search = "3"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -188,6 +188,10 @@ retrieval the default CLI path. The intentional breaking changes are:
 
 No query, topic, language, publisher, or relevance rule is embedded in the
 fallback implementation.
+
+Version 3.0.1 is the first published v3 release. The v3.0.0 tag was retired
+before publication after its independent live-quality gate failed; no v3.0.0
+crate or release artifact was distributed.
 
 ## Retrieval sources
 
