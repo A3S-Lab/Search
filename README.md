@@ -50,7 +50,7 @@ cargo install a3s-search
 brew install A3S-Lab/tap/a3s-search
 ```
 
-Search with the default browser-first cascade:
+Search with the default Chrome/Chromium-first cascade:
 
 ```bash
 a3s-search "Rust async runtime guidance" --format json --limit 10
@@ -253,7 +253,7 @@ The companion CLI uses this default plan when neither explicit sources nor ACL
 source selection is present:
 
 ```text
-01  headless       brave_browser + bing_browser
+01  headless       brave_browser + bing_browser through Chrome/Chromium
         ↓ continue only when structural requirements are not met
 02  HTTP / RSS     ddg + bing + wiki
         ↓ continue only when structural requirements are not met
