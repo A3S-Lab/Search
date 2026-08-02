@@ -1,4 +1,4 @@
-const SEARCH_VERIFIER_REVISION: &str = "1cd042ad7b3250cf953d46817397378817a3f65f";
+const SEARCH_VERIFIER_REVISION: &str = "c179bf2fcaae98d8c53b3872ac3e0c9987a47c05";
 
 #[test]
 fn release_waits_for_the_exact_browser_crate_before_validation() {

@@ -189,10 +189,13 @@ retrieval the default CLI path. The intentional breaking changes are:
 No query, topic, language, publisher, or relevance rule is embedded in the
 fallback implementation.
 
-The v3.0.0, v3.0.1, and v3.0.2 tags were retired before publication after
-their independent gates failed. They are never moved or reused. The v3.0.3
-candidate can enter distribution only after its exact crate bytes pass the
-new one-pass multilingual model-based verifier; a tag alone is not a release.
+The v3.0.0 through v3.0.3 tags were retired before publication after their
+independent gates failed. They are never moved or reused. Version 3.0.4 uses a
+fresh one-pass multilingual campaign whose fixed model requires claim-grounded
+evidence from independent visible results and hosts. Query-ranking logits are
+retained for audit, not treated as cross-query probabilities. Distribution
+starts only after the exact crate bytes pass that gate; a tag alone is not a
+release.
 
 ## Retrieval sources
 
