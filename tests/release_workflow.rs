@@ -1,5 +1,3 @@
-const SEARCH_VERIFIER_REVISION: &str = "cf131e4e9e04a92c7cf3285079ab5f043ebc9408";
-
 #[test]
 fn release_waits_for_the_exact_browser_crate_before_validation() {
     let workflow = include_str!("../.github/workflows/release.yml");
@@ -22,42 +20,28 @@ fn release_waits_for_the_exact_browser_crate_before_validation() {
 }
 
 #[test]
-fn stable_release_uses_a_pinned_independent_verifier_in_a_protected_environment() {
+fn release_has_no_external_verifier_or_python_action_dependency() {
     let workflow = include_str!("../.github/workflows/release.yml");
-    let verifier = job_body(workflow, "commercial-search-gates");
-    assert!(verifier.contains("needs.classify.outputs.stable == 'true'"));
-    assert!(verifier.contains("environment: stable-release"));
-    assert!(verifier.contains("python-version: \"3.12.12\""));
-    assert!(verifier.contains(&format!(
-        "uses: A3S-Lab/SearchVerifier@{SEARCH_VERIFIER_REVISION}"
-    )));
-    assert!(verifier.contains("name: frozen-crate-${{ needs.classify.outputs.version }}"));
-    assert!(verifier.contains("evaluated-commit: ${{ github.sha }}"));
-    assert!(verifier.contains("git-ref: ${{ github.ref }}"));
-    assert!(verifier.contains("corpus-key: ${{ secrets.A3S_SEARCH_CORPUS_KEY }}"));
-    assert!(verifier.contains("if: always()"));
-    assert!(verifier.contains("name: release-evidence-${{ needs.classify.outputs.version }}"));
-    assert!(verifier.contains("if-no-files-found: error"));
+
     for forbidden in [
-        "actions/checkout",
-        "self-hosted",
-        "contents: write",
-        "CARGO_REGISTRY_TOKEN",
-        "cargo publish",
+        "uses: A3S-Lab/",
+        "commercial-search-gates",
+        "A3S_SEARCH_CORPUS_KEY",
+        "actions/setup-python",
+        "release-evidence-",
     ] {
         assert!(
-            !verifier.contains(forbidden),
-            "independent verifier job must not gain a publication path: {forbidden}"
+            !workflow.contains(forbidden),
+            "release workflow retained removed verifier dependency: {forbidden}"
         );
     }
 }
 
 #[test]
-fn release_freezes_one_exact_crate_before_external_evidence_is_considered() {
+fn release_freezes_one_exact_crate_before_the_aggregate_gate() {
     let workflow = include_str!("../.github/workflows/release.yml");
     let freeze = job_body(workflow, "freeze-crate");
-    let commercial = job_body(workflow, "commercial-search-gates");
-    let aggregate = job_body(workflow, "commercial-release-gate");
+    let aggregate = job_body(workflow, "release-gate");
 
     assert!(freeze.contains("needs: [classify, ci]"));
     assert!(freeze.contains("ref: ${{ github.sha }}"));
@@ -69,19 +53,12 @@ fn release_freezes_one_exact_crate_before_external_evidence_is_considered() {
     assert!(freeze.contains("crate_sha256: ${{ steps.identity.outputs.crate_sha256 }}"));
     assert!(freeze.contains("artifact_id: ${{ steps.upload.outputs.artifact-id }}"));
     assert!(freeze.contains("artifact_digest: ${{ steps.upload.outputs.artifact-digest }}"));
-    assert!(commercial.contains("needs: [classify, ci, freeze-crate]"));
-    assert!(aggregate.contains("needs: [classify, ci, freeze-crate, commercial-search-gates]"));
+    assert!(aggregate.contains("needs: [classify, ci, freeze-crate]"));
     assert!(aggregate.contains("FROZEN_CRATE_RESULT: ${{ needs.freeze-crate.result }}"));
     assert!(aggregate.contains("test \"$FROZEN_CRATE_RESULT\" = success"));
-    assert!(aggregate.contains(
-        "VERIFIED_CRATE_SHA256: ${{ needs.commercial-search-gates.outputs.frozen_crate_sha256 }}"
-    ));
-    assert!(aggregate.contains("test \"$VERIFIED_CRATE_SHA256\" = \"$FROZEN_CRATE_SHA256\""));
-    assert!(aggregate
-        .contains("EVIDENCE_SHA256: ${{ needs.commercial-search-gates.outputs.evidence_sha256 }}"));
-    assert!(aggregate.contains(
-        "EVIDENCE_ARTIFACT_ID: ${{ needs.commercial-search-gates.outputs.artifact_id }}"
-    ));
+    assert!(aggregate.contains("FROZEN_CRATE_SHA256"));
+    assert!(aggregate.contains("FROZEN_ARTIFACT_ID"));
+    assert!(aggregate.contains("FROZEN_ARTIFACT_DIGEST"));
 }
 
 #[test]
@@ -107,24 +84,22 @@ fn frozen_crate_job_has_no_release_credentials_or_publication_path() {
 #[test]
 fn every_release_write_path_is_transitively_blocked_by_the_aggregate_gate() {
     let workflow = include_str!("../.github/workflows/release.yml");
-    let aggregate = job_body(workflow, "commercial-release-gate");
+    let aggregate = job_body(workflow, "release-gate");
     let build = job_body(workflow, "build-cli");
     let publish = job_body(workflow, "publish-crate");
     let github = job_body(workflow, "github-release");
     let homebrew = job_body(workflow, "update-homebrew");
 
-    assert!(aggregate.contains("needs: [classify, ci, freeze-crate, commercial-search-gates]"));
+    assert!(aggregate.contains("needs: [classify, ci, freeze-crate]"));
     assert!(aggregate.contains("if: always() && !cancelled()"));
-    assert!(build.contains("needs: commercial-release-gate"));
+    assert!(build.contains("needs: release-gate"));
     assert!(publish.contains("if: needs.classify.outputs.stable == 'true'"));
-    assert!(publish.contains(
-        "needs: [classify, freeze-crate, commercial-search-gates, commercial-release-gate]"
-    ));
-    assert!(github.contains("needs: [classify, commercial-release-gate, publish-crate, build-cli]"));
+    assert!(publish.contains("needs: [classify, freeze-crate, release-gate]"));
+    assert!(github.contains("needs: [classify, release-gate, publish-crate, build-cli]"));
     assert!(github.contains("if: |"));
     assert!(github.contains("always() &&"));
     assert!(github.contains("!cancelled() &&"));
-    assert!(github.contains("needs.commercial-release-gate.result == 'success'"));
+    assert!(github.contains("needs.release-gate.result == 'success'"));
     assert!(github.contains("needs.build-cli.result == 'success'"));
     assert!(github.contains("needs.publish-crate.result == 'success'"));
     assert!(github.contains("needs.publish-crate.result == 'skipped'"));
@@ -143,7 +118,7 @@ fn prerelease_can_publish_github_binaries_without_registry_or_homebrew() {
 
     assert!(build.contains("always() &&"));
     assert!(build.contains("!cancelled() &&"));
-    assert!(build.contains("needs.commercial-release-gate.result == 'success'"));
+    assert!(build.contains("needs.release-gate.result == 'success'"));
     assert!(publish.contains("if: needs.classify.outputs.stable == 'true'"));
     assert!(github.contains("needs.classify.outputs.stable == 'false'"));
     assert!(github.contains("needs.publish-crate.result == 'skipped'"));
@@ -157,7 +132,7 @@ fn prerelease_can_publish_github_binaries_without_registry_or_homebrew() {
 #[test]
 fn cancellation_cannot_continue_into_release_artifacts_or_publication() {
     let workflow = include_str!("../.github/workflows/release.yml");
-    let aggregate = job_body(workflow, "commercial-release-gate");
+    let aggregate = job_body(workflow, "release-gate");
     assert!(aggregate.contains("if: always() && !cancelled()"));
     for downstream in [
         "build-cli",
@@ -180,6 +155,7 @@ fn candidate_checkouts_bind_to_the_trigger_commit_without_persisted_credentials(
         "ci",
         "freeze-crate",
         "build-cli",
+        "publish-crate",
         "github-release",
     ] {
         let body = job_body(workflow, job);
@@ -195,53 +171,18 @@ fn candidate_checkouts_bind_to_the_trigger_commit_without_persisted_credentials(
 }
 
 #[test]
-fn crate_publication_uses_the_same_pinned_exact_byte_uploader_without_candidate_code() {
+fn stable_crate_publication_reproduces_the_frozen_package_in_a_protected_environment() {
     let workflow = include_str!("../.github/workflows/release.yml");
     let publish = job_body(workflow, "publish-crate");
-    assert!(publish.contains("if: needs.classify.outputs.stable == 'true'"));
-    assert!(publish.contains("python-version: \"3.12.12\""));
+
+    assert!(publish.contains("environment: stable-release"));
     assert!(publish.contains("name: frozen-crate-${{ needs.classify.outputs.version }}"));
-    assert!(publish.contains("name: release-evidence-${{ needs.classify.outputs.version }}"));
-    assert!(publish.contains(&format!(
-        "uses: A3S-Lab/SearchVerifier/publish@{SEARCH_VERIFIER_REVISION}"
-    )));
-    assert!(
-        publish.contains("expected-crate-sha256: ${{ needs.freeze-crate.outputs.crate_sha256 }}")
-    );
-    assert!(publish.contains(
-        "expected-evidence-sha256: ${{ needs.commercial-search-gates.outputs.evidence_sha256 }}"
-    ));
-    assert!(publish.contains("expected-commit: ${{ github.sha }}"));
-    assert!(publish.contains("expected-git-ref: ${{ github.ref }}"));
-    assert!(publish.contains("registry-token: ${{ secrets.CARGO_TOKEN }}"));
-    for forbidden in [
-        "actions/checkout",
-        "dtolnay/rust-toolchain",
-        "cargo build",
-        "cargo test",
-        "cargo publish",
-        "cargo package",
-        "build.rs",
-    ] {
-        assert!(
-            !publish.contains(forbidden),
-            "credentialed uploader must not execute candidate code: {forbidden}"
-        );
-    }
-}
-
-#[test]
-fn verifier_and_uploader_are_pinned_to_the_same_immutable_revision() {
-    let workflow = include_str!("../.github/workflows/release.yml");
-    let verifier = job_body(workflow, "commercial-search-gates");
-    let publish = job_body(workflow, "publish-crate");
-
-    assert!(verifier.contains(&format!(
-        "A3S-Lab/SearchVerifier@{SEARCH_VERIFIER_REVISION}"
-    )));
-    assert!(publish.contains(&format!(
-        "A3S-Lab/SearchVerifier/publish@{SEARCH_VERIFIER_REVISION}"
-    )));
+    assert!(publish.contains("EXPECTED_CRATE_SHA256"));
+    assert!(publish.contains("cargo package --locked"));
+    assert!(publish.contains("cargo publish --locked --no-verify"));
+    assert!(publish.contains("CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}"));
+    assert!(publish.contains("sha256sum \"$frozen\""));
+    assert!(publish.contains("sha256sum \"$packaged\""));
 }
 
 #[test]

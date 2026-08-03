@@ -9,8 +9,6 @@ pub(super) struct LiveCanaryPolicy {
     pub maximum_p95_latency_ms: u64,
     pub maximum_p99_latency_ms: u64,
     pub maximum_retry_amplification: f64,
-    pub maximum_rate_limited_rate_ucb: f64,
-    pub maximum_circuit_open_rate_ucb: f64,
     pub maximum_second_tier_escalation_rate_ucb: f64,
     pub maximum_final_tier_escalation_rate_ucb: f64,
     pub minimum_resource_coverage_ratio: f64,
@@ -30,8 +28,6 @@ impl LiveCanaryPolicy {
             maximum_p95_latency_ms: 10_000,
             maximum_p99_latency_ms: 30_000,
             maximum_retry_amplification: 1.05,
-            maximum_rate_limited_rate_ucb: 0.10,
-            maximum_circuit_open_rate_ucb: 0.20,
             maximum_second_tier_escalation_rate_ucb: 0.50,
             maximum_final_tier_escalation_rate_ucb: 0.20,
             minimum_resource_coverage_ratio: 0.90,
@@ -69,14 +65,6 @@ impl LiveCanaryPolicy {
             maximum_retry_amplification: env_value(
                 "A3S_SEARCH_LIVE_CANARY_MAX_RETRY_AMPLIFICATION",
                 floor.maximum_retry_amplification,
-            ),
-            maximum_rate_limited_rate_ucb: env_value(
-                "A3S_SEARCH_LIVE_CANARY_MAX_RATE_LIMITED_RATE_UCB",
-                floor.maximum_rate_limited_rate_ucb,
-            ),
-            maximum_circuit_open_rate_ucb: env_value(
-                "A3S_SEARCH_LIVE_CANARY_MAX_CIRCUIT_OPEN_RATE_UCB",
-                floor.maximum_circuit_open_rate_ucb,
             ),
             maximum_second_tier_escalation_rate_ucb: env_value(
                 "A3S_SEARCH_LIVE_CANARY_MAX_SECOND_TIER_ESCALATION_RATE_UCB",
@@ -122,14 +110,6 @@ impl LiveCanaryPolicy {
             (
                 "maximum terminal failure rate",
                 self.maximum_terminal_failure_rate_ucb,
-            ),
-            (
-                "maximum circuit-open rate",
-                self.maximum_circuit_open_rate_ucb,
-            ),
-            (
-                "maximum rate-limited rate",
-                self.maximum_rate_limited_rate_ucb,
             ),
             (
                 "maximum second-tier escalation rate",
@@ -192,8 +172,6 @@ impl LiveCanaryPolicy {
         assert!(self.maximum_p95_latency_ms <= floor.maximum_p95_latency_ms);
         assert!(self.maximum_p99_latency_ms <= floor.maximum_p99_latency_ms);
         assert!(self.maximum_retry_amplification <= floor.maximum_retry_amplification);
-        assert!(self.maximum_rate_limited_rate_ucb <= floor.maximum_rate_limited_rate_ucb);
-        assert!(self.maximum_circuit_open_rate_ucb <= floor.maximum_circuit_open_rate_ucb);
         assert!(
             self.maximum_second_tier_escalation_rate_ucb
                 <= floor.maximum_second_tier_escalation_rate_ucb
@@ -234,7 +212,7 @@ mod tests {
     #[test]
     fn every_environment_override_can_only_tighten_the_release_floor() {
         let floor = LiveCanaryPolicy::release_floor();
-        let weakeners: [fn(&mut LiveCanaryPolicy); 16] = [
+        let weakeners: [fn(&mut LiveCanaryPolicy); 14] = [
             |policy| policy.minimum_cases -= 1,
             |policy| policy.minimum_nonempty_rate_lcb -= 0.01,
             |policy| policy.minimum_structural_sufficiency_rate_lcb -= 0.01,
@@ -242,8 +220,6 @@ mod tests {
             |policy| policy.maximum_p95_latency_ms += 1,
             |policy| policy.maximum_p99_latency_ms += 1,
             |policy| policy.maximum_retry_amplification += 0.01,
-            |policy| policy.maximum_rate_limited_rate_ucb += 0.01,
-            |policy| policy.maximum_circuit_open_rate_ucb += 0.01,
             |policy| policy.maximum_second_tier_escalation_rate_ucb += 0.01,
             |policy| policy.maximum_final_tier_escalation_rate_ucb += 0.01,
             |policy| policy.minimum_resource_coverage_ratio -= 0.01,
