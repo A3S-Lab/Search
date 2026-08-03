@@ -191,13 +191,16 @@ changes are:
 No query, topic, language, publisher, or relevance rule is embedded in the
 fallback implementation.
 
-The v3.0.0 through v3.0.4 tags were retired before publication after their
-independent gates failed. They are never moved or reused. Version 3.0.5 uses a
-fresh one-pass multilingual campaign against the API-first default, with a
-fixed model requiring claim-grounded evidence from independent visible results
-and hosts. Query-ranking logits are retained for audit, not treated as
-cross-query probabilities. Distribution starts only after the exact crate
-bytes pass that gate; a tag alone is not a release.
+The v3.0.0 through v3.0.5 candidate tags were retired before publication after
+their independent gates failed. The v3.0.6 and v3.0.7 verification protocols
+were retired before Search tags were created. None of those identities is moved
+or reused. Version 3.0.8 uses a fresh one-pass multilingual operational
+campaign against the API-first default and Chrome/Chromium fallback. The gate
+checks exact package bytes, result and receipt contracts, structural retrieval
+floors, fallback frequency, retries, latency, and resource release. It does not
+judge relevance, factual support, authority, or answerability. Distribution
+starts only after the exact crate bytes pass that gate; a tag alone is not a
+release.
 
 ## Retrieval sources
 
