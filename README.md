@@ -191,16 +191,17 @@ changes are:
 No query, topic, language, publisher, or relevance rule is embedded in the
 fallback implementation.
 
-The v3.0.0 through v3.0.5 candidate tags were retired before publication after
-their independent gates failed. The v3.0.6 and v3.0.7 verification protocols
-were retired before Search tags were created. None of those identities is moved
-or reused. Version 3.0.8 uses a fresh one-pass multilingual operational
-campaign against the API-first default and Chrome/Chromium fallback. The gate
-checks exact package bytes, result and receipt contracts, structural retrieval
-floors, fallback frequency, retries, latency, and resource release. It does not
-judge relevance, factual support, authority, or answerability. Distribution
-starts only after the exact crate bytes pass that gate; a tag alone is not a
-release.
+The v3.0.0 through v3.0.5 and v3.0.8 candidate tags were retired before
+publication. The v3.0.6 and v3.0.7 verification protocols were retired before
+Search tags were created. None of those identities is moved or reused.
+
+Starting with v3.0.9, release assurance lives in this Rust project rather than
+an external verifier. The release gate checks the exact source revision,
+package identity, result and receipt contracts, deterministic fallback and
+fault behavior, retries, latency, and resource release. Live upstream limits
+and open circuits remain observable outcomes; they do not fail an otherwise
+successful retrieval. Relevance, factual support, authority, answerability, and
+report quality remain caller responsibilities such as DeepResearch.
 
 ## Retrieval sources
 
@@ -560,14 +561,15 @@ A3S_SEARCH_SOAK_SECONDS=300 \
   -- --ignored --nocapture --exact
 ```
 
-Release jobs freeze the exact `.crate` bytes before publication. Stable tags
-wait for the protected environment and a full-commit-pinned
-[SearchVerifier](https://github.com/A3S-Lab/SearchVerifier). The independent
-job builds only the frozen package, runs deterministic fault injection, spends
-each sealed live case once, and retains receipts plus a canonical attestation.
-Missing, failed, cancelled, or mismatched evidence keeps crates.io, GitHub
-Release, and Homebrew fail-closed. Prerelease tags may publish GitHub CLI
-archives but never crates.io or Homebrew artifacts.
+Release jobs run the Rust contract suite, freeze the exact `.crate` bytes, and
+reproduce that package before a protected environment may publish it. Missing,
+failed, cancelled, or mismatched package evidence keeps crates.io, GitHub
+Release, and Homebrew fail-closed. The bounded live canary remains an explicit
+operational tool: upstream rate limits and open circuits are retained as audit
+telemetry, while terminal failures, structural sufficiency, fallback behavior,
+retry amplification, latency, receipt integrity, and resource release determine
+its result. Prerelease tags may publish GitHub CLI archives but never crates.io
+or Homebrew artifacts.
 
 </details>
 

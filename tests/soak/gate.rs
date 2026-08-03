@@ -123,18 +123,6 @@ impl LiveCanaryPolicy {
         }
         check_rate_upper_bound(
             &mut violations,
-            "circuit-open rate",
-            circuit_open,
-            self.maximum_circuit_open_rate_ucb,
-        );
-        check_rate_upper_bound(
-            &mut violations,
-            "rate-limited outcome rate",
-            rate_limited,
-            self.maximum_rate_limited_rate_ucb,
-        );
-        check_rate_upper_bound(
-            &mut violations,
             "second-tier escalation rate",
             second_tier_escalation,
             self.maximum_second_tier_escalation_rate_ucb,
@@ -351,6 +339,19 @@ mod tests {
     }
 
     #[test]
+    fn upstream_limits_and_open_circuits_remain_audited_without_blocking_release() {
+        let mut measurements = passing_measurements();
+        measurements.circuit_open = 50;
+        measurements.rate_limited_outcomes = 30;
+
+        let report = policy().evaluate(&measurements);
+
+        assert!(report.passed, "{:?}", report.violations);
+        assert_eq!(report.circuit_open.observed, 0.5);
+        assert_eq!(report.rate_limited.observed, 30.0 / 102.0);
+    }
+
+    #[test]
     fn zero_observed_failures_still_need_enough_independent_cases() {
         let mut measurements = passing_measurements();
         measurements.expected_cases = 20;
@@ -407,8 +408,6 @@ mod tests {
             "p95 latency",
             "p99 latency",
             "retry amplification",
-            "circuit-open rate",
-            "rate-limited outcome rate",
             "second-tier escalation rate",
             "final-tier escalation rate",
             "provider rate-limit compliance",
