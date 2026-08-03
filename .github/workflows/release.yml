@@ -213,7 +213,7 @@ jobs:
 
       - name: Verify frozen release
         id: verify
-        uses: A3S-Lab/SearchVerifier@f64446dedbe3613c7f39b85cf502a1b28387b7a4
+        uses: A3S-Lab/SearchVerifier@cf131e4e9e04a92c7cf3285079ab5f043ebc9408
         with:
           frozen-directory: ${{ github.workspace }}/frozen-crate
           evaluated-commit: ${{ github.sha }}
@@ -368,7 +368,7 @@ jobs:
           python-version: "3.12.12"
 
       - name: Upload exact frozen bytes
-        uses: A3S-Lab/SearchVerifier/publish@f64446dedbe3613c7f39b85cf502a1b28387b7a4
+        uses: A3S-Lab/SearchVerifier/publish@cf131e4e9e04a92c7cf3285079ab5f043ebc9408
         with:
           frozen-directory: ${{ github.workspace }}/frozen-crate
           expected-crate-sha256: ${{ needs.freeze-crate.outputs.crate_sha256 }}
