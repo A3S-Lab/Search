@@ -285,7 +285,7 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: frozen-crate-${{ needs.classify.outputs.version }}
-          path: frozen-crate
+          path: ${{ runner.temp }}/frozen-crate
 
       - name: Reproduce and publish the frozen package
         env:
@@ -296,7 +296,7 @@ jobs:
         run: |
           set -euo pipefail
           expected="${EXPECTED_CRATE_SHA256#sha256:}"
-          frozen="frozen-crate/a3s-search-${VERSION}.crate"
+          frozen="${RUNNER_TEMP}/frozen-crate/a3s-search-${VERSION}.crate"
           test "$(sha256sum "$frozen" | awk '{print $1}')" = "$expected"
           cargo package --locked
           packaged="target/package/a3s-search-${VERSION}.crate"
