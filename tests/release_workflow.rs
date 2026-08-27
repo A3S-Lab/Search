@@ -220,7 +220,7 @@ fn pinned_rust_action_also_selects_an_exact_compiler() {
 }
 
 fn job_body<'a>(workflow: &'a str, job: &str) -> &'a str {
-    let marker = format!("\n  {job}:\n");
+    let marker = format!("\n  {job}:");
     let start = workflow
         .find(&marker)
         .unwrap_or_else(|| panic!("workflow job is missing: {job}"))

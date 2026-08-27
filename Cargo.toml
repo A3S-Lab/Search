@@ -69,7 +69,7 @@ httpdate = "1"
 scraper = "0.22"
 
 # XML parsing for Bing's stable RSS search endpoint
-quick-xml = { version = "0.38", features = ["serialize"] }
+quick-xml = { version = "0.41", features = ["serialize"] }
 
 # Main article content extraction (Readability.js port, pure Rust)
 dom_smoothie = "0.18"
