@@ -23,6 +23,10 @@ jobs:
       - name: Format check
         run: cargo fmt -- --check
 
+      - name: Install pinned Moli runtime
+        shell: bash
+        run: echo "A3S_MOLI_EXECUTABLE=$(scripts/install-moli-ci.sh)" >> "$GITHUB_ENV"
+
       - name: Check browser feature boundary
         shell: bash
         run: |
@@ -31,7 +35,7 @@ jobs:
           grep -q 'chromiumoxide' <<<"$default_tree"
           default_features="$(cargo tree -e features -i a3s-use-browser --locked)"
           if grep -q 'feature "lightpanda"' <<<"$default_features"; then
-            echo "default Search must use Chrome/Chromium without enabling Lightpanda" >&2
+            echo "default Search must keep the explicit Lightpanda backend disabled" >&2
             exit 1
           fi
           minimal_tree="$(cargo tree --no-default-features -e normal --locked)"
@@ -51,6 +55,9 @@ jobs:
 
       - name: Tests (all features)
         run: cargo test --all-features --locked
+
+      - name: Moli integration
+        run: cargo test --features moli --test integration -- moli --nocapture
 
       - name: Rustdoc
         env:

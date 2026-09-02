@@ -6,10 +6,10 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
-fn direct_chrome_scope() -> String {
+fn direct_moli_scope() -> String {
     let mut digest = Sha256::new();
     digest.update(b"a3s/search-cli-transport-scope/v1\0");
-    digest.update(b"chrome");
+    digest.update(b"moli");
     digest.update([0]);
     digest.update(b"direct");
     format!("{:x}", digest.finalize())
@@ -18,7 +18,7 @@ fn direct_chrome_scope() -> String {
 #[test]
 fn a_later_cli_process_skips_an_open_source_without_network_access() {
     let state_directory = tempdir().unwrap();
-    let scope = direct_chrome_scope();
+    let scope = direct_moli_scope();
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)

@@ -1,8 +1,9 @@
 //! Search-specific adapter for the typed A3S Browser renderer.
 //!
-//! Browser process ownership, provider installation, tab limits, rendering, and
-//! cleanup live in `a3s-use-browser`. Search owns only URL-to-HTML adaptation,
-//! wait-strategy mapping, retries, and search metrics.
+//! Chrome and Lightpanda process ownership, provider installation, tab limits,
+//! rendering, and cleanup live in `a3s-use-browser`. The default Moli adapter
+//! in [`crate::moli`] owns its standalone CLI process boundary. Search owns
+//! URL-to-HTML adaptation, wait-strategy mapping, retries, and search metrics.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -32,7 +33,8 @@ pub struct BrowserFetcher {
 }
 
 impl BrowserFetcher {
-    /// Creates an adapter from a concrete renderer such as `BrowserPool`.
+    /// Creates an adapter from a concrete renderer such as `BrowserPool` or
+    /// [`crate::MoliPool`].
     pub fn new<R>(renderer: Arc<R>) -> Self
     where
         R: PageRenderer + 'static,

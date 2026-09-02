@@ -349,7 +349,7 @@ mod tests {
                 timeout: Duration::MAX,
                 proxy: None,
                 config: None,
-                browser: HeadlessBrowser::Chrome,
+                browser: HeadlessBrowser::Moli,
                 browser_max_retries: 1,
             },
             CircuitBreaker::default(),

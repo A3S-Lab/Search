@@ -196,7 +196,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_plan_is_api_first_with_chrome_as_the_final_transport() {
+    fn default_plan_is_api_first_with_moli_as_the_final_transport() {
         let plan = EngineTierPlan::new(None, None, None).unwrap();
         let tiers = plan.tiers();
 

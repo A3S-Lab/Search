@@ -1000,6 +1000,115 @@ mod lightpanda_tests {
     }
 }
 
+/// Moli-backed headless integration tests. The local fixture is skipped when
+/// the host has not installed Moli; the upstream smoke is opt-in because it
+/// depends on third-party network availability and anti-bot policy.
+#[cfg(feature = "headless")]
+mod moli_tests {
+    use super::fixture_server::FixtureServer;
+    use a3s_search::{detect_moli, BrowserFetcher, MoliPool, PageFetcher, WaitStrategy};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    fn pool_or_skip() -> Option<Arc<MoliPool>> {
+        let path = detect_moli()?;
+        Some(Arc::new(MoliPool::from_executable(path)))
+    }
+
+    #[tokio::test]
+    async fn test_moli_fetch_local_js_fixture() {
+        let Some(pool) = pool_or_skip() else {
+            println!("SKIP: Moli executable not found; install it or set A3S_MOLI_EXECUTABLE");
+            return;
+        };
+        let server = FixtureServer::start(
+            "<!doctype html><html><head><title>Moli fixture</title></head>\
+             <body><div id=\"app\"></div><script>\
+             setTimeout(() => { document.querySelector('#app').textContent = 'MOLI_JS_FIXTURE'; }, 50);\
+             </script></body></html>",
+        );
+        let fetcher = BrowserFetcher::new(pool).with_wait(WaitStrategy::Selector {
+            css: "#app".to_string(),
+            timeout_ms: 2_000,
+        });
+        let html = fetcher
+            .with_timeout(Duration::from_secs(10))
+            .fetch(&server.url)
+            .await
+            .expect("Moli should render the local fixture");
+
+        assert!(html.contains("MOLI_JS_FIXTURE"), "rendered HTML: {html}");
+        assert!(html.to_ascii_lowercase().contains("<html"));
+    }
+
+    #[tokio::test]
+    #[ignore = "live upstream Moli smoke; run with --ignored"]
+    async fn test_moli_bing_browser_search_completes() {
+        if std::net::TcpStream::connect_timeout(
+            &"1.1.1.1:80".parse().unwrap(),
+            Duration::from_secs(3),
+        )
+        .is_err()
+        {
+            println!("no network connectivity — skipping test");
+            return;
+        }
+        let Some(pool) = pool_or_skip() else {
+            println!("Moli executable not found — skipping test");
+            return;
+        };
+        let fetcher = BrowserFetcher::new(pool)
+            .with_wait(WaitStrategy::Load)
+            .with_timeout(Duration::from_secs(20));
+        let html = fetcher
+            .fetch("https://www.bing.com/search?q=rust+programming")
+            .await
+            .expect("Moli should return a Bing document");
+        assert!(html.to_ascii_lowercase().contains("<html"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_cli_default_backend_uses_moli_process() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::Command;
+        use tempfile::tempdir;
+
+        let directory = tempdir().unwrap();
+        let executable = directory.path().join("moli-fixture");
+        let html = "<!doctype html><html><body><ol id=\"b_results\"><li class=\"b_algo\"><h2><a href=\"https://www.rust-lang.org/\">Rust</a></h2><p>Official Rust site.</p></li></ol></body></html>";
+        fs::write(&executable, format!("#!/bin/sh\nprintf '%s' '{html}'\n")).unwrap();
+        let mut permissions = fs::metadata(&executable).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).unwrap();
+
+        let output = Command::new(env!("CARGO_BIN_EXE_a3s-search"))
+            .args([
+                "moli cli fixture",
+                "--engines",
+                "bing_browser",
+                "--format",
+                "json",
+                "--timeout",
+                "5",
+            ])
+            .env("A3S_MOLI_EXECUTABLE", &executable)
+            .env("A3S_SEARCH_STATE_DIR", directory.path())
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "CLI failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let payload: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(payload["outcomes"][0]["kind"], "success");
+        assert_eq!(payload["results"][0]["url"], "https://www.rust-lang.org/");
+    }
+}
+
 mod meta_search_tests {
     use a3s_search::{
         engines::{DuckDuckGo, Wikipedia},

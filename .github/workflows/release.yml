@@ -64,6 +64,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2 peeled commit
 
+      - name: Install pinned Moli runtime
+        shell: bash
+        run: echo "A3S_MOLI_EXECUTABLE=$(scripts/install-moli-ci.sh)" >> "$GITHUB_ENV"
+
       - name: Wait for the independently published Browser crate
         shell: bash
         run: |
@@ -102,6 +106,9 @@ jobs:
         run: |
           cargo test --no-default-features --locked
           cargo test --all-features --locked
+
+      - name: Moli integration
+        run: cargo test --features moli --test integration -- moli --nocapture
 
       - name: Rustdoc
         env:

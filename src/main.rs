@@ -85,7 +85,7 @@ struct Cli {
     #[arg(short, long)]
     proxy: Option<String>,
 
-    /// Headless browser backend (Chrome also discovers Chromium)
+    /// Headless browser backend (Moli by default; Chrome also discovers Chromium)
     #[arg(long, value_enum, default_value_t)]
     browser: HeadlessBrowser,
 
@@ -105,7 +105,7 @@ struct Cli {
     #[arg(short = 'c', long)]
     config: Option<PathBuf>,
 
-    /// Use headless browser for JS-rendered engines (default: auto-detected)
+    /// Enable the legacy headless-tier compatibility flag (backend defaults to Moli)
     #[arg(long, hide = true)]
     headless: bool,
 
@@ -249,7 +249,7 @@ async fn main() -> Result<()> {
                 println!("      --time-range <RANGE> day, week, month, year");
                 println!("  -f, --format <FORMAT>    Output: text, json, compact");
                 println!("  -p, --proxy <URL>        Proxy URL (http/https/socks5)");
-                println!("      --browser <BACKEND>  Headless backend: chrome, lightpanda (default: chrome)");
+                println!("      --browser <BACKEND>  Headless backend: moli, chrome, lightpanda (default: moli)");
                 println!(
                     "      --browser-retries <N> Headless retries per render (default: 1; maximum: 10)"
                 );
@@ -704,8 +704,14 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_browser_defaults_to_chrome() {
+    fn test_cli_browser_defaults_to_moli() {
         let cli = Cli::parse_from(["a3s-search", "query"]);
+        assert_eq!(cli.browser, HeadlessBrowser::Moli);
+    }
+
+    #[test]
+    fn test_cli_chrome_requires_explicit_selection() {
+        let cli = Cli::parse_from(["a3s-search", "query", "--browser", "chrome"]);
         assert_eq!(cli.browser, HeadlessBrowser::Chrome);
     }
 
