@@ -216,4 +216,12 @@ fn transport_scopes_separate_direct_proxy_and_browser_routes() {
         transport_scope(None, "chrome"),
         transport_scope(None, "lightpanda")
     );
+    assert_ne!(
+        transport_scope(None, "moli"),
+        transport_scope(None, "chrome")
+    );
+    assert_ne!(
+        transport_scope(None, "moli"),
+        transport_scope(None, "lightpanda")
+    );
 }

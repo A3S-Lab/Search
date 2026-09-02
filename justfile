@@ -19,6 +19,10 @@ build:
 build-headless:
     cargo build -p a3s-search --features headless
 
+# Build with the default Moli-backed headless renderer
+build-moli:
+    cargo build -p a3s-search --features moli
+
 # Build with Lightpanda browser support (Linux/macOS only)
 build-lightpanda:
     cargo build -p a3s-search --features lightpanda
@@ -307,6 +311,17 @@ test-headless:
     fi
     echo -e "${BOLD}${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
     echo ""
+
+# Run Moli renderer integration tests. Set A3S_MOLI_EXECUTABLE when `moli` is
+# not discoverable through PATH or the official installer location.
+# The deterministic local fixture runs by default; the upstream smoke is
+# available with `--ignored` when network access is intentional.
+test-moli:
+    cargo test -p a3s-search --features moli --test integration -- moli --nocapture
+
+# Run the opt-in live Moli upstream smoke as well.
+test-moli-live:
+    cargo test -p a3s-search --features moli --test integration -- moli --ignored --nocapture
 
 # Run tests without progress (raw cargo output)
 test-raw:

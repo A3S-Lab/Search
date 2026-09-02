@@ -36,8 +36,10 @@ fn add_retry_observation(
 /// Browser backend used by the CLI headless tier.
 #[derive(clap::ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum HeadlessBrowser {
-    /// Installed Chrome, Chromium, or a previously managed Chrome runtime.
+    /// Moli's standalone, JavaScript-capable headless browser.
     #[default]
+    Moli,
+    /// Installed Chrome, Chromium, or a previously managed Chrome runtime.
     Chrome,
     /// Explicit Lightpanda runtime.
     Lightpanda,
@@ -46,6 +48,7 @@ pub(crate) enum HeadlessBrowser {
 impl HeadlessBrowser {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
+            Self::Moli => "moli",
             Self::Chrome => "chrome",
             Self::Lightpanda => "lightpanda",
         }
@@ -62,7 +65,8 @@ use futures::future::join_all;
 use a3s_search::{
     a3s_use_browser::{BrowserPool, BrowserPoolConfig, BrowserProvider, PageRenderer},
     engines::{Baidu, BingBrowser, BraveBrowser, Google},
-    BrowserFetcher, Engine, PageFetcher, RetryBudget, WaitStrategy,
+    BrowserFetcher, Engine, MoliPool, MoliPoolConfig, PageFetcher, RetryBudget, Search,
+    WaitStrategy,
 };
 
 #[cfg(feature = "headless")]
@@ -85,6 +89,70 @@ pub(super) async fn execute_headless_tier(
         return results;
     }
 
+    if request.browser == HeadlessBrowser::Moli {
+        return execute_moli_headless_tier(request, controls, shortcuts, deadline, remaining_tiers)
+            .await;
+    }
+
+    execute_browser_headless_tier(request, controls, shortcuts, deadline, remaining_tiers).await
+}
+
+#[cfg(feature = "headless")]
+async fn execute_moli_headless_tier(
+    request: &CascadeRequest<'_>,
+    controls: &SharedControls,
+    shortcuts: &[String],
+    deadline: Instant,
+    remaining_tiers: usize,
+) -> SearchResults {
+    let pool = Arc::new(MoliPool::new(moli_pool_config(request.proxy)));
+    if let Err(error) = pool.warm_up() {
+        let mut results = SearchResults::new();
+        results.add_failure(moli_setup_failure(error));
+        add_retry_observation(&mut results, 0, request.browser_max_retries);
+        return results;
+    }
+
+    let render_budget = headless_render_budget(
+        deadline.saturating_duration_since(Instant::now()),
+        remaining_tiers,
+    );
+    let retry_budget = RetryBudget::default();
+    let mut search = configured_search(request.config, controls);
+    let mut setup_results = SearchResults::new();
+    let renderer: Arc<dyn PageRenderer> = pool.clone();
+    configure_headless_engines(
+        &mut search,
+        &mut setup_results,
+        request,
+        shortcuts,
+        renderer,
+        render_budget,
+        &retry_budget,
+    );
+
+    let mut results = execute_search_tier(
+        search,
+        setup_results,
+        &request.query,
+        "headless",
+        render_budget,
+    )
+    .await;
+    pool.shutdown();
+    let retries = retry_budget.snapshot().admitted_retries;
+    add_retry_observation(&mut results, retries, request.browser_max_retries);
+    results
+}
+
+#[cfg(feature = "headless")]
+async fn execute_browser_headless_tier(
+    request: &CascadeRequest<'_>,
+    controls: &SharedControls,
+    shortcuts: &[String],
+    deadline: Instant,
+    remaining_tiers: usize,
+) -> SearchResults {
     let pool_config = match browser_pool_config(request.proxy, request.browser) {
         Ok(config) => config,
         Err(failure) => {
@@ -107,60 +175,28 @@ pub(super) async fn execute_headless_tier(
     let retry_budget = RetryBudget::default();
     let mut search = configured_search(request.config, controls);
     let mut setup_results = SearchResults::new();
-
+    let renderer_for_shortcuts = shared_pool.clone();
     for shortcut in shortcuts {
         if !record_disabled_engine(&mut setup_results, request.config, shortcut) {
             continue;
         }
         // Lightpanda currently supports one reliable target per process. Keep
         // engines isolated there while sharing one Chrome process elsewhere.
-        let pool = shared_pool.clone().unwrap_or_else(|| {
+        let pool = renderer_for_shortcuts.clone().unwrap_or_else(|| {
             let pool = Arc::new(BrowserPool::new(pool_config.clone()));
             cleanup.track(Arc::clone(&pool));
             pool
         });
         let renderer: Arc<dyn PageRenderer> = pool;
-        let fetcher = || -> Arc<dyn PageFetcher> {
-            Arc::new(
-                BrowserFetcher::from_renderer(Arc::clone(&renderer))
-                    .with_wait(headless_wait_strategy())
-                    .with_timeout(render_budget)
-                    .with_total_timeout(render_budget)
-                    .with_retries(request.browser_max_retries, 100)
-                    .with_retry_budget(retry_budget.clone()),
-            )
-        };
-        match shortcut.as_str() {
-            "g" => {
-                let engine = Google::new(fetcher());
-                let engine_config =
-                    configured_engine_config(request.config, engine.config().clone());
-                search.add_engine(engine.with_config(engine_config));
-            }
-            "baidu" => {
-                let engine = Baidu::new(fetcher());
-                let engine_config =
-                    configured_engine_config(request.config, engine.config().clone());
-                search.add_engine(engine.with_config(engine_config));
-            }
-            "bing_browser" => {
-                let engine = BingBrowser::new(fetcher());
-                let engine_config =
-                    configured_engine_config(request.config, engine.config().clone());
-                search.add_engine(engine.with_config(engine_config));
-            }
-            "brave_browser" => {
-                let engine = BraveBrowser::new(fetcher());
-                let engine_config =
-                    configured_engine_config(request.config, engine.config().clone());
-                search.add_engine(engine.with_config(engine_config));
-            }
-            _ => setup_results.add_failure(EngineFailure::new(
-                shortcut,
-                "unsupported_engine",
-                "engine is not available in the headless tier",
-            )),
-        }
+        configure_one_headless_engine(
+            &mut search,
+            &mut setup_results,
+            request,
+            shortcut,
+            renderer,
+            render_budget,
+            &retry_budget,
+        );
     }
 
     let mut results = execute_search_tier(
@@ -175,6 +211,81 @@ pub(super) async fn execute_headless_tier(
     let retries = retry_budget.snapshot().admitted_retries;
     add_retry_observation(&mut results, retries, request.browser_max_retries);
     results
+}
+
+#[cfg(feature = "headless")]
+fn configure_headless_engines(
+    search: &mut Search,
+    setup_results: &mut SearchResults,
+    request: &CascadeRequest<'_>,
+    shortcuts: &[String],
+    renderer: Arc<dyn PageRenderer>,
+    render_budget: Duration,
+    retry_budget: &RetryBudget,
+) {
+    for shortcut in shortcuts {
+        if !record_disabled_engine(setup_results, request.config, shortcut) {
+            continue;
+        }
+        configure_one_headless_engine(
+            search,
+            setup_results,
+            request,
+            shortcut,
+            Arc::clone(&renderer),
+            render_budget,
+            retry_budget,
+        );
+    }
+}
+
+#[cfg(feature = "headless")]
+fn configure_one_headless_engine(
+    search: &mut Search,
+    setup_results: &mut SearchResults,
+    request: &CascadeRequest<'_>,
+    shortcut: &str,
+    renderer: Arc<dyn PageRenderer>,
+    render_budget: Duration,
+    retry_budget: &RetryBudget,
+) {
+    let fetcher = || -> Arc<dyn PageFetcher> {
+        Arc::new(
+            BrowserFetcher::from_renderer(Arc::clone(&renderer))
+                .with_wait(headless_wait_strategy())
+                .with_timeout(render_budget)
+                .with_total_timeout(render_budget)
+                .with_retries(request.browser_max_retries, 100)
+                .with_retry_budget(retry_budget.clone()),
+        )
+    };
+    match shortcut {
+        "g" => {
+            let engine = Google::new(fetcher());
+            let engine_config = configured_engine_config(request.config, engine.config().clone());
+            search.add_engine(engine.with_config(engine_config));
+        }
+        "baidu" => {
+            let engine = Baidu::new(fetcher());
+            let engine_config = configured_engine_config(request.config, engine.config().clone());
+            search.add_engine(engine.with_config(engine_config));
+        }
+        "bing_browser" => {
+            let engine = BingBrowser::new(fetcher());
+            let engine_config = configured_engine_config(request.config, engine.config().clone());
+            search.add_engine(engine.with_config(engine_config));
+        }
+        "brave_browser" => {
+            let engine = BraveBrowser::new(fetcher());
+            let engine_config = configured_engine_config(request.config, engine.config().clone());
+            search.add_engine(engine.with_config(engine_config));
+        }
+        _ => setup_results.add_failure(EngineFailure::new(
+            shortcut,
+            "unsupported_engine",
+            "engine is not available in the headless tier",
+        )),
+    }
 }
 
 #[cfg(not(feature = "headless"))]
@@ -206,6 +317,13 @@ fn browser_pool_config(
     browser: HeadlessBrowser,
 ) -> Result<BrowserPoolConfig, EngineFailure> {
     let provider = match browser {
+        HeadlessBrowser::Moli => {
+            return Err(EngineFailure::new(
+                "moli",
+                "headless_backend_unavailable",
+                "Moli is configured through its standalone renderer, not BrowserPool",
+            ));
+        }
         HeadlessBrowser::Chrome => BrowserProvider::DiscoveredChrome,
         HeadlessBrowser::Lightpanda => lightpanda_provider()?,
     };
@@ -214,6 +332,24 @@ fn browser_pool_config(
         provider,
         ..BrowserPoolConfig::default()
     })
+}
+
+#[cfg(feature = "headless")]
+fn moli_pool_config(proxy: Option<&str>) -> MoliPoolConfig {
+    MoliPoolConfig {
+        proxy_url: proxy.map(str::to_string),
+        ..MoliPoolConfig::default()
+    }
+}
+
+#[cfg(feature = "headless")]
+fn moli_setup_failure(error: a3s_search::a3s_use_browser::UseError) -> EngineFailure {
+    let mut message = format!("Moli headless backend is unavailable: {}", error.message);
+    if let Some(suggestion) = error.suggestion {
+        message.push_str(" Suggestion: ");
+        message.push_str(&suggestion);
+    }
+    EngineFailure::new("moli", "headless_backend_unavailable", message)
 }
 
 #[cfg(all(feature = "headless", feature = "lightpanda"))]
@@ -290,8 +426,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cli_browser_default_is_chrome() {
-        assert_eq!(HeadlessBrowser::default(), HeadlessBrowser::Chrome);
+    fn cli_browser_default_is_moli() {
+        assert_eq!(HeadlessBrowser::default(), HeadlessBrowser::Moli);
+        assert_eq!(HeadlessBrowser::default().as_str(), "moli");
     }
 
     #[test]
@@ -348,8 +485,17 @@ mod tests {
 
     #[cfg(feature = "headless")]
     #[test]
-    fn default_pool_is_pinned_to_discovered_chrome() {
-        let config = browser_pool_config(Some("http://127.0.0.1:8080"), HeadlessBrowser::default())
+    fn default_moli_pool_preserves_the_cli_proxy() {
+        let config = moli_pool_config(Some("http://127.0.0.1:8080"));
+
+        assert_eq!(config.proxy_url.as_deref(), Some("http://127.0.0.1:8080"));
+        assert!(config.executable.is_none());
+    }
+
+    #[cfg(feature = "headless")]
+    #[test]
+    fn explicit_chrome_pool_is_pinned_to_discovery() {
+        let config = browser_pool_config(Some("http://127.0.0.1:8080"), HeadlessBrowser::Chrome)
             .expect("Chrome pool configuration");
 
         assert!(matches!(config.provider, BrowserProvider::DiscoveredChrome));

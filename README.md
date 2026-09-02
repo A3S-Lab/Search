@@ -50,8 +50,14 @@ cargo install a3s-search
 brew install A3S-Lab/tap/a3s-search
 ```
 
-Search with the default API-first cascade. Installed Chrome/Chromium remains
-the final browser fallback:
+Search with the default API-first cascade. Moli is the default headless
+fallback. Install it with the official installer, or set
+`A3S_MOLI_EXECUTABLE=/path/to/moli` when the executable is elsewhere:
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/lexmount/moli/releases/latest/download/moli-installer.sh | sh
+```
 
 ```bash
 a3s-search "Rust async runtime guidance" --format json --limit 10
@@ -170,8 +176,8 @@ native search API ─ SearchProvider ─ ProviderEngine ─┘
 
 ## Migrating from v2
 
-Version 3 removes semantic policy from the metasearch layer and includes
-Chrome/Chromium as the default browser fallback. The intentional breaking
+Version 3 removes semantic policy from the metasearch layer and uses Moli as
+the default browser fallback. The intentional breaking
 changes are:
 
 - `SearchQuality`, `SearchQualityFloor`, and `query_match_score` are removed.
@@ -182,8 +188,8 @@ changes are:
 - Consume `SearchCascadeOutcomeV2` and `SearchCascadeReceiptV2`. Receipt V2
   records retrieval requirements, final health, decision authority, exhaustion,
   result bindings, and counts; none of those fields is semantic approval.
-- The default Cargo feature now includes Chrome/Chromium headless retrieval.
-  Use `default-features = false` for an HTTP/API-only library build.
+- The default Cargo feature now includes Moli-backed headless retrieval. Use
+  `default-features = false` for an HTTP/API-only library build.
 - With no explicit source selection, the CLI runs `API → HTTP/RSS → headless`.
   `--engines` remains an exact source list, and `--tier-order` accepts a complete
   permutation when a different operational order is required.
@@ -210,10 +216,10 @@ by the host:
 
 | Class | Shortcut | Source | Transport | Default CLI plan |
 | --- | --- | --- | --- | --- |
-| Browser | `brave_browser` | Brave Search | A3S Browser | Final fallback |
-| Browser | `bing_browser` | Bing International | A3S Browser | Final fallback |
-| Browser | `g` | Google | A3S Browser | Explicit |
-| Browser | `baidu` | Baidu | A3S Browser | Explicit |
+| Browser | `brave_browser` | Brave Search | Moli (default) | Final fallback |
+| Browser | `bing_browser` | Bing International | Moli (default) | Final fallback |
+| Browser | `g` | Google | Moli (default) | Explicit |
+| Browser | `baidu` | Baidu | Moli (default) | Explicit |
 | HTTP/RSS | `ddg` | DuckDuckGo | HTTP | Second tier |
 | HTTP/RSS | `bing` | Bing International | RSS | Second tier |
 | HTTP/RSS | `wiki` | Wikipedia | MediaWiki JSON | Second tier |
@@ -292,7 +298,7 @@ source selection is present:
         ↓ continue only when structural requirements are not met
 02  HTTP / RSS     wiki + ddg + bing
         ↓ continue only when structural requirements are not met
-03  headless       brave_browser + bing_browser through Chrome/Chromium
+03  headless       brave_browser + bing_browser through Moli
         ↓
     results + cascade receipt V2
 ```
@@ -474,8 +480,8 @@ retry deadlines, and bounded ejection counts—never queries, result content,
 credentials, or semantic judgments. Linux uses the XDG state directory; macOS
 and Windows use their platform-local application-data directory. Set
 `A3S_SEARCH_STATE_DIR` to an absolute directory when a host needs an isolated
-state scope. A one-way transport-scope digest separates direct, proxy, Chrome,
-and Lightpanda routes without retaining proxy credentials. Challenges, rate
+state scope. A one-way transport-scope digest separates direct, proxy, Moli,
+Chrome, and Lightpanda routes without retaining proxy credentials. Challenges, rate
 limits, and terminal provider failures all open the in-process circuit
 immediately; only credential-independent challenge state crosses a process
 boundary. Expired entries admit a single half-open probe and preserve
@@ -483,23 +489,30 @@ exponential backoff.
 
 ### Browser feature boundary
 
-The default `headless` Cargo feature uses the typed renderer from
-[A3S Browser](https://github.com/A3S-Lab/Browser):
+The default `headless` Cargo feature includes a typed Moli CLI renderer. It
+invokes the upstream `moli fetch --dump html` command through the
+`a3s-use-browser::PageRenderer` contract and keeps child processes bounded,
+cancellable, and isolated:
 
 | Build | Runtime behavior |
 | --- | --- |
-| default / `headless` | Discover installed or previously managed Chrome/Chromium |
+| default / `headless` / `moli` | Discover Moli from `A3S_MOLI_EXECUTABLE`, PATH, or the official installer location |
+| `--browser chrome` | Use the explicit Chrome/Chromium A3S Browser backend |
 | `lightpanda` | Add Lightpanda as an explicit backend; never select it implicitly |
 | `--no-default-features` | Remove the browser/CDP dependency stack |
 
-Chrome/Chromium is the native Windows backend. Lightpanda requires WSL2 on a
-Windows host.
+Install Moli from [`lexmount/moli`](https://github.com/lexmount/moli), or set
+`A3S_MOLI_EXECUTABLE` to an existing executable. Moli supports macOS, Linux,
+and Windows. Chrome/Chromium remains available as an explicit compatibility
+backend; Lightpanda requires WSL2 on a Windows host.
 
-Browser owns discovery, process lifecycle, rendering, tab limits, and cleanup.
-Search owns search URLs, wait conditions, HTML validation, bounded retries, and
-search-specific metrics.
+The Moli adapter owns executable discovery, process lifecycle, bounded
+parallelism, and cleanup. Search owns search URLs, wait conditions, HTML
+validation, bounded retries, and search-specific metrics.
 
 ```bash
+cargo run -- "query" --browser moli
+cargo run -- "query" --browser chrome
 cargo run --features lightpanda -- "query" --browser lightpanda
 ```
 
@@ -543,6 +556,9 @@ cargo clippy --all-targets --all-features --locked -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --locked
 scripts/test-release-package.sh
 scripts/test-freeze-crate.sh
+# Download and verify the pinned Moli runtime, then run its local fixture.
+A3S_MOLI_EXECUTABLE="$(scripts/install-moli-ci.sh)" \
+  cargo test --features moli --test integration -- moli --nocapture
 ```
 
 The deterministic suite covers protocols, authentication, normalization,
@@ -591,7 +607,8 @@ leaves semantic evaluation to the calling agent.
 
 - [A3S](https://github.com/A3S-Lab/a3s) — platform and component entry point
 - [A3S Code](https://github.com/A3S-Lab/Code) — governed coding-agent runtime
-- [A3S Browser](https://github.com/A3S-Lab/Browser) — typed browser rendering boundary
+- [Moli](https://github.com/lexmount/moli) — default standalone headless browser runtime
+- [A3S Browser](https://github.com/A3S-Lab/Browser) — typed rendering contract and explicit Chrome backend
 - [A3S Science](https://github.com/A3S-Lab/Science) — research workflows above the retrieval kernel
 
 ## Contributing

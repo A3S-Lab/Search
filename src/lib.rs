@@ -127,6 +127,9 @@ pub mod providers;
 pub mod browser;
 
 #[cfg(feature = "headless")]
+pub mod moli;
+
+#[cfg(feature = "headless")]
 pub use a3s_use_browser;
 
 pub use aggregator::Aggregator;
@@ -169,3 +172,5 @@ pub use window::select_structural_window;
 pub use browser::{
     BrowserBackend, BrowserFetcher, BrowserPool, BrowserPoolConfig, BrowserProvider,
 };
+#[cfg(feature = "headless")]
+pub use moli::{detect_moli, resolve_moli, MoliPool, MoliPoolConfig, MOLI_REPOSITORY_URL};

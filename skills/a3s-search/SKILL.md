@@ -16,8 +16,9 @@ Use the CLI first. Request JSON whenever evidence must be inspected, compared, o
    ```
 
 2. Start with the default structurally gated cascade unless the task requires a
-   constrained source set. The CLI tries headless discovery first, then public
-   HTTP/RSS engines, then native API providers, and stops when the generic
+   constrained source set. The CLI executes its API-first plan and reaches the
+   Moli-backed headless tier only when structural requirements remain unmet,
+   then stops when the generic
    retrieval requirements are met. Those requirements cover usable URLs,
    distinct hosts, provenance, and optional cross-engine consensus; they do not
    measure whether pages answer the query. All tiers share one deadline. An
@@ -43,6 +44,12 @@ Use the CLI first. Request JSON whenever evidence must be inspected, compared, o
      --format json \
      --limit 10
    ```
+
+   Moli is the default headless backend. Install the `moli` executable from
+   [`lexmount/moli`](https://github.com/lexmount/moli), or set
+   `A3S_MOLI_EXECUTABLE` to an installed path. Select Chrome or Lightpanda only
+   when an explicit compatibility route is required (`--browser chrome` or
+   `--browser lightpanda`).
 
    Constrain the source set only when the research plan calls for it:
 
