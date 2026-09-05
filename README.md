@@ -174,6 +174,14 @@ native search API ─ SearchProvider ─ ProviderEngine ─┘
 - `SearchCascade` is optional. It records ordered retrieval tiers and can
   attribute a decision to either structural requirements or an external policy.
 
+Internally, the runtime keeps the same boundary explicit across four phases:
+registration snapshots each engine's immutable configuration descriptor,
+selection resolves source identity and admits only sources that match the
+request and current reliability state, an isolated runner performs one bounded
+attempt, and the coordinator folds outputs into `SearchResults`. This makes
+timeout, bulkhead, circuit, metrics, and health accounting apply uniformly
+without making source adapters or callers depend on orchestration details.
+
 ## Migrating from v2
 
 Version 3 removes semantic policy from the metasearch layer and uses Moli as
@@ -234,6 +242,10 @@ HTML engines validate the response structure before parsing. CAPTCHA,
 verification, consent, and anti-bot pages become typed transient `challenge`
 failures. An unrelated successful page becomes `invalid_response`, not a false
 empty result.
+
+`bing_cn` uses Bing China's regional RSS endpoint (`cn.bing.com`) with an
+explicit `zh-CN` locale so edge-selected international responses do not turn a
+valid query into an intermittent empty document.
 
 <details>
 <summary><strong>Native provider capabilities and credentials</strong></summary>

@@ -104,6 +104,8 @@ mod circuit;
 mod coalescer;
 mod config;
 mod engine;
+mod engine_registry;
+mod engine_runner;
 mod enrich;
 mod error;
 mod extract;

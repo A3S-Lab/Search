@@ -115,10 +115,27 @@ impl HtmlParser for BingBrowserParser {
 }
 
 pub(crate) fn build_bing_rss_url(query: &SearchQuery) -> String {
+    build_bing_rss_url_for_host(query, "www.bing.com", None)
+}
+
+/// Builds the RSS URL for Bing China's regional endpoint.
+pub(crate) fn build_bing_rss_url_for_china(query: &SearchQuery) -> String {
+    build_bing_rss_url_for_host(query, "cn.bing.com", Some("zh-CN"))
+}
+
+/// Builds a Bing RSS URL for a specific regional host and optional UI locale.
+fn build_bing_rss_url_for_host(query: &SearchQuery, host: &str, language: Option<&str>) -> String {
     let mut url = format!(
-        "https://www.bing.com/search?q={}&format=rss",
+        "https://{host}/search?q={}&format=rss",
         urlencoding::encode(&query.query)
     );
+    if let Some(language) = language
+        .map(str::trim)
+        .filter(|language| !language.is_empty())
+    {
+        url.push_str("&setlang=");
+        url.push_str(&urlencoding::encode(language));
+    }
     if query.page > 1 {
         let first = (query.page - 1) * 10 + 1;
         url.push_str(&format!("&first={first}"));

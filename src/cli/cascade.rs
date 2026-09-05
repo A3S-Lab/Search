@@ -311,15 +311,7 @@ fn deadline_exhausted(tier: &str) -> SearchResults {
 }
 
 fn search_error_failure(tier: &str, error: &SearchError) -> EngineFailure {
-    let mut failure = EngineFailure::new(tier, error.kind(), error.to_string())
-        .with_transient(error.is_transient());
-    if let SearchError::Provider(provider) = error {
-        failure = failure.with_provider(provider.provider());
-    }
-    if let Some(seconds) = error.retry_after_seconds() {
-        failure = failure.with_retry_after(seconds);
-    }
-    failure
+    EngineFailure::from_search_error(tier, error)
 }
 
 #[cfg(test)]

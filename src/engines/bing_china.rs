@@ -4,7 +4,7 @@
 //! or a CAPTCHA. The RSS endpoint returns the same public search results as stable,
 //! server-rendered XML and therefore does not require a headless browser.
 
-use super::bing::{build_bing_rss_url, parse_bing_response, validate_bing_response};
+use super::bing::{build_bing_rss_url_for_china, parse_bing_response, validate_bing_response};
 use crate::html_engine::{HtmlEngine, HtmlParser};
 use crate::{EngineCategory, EngineConfig, Result, SearchQuery, SearchResult};
 
@@ -36,7 +36,7 @@ impl HtmlParser for BingChinaParser {
     }
 
     fn build_url(&self, query: &SearchQuery) -> String {
-        build_bing_rss_url(query)
+        build_bing_rss_url_for_china(query)
     }
 
     fn validate(&self, response: &str) -> Result<()> {
@@ -106,8 +106,9 @@ mod tests {
     fn test_build_url_uses_rss_endpoint() {
         let parser = BingChinaParser;
         let url = parser.build_url(&SearchQuery::new("巴威 2020 台风"));
-        assert!(url.starts_with("https://www.bing.com/search?"));
+        assert!(url.starts_with("https://cn.bing.com/search?"));
         assert!(url.contains("format=rss"));
+        assert!(url.contains("setlang=zh-CN"));
         assert!(url.contains("%E5%B7%B4%E5%A8%81"));
     }
 

@@ -130,6 +130,27 @@ impl EngineOutput {
         self.reports.push(report);
         self
     }
+
+    /// Returns whether this output contains no caller-visible search data.
+    ///
+    /// Reports are intentionally excluded: a provider may complete a request
+    /// successfully and return useful billing/timing metadata even when its
+    /// result set is empty.  Keeping this invariant on the output type avoids
+    /// each orchestration layer implementing a subtly different emptiness
+    /// check.
+    pub fn is_empty(&self) -> bool {
+        self.results.is_empty()
+            && self.suggestions.is_empty()
+            && self.answers.is_empty()
+            && self.images.is_empty()
+    }
+
+    /// Returns the first native provider identifier carried by this output.
+    pub(crate) fn provider(&self) -> Option<String> {
+        self.reports
+            .iter()
+            .find_map(|report| report.provider.clone())
+    }
 }
 
 impl From<Vec<SearchResult>> for EngineOutput {
@@ -301,5 +322,14 @@ mod tests {
         assert_eq!(output.suggestions, vec!["rust async"]);
         assert_eq!(output.images.len(), 1);
         assert_eq!(output.reports.len(), 1);
+    }
+
+    #[test]
+    fn engine_output_emptiness_ignores_diagnostics_only_reports() {
+        let output = EngineOutput::default().with_report(SearchReport::new("provider"));
+        assert!(output.is_empty());
+
+        let output = EngineOutput::default().with_answer("answer");
+        assert!(!output.is_empty());
     }
 }
