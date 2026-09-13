@@ -117,7 +117,7 @@ impl SearchProvider for BochaProvider {
             "https://open.bochaai.com/",
             ProviderCapabilities::new()
                 .with_time_range(true)
-                .with_full_text(true),
+                .with_full_text(self.config.summary),
         )
     }
 
@@ -141,7 +141,7 @@ impl SearchProvider for BochaProvider {
             }));
         }
 
-        let payload: Value = reply.decode()?;
+        let mut payload: Value = reply.decode()?;
         if declared_success_error(&payload) {
             return Err(
                 reply.reject("Bocha returned an application error", |code, _, _| {
@@ -149,12 +149,22 @@ impl SearchProvider for BochaProvider {
                 }),
             );
         }
-        let document = payload
+        let request_id = string_field(&payload, &["log_id", "request_id", "requestId"])
+            .map(|value| sanitize_provider_text_with_secrets(&value, 128, &secrets))
+            .filter(|value| !value.is_empty());
+        let nested_pages = payload
             .get("data")
-            .filter(|value| value.get("webPages").is_some() || value.get("webpages").is_some())
-            .unwrap_or(&payload);
+            .is_some_and(|data| data.get("webPages").is_some() || data.get("webpages").is_some());
+        let document = if nested_pages {
+            payload
+                .get_mut("data")
+                .map(Value::take)
+                .unwrap_or(Value::Null)
+        } else {
+            payload
+        };
         let parsed: BochaDocument =
-            serde_json::from_value(document.clone()).map_err(|_| reply.contract_error())?;
+            serde_json::from_value(document).map_err(|_| reply.contract_error())?;
         let pages = parsed
             .web_pages
             .or(parsed.web_pages_lower)
@@ -168,9 +178,6 @@ impl SearchProvider for BochaProvider {
             .take(usize::from(self.config.max_results))
             .filter_map(|hit| adapt_hit(hit, &secrets))
             .collect();
-        let request_id = string_field(&payload, &["log_id", "request_id", "requestId"])
-            .map(|value| sanitize_provider_text_with_secrets(&value, 128, &secrets))
-            .filter(|value| !value.is_empty());
         Ok(reply.seal(ProviderResponse {
             results,
             report: ProviderReport {

@@ -195,7 +195,7 @@ impl SearchProvider for TinyFishProvider {
             ProviderCapabilities::new()
                 .with_paging(true)
                 .with_time_range(true)
-                .with_images(true),
+                .with_images(self.config.include_thumbnail),
         )
     }
 

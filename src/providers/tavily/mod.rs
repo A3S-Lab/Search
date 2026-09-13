@@ -70,10 +70,10 @@ impl SearchProvider for TavilyProvider {
                 .with_anonymous(true)
                 .with_safe_search(true)
                 .with_time_range(true)
-                .with_answers(true)
-                .with_images(true)
-                .with_full_text(true)
-                .with_usage(true),
+                .with_answers(self.config.include_answer != TavilyAnswer::None)
+                .with_images(self.config.include_images)
+                .with_full_text(self.config.include_raw_content != TavilyRawContent::None)
+                .with_usage(self.config.include_usage),
         )
     }
 

@@ -151,14 +151,15 @@ a3s-search "query" --config search.acl --format json
 ```
 
 Set `api_key = null` to force anonymous/keyless mode. Keep AnySearch `sub_domain` prefixed by its matching `domain`. Use `chunks_per_source` only with Tavily `search_depth = "advanced"`.
-Tavily follows the official `include_usage = false` default, so enable it
-explicitly when credit evidence is required.
+Tavily follows the official `include_usage = false` default, and answers and
+images are also off until requested. Enable usage explicitly when credit
+evidence is required.
 When `auto_parameters = true`, omit `search_depth` and `topic` if Tavily should
 choose them; explicit values intentionally override Tavily's automatic choices.
 Treat a missing report value as unknown when Tavily does not disclose an
 automatically selected depth or topic.
 
-Select a billed provider only in an explicit `--engines` list. `include_markdown = true` on Firecrawl scrapes every result and bills extra. Tencent omits the premium result-count field unless `max_results` is set.
+Select a billed provider only in an explicit `--engines` list. Advertised images and full text follow the request flag that produces them: TinyFish thumbnails stay off unless `include_thumbnail = true`, Aliyun page text stays off unless `include_main_text = true`, and Bocha summaries stay on unless `summary = false`. `include_markdown = true` on Firecrawl scrapes every result and bills extra. Tencent omits the premium result-count field unless `max_results` is set.
 
 ```acl
 provider "bocha" {

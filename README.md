@@ -265,9 +265,9 @@ valid query into an intermittent empty document.
 | --- | --- | --- |
 | [AnySearch](https://www.anysearch.com/) | Anonymous | Full text, total count, timing, request ID |
 | [Tavily](https://www.tavily.com/) | Keyless header | Answers, relevance, raw content, images, favicon, usage, metadata |
-| [TinyFish](https://www.tinyfish.ai/) | None | Paging, freshness, thumbnails, news and paper categories |
-| [Bocha](https://open.bochaai.com/) | None | Freshness, page summaries, site icons |
-| [Alibaba Cloud IQS](https://www.aliyun.com/product/iqs) | None | Rerank score, page text, scene answers, usage |
+| [TinyFish](https://www.tinyfish.ai/) | None | Paging, freshness, opt-in thumbnails, news and paper categories |
+| [Bocha](https://open.bochaai.com/) | None | Freshness, page summaries (on by default), site icons |
+| [Alibaba Cloud IQS](https://www.aliyun.com/product/iqs) | None | Rerank score, opt-in page text, scene answers, usage |
 | [Tencent Cloud Search](https://cloud.tencent.com/product/wsa) | None | Relevance, freshness, dynamic summaries, images |
 | [Firecrawl](https://www.firecrawl.dev/) | None | Freshness, categories, news and images, usage |
 
@@ -299,8 +299,10 @@ filters, date bounds, country boost, automatic parameters, exact matching,
 images, image descriptions, favicons, usage, and safe search. Cross-field
 requirements are validated before transport. It requests plain source text by
 default so retrieval consumers can inspect provider-native evidence without a
-second page fetch. Set `include_raw_content = "none"` in ACL or use
-`TavilyConfig::with_raw_content(TavilyRawContent::None)` to opt out.
+second page fetch. Answers, images, and usage stay off until requested. Set
+`include_raw_content = "none"` in ACL or use
+`TavilyConfig::with_raw_content(TavilyRawContent::None)` to opt out of source
+text.
 
 Every native API implements the same `SearchProvider` protocol. `ProviderEngine`
 is the only adapter into cascade, ranking, and the CLI. Required-credential
@@ -312,10 +314,13 @@ Result caps use `max_results` in Rust and ACL. The vendor wire field (`count`,
 `limit`, `Cnt`, `numResults`) stays inside that module. Optional-auth and MCP
 codecs stay off this shell.
 
-TinyFish calls `GET https://api.search.tinyfish.ai` with `X-API-Key`. Bocha
-calls `POST https://api.bochaai.com/v1/web-search`. Alibaba Cloud IQS calls
+TinyFish calls `GET https://api.search.tinyfish.ai` with `X-API-Key`.
+Thumbnails are omitted unless `include_thumbnail = true`. Bocha
+calls `POST https://api.bochaai.com/v1/web-search` and requests page summaries
+unless `summary = false`. Alibaba Cloud IQS calls
 `POST https://cloud-iqs.aliyuncs.com/search/unified` with engine type
-`LiteAdvanced` by default. Tencent Cloud Search calls
+`LiteAdvanced` by default. Page text is omitted unless
+`include_main_text = true`. Tencent Cloud Search calls
 `POST https://api.wsa.cloud.tencent.com/SearchPro` and omits `Cnt` unless a
 premium `max_results` is configured. Firecrawl calls
 `POST https://api.firecrawl.dev/v2/search` and returns search metadata by

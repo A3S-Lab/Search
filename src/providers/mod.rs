@@ -9,7 +9,9 @@
 //! classification and the success body are sealed against that credential
 //! before the reply is dropped, so a result cannot leave with the key. A
 //! vendor module supplies only its options, request mapping, response mapping,
-//! and error-code classification. Result caps use `max_results` in Rust and ACL;
+//! and error-code classification. An output capability that requires a request
+//! flag follows that flag, so a configured instance does not advertise text or
+//! images it will not ask for. Result caps use `max_results` in Rust and ACL;
 //! the vendor wire field stays inside that module. Optional-auth and MCP
 //! codecs stay off this shell.
 

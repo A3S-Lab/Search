@@ -188,8 +188,14 @@ impl SearchProvider for TencentProvider {
             );
         }
 
-        let envelope: Value = reply.decode()?;
-        let payload = envelope.get("Response").unwrap_or(&envelope);
+        let mut envelope: Value = reply.decode()?;
+        let payload = match envelope.get("Response") {
+            Some(value) if value.is_object() => envelope
+                .get_mut("Response")
+                .map(Value::take)
+                .unwrap_or(envelope),
+            _ => envelope,
+        };
         if payload.get("Error").is_some() {
             return Err(
                 reply.reject("Tencent Cloud Search request failed", |code, _, _| {
@@ -199,7 +205,7 @@ impl SearchProvider for TencentProvider {
             );
         }
         let parsed: TencentResponse =
-            serde_json::from_value(payload.clone()).map_err(|_| reply.contract_error())?;
+            serde_json::from_value(payload).map_err(|_| reply.contract_error())?;
         let limit = self
             .config
             .max_results

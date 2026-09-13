@@ -215,9 +215,9 @@ HTML 引擎在解析前校验响应结构。CAPTCHA、验证、同意与反机�
 | --- | --- | --- |
 | [AnySearch](https://www.anysearch.com/) | 匿名 | 全文、总数、计时、请求 ID |
 | [Tavily](https://www.tavily.com/) | 无密钥头 | 答案、相关性、原始内容、图片、favicon、用量、元数据 |
-| [TinyFish](https://www.tinyfish.ai/) | 无 | 分页、时间范围、缩略图、新闻与论文分类 |
-| [Bocha](https://open.bochaai.com/) | 无 | 时间范围、网页摘要、站点图标 |
-| [Alibaba Cloud IQS](https://www.aliyun.com/product/iqs) | 无 | 重排分数、正文、场景答案、用量 |
+| [TinyFish](https://www.tinyfish.ai/) | 无 | 分页、时间范围、可选缩略图、新闻与论文分类 |
+| [Bocha](https://open.bochaai.com/) | 无 | 时间范围、默认开启的网页摘要、站点图标 |
+| [Alibaba Cloud IQS](https://www.aliyun.com/product/iqs) | 无 | 重排分数、可选正文、场景答案、用量 |
 | [Tencent Cloud Search](https://cloud.tencent.com/product/wsa) | 无 | 相关性、时间范围、动态摘要、图片 |
 | [Firecrawl](https://www.firecrawl.dev/) | 无 | 时间范围、分类、新闻与图片、用量 |
 
@@ -246,11 +246,11 @@ AnySearch 适配器通过 MCP `tools/call` 向 `POST https://api.anysearch.com/m
 [AnySearch Skill v2.1.0](https://github.com/anysearch-ai/anysearch-skill/tree/v2.1.0)。
 `batch_search` 与 `extract` 等工作流操作仍留在官方 AnySearch Skill 中。
 
-Tavily 适配器支持深度、主题、直接答案、原始内容、域名过滤、日期边界、国家提升、自动参数、精确匹配、图片、图片描述、favicon、用量与安全搜索。跨字段要求在传输前校验。默认请求纯源文本，以便检索消费者无需二次抓取页面即可检查提供方原生证据。在 ACL 中设置 `include_raw_content = "none"`，或使用 `TavilyConfig::with_raw_content(TavilyRawContent::None)` 以退出。
+Tavily 适配器支持深度、主题、直接答案、原始内容、域名过滤、日期边界、国家提升、自动参数、精确匹配、图片、图片描述、favicon、用量与安全搜索。跨字段要求在传输前校验。默认请求纯源文本，以便检索消费者无需二次抓取页面即可检查提供方原生证据。答案、图片与用量在显式请求前保持关闭。在 ACL 中设置 `include_raw_content = "none"`，或使用 `TavilyConfig::with_raw_content(TavilyRawContent::None)` 以退出源文本。
 
 每个原生 API 都实现同一 `SearchProvider` 协议。`ProviderEngine` 是进入级联、排序与 CLI 的唯一适配器。需要凭证的 JSON API 共享同一传输外壳。外壳执行调用、分类传输失败，并在响应离开前用该次凭证封口成功体。厂商模块只提供选项、请求映射、响应映射与错误码分类。结果上限在 Rust 与 ACL 中统一为 `max_results`。厂商线上字段（`count`、`limit`、`Cnt`、`numResults`）留在对应模块内。可选认证与 MCP 编解码不进入这个外壳。
 
-TinyFish 调用 `GET https://api.search.tinyfish.ai`，使用 `X-API-Key`。Bocha 调用 `POST https://api.bochaai.com/v1/web-search`。阿里云 IQS 调用 `POST https://cloud-iqs.aliyuncs.com/search/unified`，默认引擎为 `LiteAdvanced`。腾讯云搜索调用 `POST https://api.wsa.cloud.tencent.com/SearchPro`，未配置付费 `max_results` 时省略 `Cnt`。Firecrawl 调用 `POST https://api.firecrawl.dev/v2/search`，默认只返回搜索元数据。仅在需要页面正文时设置 `include_markdown = true`；该选项会抓取每条结果并额外计费。
+TinyFish 调用 `GET https://api.search.tinyfish.ai`，使用 `X-API-Key`。仅在 `include_thumbnail = true` 时请求缩略图。Bocha 调用 `POST https://api.bochaai.com/v1/web-search`，除非 `summary = false`，否则请求网页摘要。阿里云 IQS 调用 `POST https://cloud-iqs.aliyuncs.com/search/unified`，默认引擎为 `LiteAdvanced`。仅在 `include_main_text = true` 时请求正文。腾讯云搜索调用 `POST https://api.wsa.cloud.tencent.com/SearchPro`，未配置付费 `max_results` 时省略 `Cnt`。Firecrawl 调用 `POST https://api.firecrawl.dev/v2/search`，默认只返回搜索元数据。仅在需要页面正文时设置 `include_markdown = true`；该选项会抓取每条结果并额外计费。
 
 </details>
 

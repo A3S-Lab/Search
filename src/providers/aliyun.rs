@@ -165,7 +165,7 @@ impl SearchProvider for AliyunProvider {
                 .with_time_range(true)
                 .with_answers(true)
                 .with_images(true)
-                .with_full_text(true)
+                .with_full_text(self.config.include_main_text)
                 .with_usage(true),
         )
     }

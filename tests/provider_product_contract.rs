@@ -11,8 +11,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use a3s_search::providers::{
     AliyunConfig, AliyunProvider, BochaConfig, BochaProvider, CredentialSource, FirecrawlCategory,
     FirecrawlConfig, FirecrawlProvider, FirecrawlSource, ProviderEngine, ProviderRequest,
-    SearchProvider, TencentConfig, TencentProvider, TinyFishConfig, TinyFishDomainType,
-    TinyFishProvider,
+    SearchProvider, TavilyAnswer, TavilyConfig, TavilyProvider, TavilyRawContent, TencentConfig,
+    TencentProvider, TinyFishConfig, TinyFishDomainType, TinyFishProvider,
 };
 use a3s_search::{Engine, SearchConfig, SearchQuery, TimeRange};
 use serde_json::{json, Value};
@@ -270,6 +270,78 @@ async fn defaults_omit_billed_extras() {
     .await
     .unwrap();
     assert_eq!(json_body(&quiet.requests()[0].body)["summary"], false);
+}
+
+#[test]
+fn output_capabilities_follow_the_request_flag_that_produces_them() {
+    let tinyfish = TinyFishProvider::new(TinyFishConfig::new().unwrap()).unwrap();
+    assert!(
+        !tinyfish.descriptor().capabilities.images,
+        "TinyFish must not advertise images when thumbnails are not requested"
+    );
+    let tinyfish =
+        TinyFishProvider::new(TinyFishConfig::new().unwrap().with_include_thumbnail(true)).unwrap();
+    assert!(tinyfish.descriptor().capabilities.images);
+
+    let aliyun = AliyunProvider::new(AliyunConfig::new().unwrap()).unwrap();
+    assert!(
+        !aliyun.descriptor().capabilities.full_text,
+        "Aliyun must not advertise full text when mainText is false"
+    );
+    let aliyun =
+        AliyunProvider::new(AliyunConfig::new().unwrap().with_include_main_text(true)).unwrap();
+    assert!(aliyun.descriptor().capabilities.full_text);
+
+    let bocha = BochaProvider::new(BochaConfig::new().unwrap()).unwrap();
+    assert!(
+        bocha.descriptor().capabilities.full_text,
+        "Bocha summaries are on by default and are mapped to full text"
+    );
+    let bocha = BochaProvider::new(BochaConfig::new().unwrap().with_summary(false)).unwrap();
+    assert!(
+        !bocha.descriptor().capabilities.full_text,
+        "Bocha must not advertise full text when summaries are disabled"
+    );
+}
+
+#[test]
+fn optional_auth_output_capabilities_follow_the_request_flag() {
+    let tavily = TavilyProvider::new(TavilyConfig::new().unwrap()).unwrap();
+    let capabilities = tavily.descriptor().capabilities;
+    assert!(
+        capabilities.full_text,
+        "Tavily requests plain source text by default"
+    );
+    assert!(
+        !capabilities.answers,
+        "Tavily must not advertise answers when include_answer is off"
+    );
+    assert!(
+        !capabilities.images,
+        "Tavily must not advertise images when include_images is off"
+    );
+    assert!(
+        !capabilities.usage,
+        "Tavily must not advertise usage when include_usage is off"
+    );
+
+    let opted = TavilyProvider::new(
+        TavilyConfig::new()
+            .unwrap()
+            .with_answer(TavilyAnswer::Basic)
+            .with_raw_content(TavilyRawContent::None)
+            .with_include_images(true)
+            .with_include_usage(true),
+    )
+    .unwrap();
+    let capabilities = opted.descriptor().capabilities;
+    assert!(capabilities.answers);
+    assert!(capabilities.images);
+    assert!(capabilities.usage);
+    assert!(
+        !capabilities.full_text,
+        "Tavily must not advertise full text after raw content is disabled"
+    );
 }
 
 #[test]
