@@ -206,7 +206,9 @@ A3S Search 不维护私有网页索引。它嵌入宿主选择的源：
 
 HTML 引擎在解析前校验响应结构。CAPTCHA、验证、同意与反机器人页面成为类型化的瞬时 `challenge` 失败。无关的成功页面成为 `invalid_response`，而非虚假空结果。
 
-`bing_cn` 使用 Bing China 区域 RSS 端点（`cn.bing.com`）并显式使用 `zh-CN` 区域设置，以免边缘选择的国际响应将有效查询变成间歇性空文档。
+`bing_cn` 在 `/search` 上请求中国 RSS 文档，并固定 `setlang=zh-CN` 与
+`mkt=zh-CN`。不再使用 `cn.bing.com`：该主机对部分客户端会把 `/search`
+重定向到首页，随后返回 HTML 而不是结果。
 
 <details>
 <summary><strong>原生提供方能力与凭证</strong></summary>

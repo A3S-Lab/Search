@@ -118,9 +118,16 @@ pub(crate) fn build_bing_rss_url(query: &SearchQuery) -> String {
     build_bing_rss_url_for_host(query, "www.bing.com", None)
 }
 
-/// Builds the RSS URL for Bing China's regional endpoint.
+/// Builds the RSS URL for the Bing China result set.
+///
+/// `cn.bing.com/search` redirects some clients to `www.bing.com/` and drops
+/// the search path. That homepage sometimes returns HTML instead of bouncing
+/// back to `/search`, so the request stays on the search document and pins
+/// `mkt=zh-CN`. Bing adds that market itself on the regional redirect.
 pub(crate) fn build_bing_rss_url_for_china(query: &SearchQuery) -> String {
-    build_bing_rss_url_for_host(query, "cn.bing.com", Some("zh-CN"))
+    let mut url = build_bing_rss_url_for_host(query, "www.bing.com", Some("zh-CN"));
+    url.push_str("&mkt=zh-CN");
+    url
 }
 
 /// Builds a Bing RSS URL for a specific regional host and optional UI locale.

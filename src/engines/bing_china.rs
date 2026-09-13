@@ -1,8 +1,8 @@
 //! Bing China search engine implementation.
 //!
 //! Bing's normal HTML result page may redirect automated clients to the home page
-//! or a CAPTCHA. The RSS endpoint returns the same public search results as stable,
-//! server-rendered XML and therefore does not require a headless browser.
+//! or a CAPTCHA. The RSS request stays on `/search` with `mkt=zh-CN` so a regional
+//! host redirect cannot replace the result document with the homepage.
 
 use super::bing::{build_bing_rss_url_for_china, parse_bing_response, validate_bing_response};
 use crate::html_engine::{HtmlEngine, HtmlParser};
@@ -103,13 +103,17 @@ mod tests {
     }
 
     #[test]
-    fn test_build_url_uses_rss_endpoint() {
+    fn test_build_url_requests_china_rss_on_the_search_path() {
         let parser = BingChinaParser;
         let url = parser.build_url(&SearchQuery::new("巴威 2020 台风"));
-        assert!(url.starts_with("https://cn.bing.com/search?"));
-        assert!(url.contains("format=rss"));
-        assert!(url.contains("setlang=zh-CN"));
-        assert!(url.contains("%E5%B7%B4%E5%A8%81"));
+        let parsed = url::Url::parse(&url).expect("China RSS URL");
+        assert_eq!(parsed.host_str(), Some("www.bing.com"));
+        assert_eq!(parsed.path(), "/search");
+        let query: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
+        assert_eq!(query.get("format").map(String::as_str), Some("rss"));
+        assert_eq!(query.get("setlang").map(String::as_str), Some("zh-CN"));
+        assert_eq!(query.get("mkt").map(String::as_str), Some("zh-CN"));
+        assert_eq!(query.get("q").map(String::as_str), Some("巴威 2020 台风"));
     }
 
     #[test]

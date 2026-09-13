@@ -254,9 +254,9 @@ verification, consent, and anti-bot pages become typed transient `challenge`
 failures. An unrelated successful page becomes `invalid_response`, not a false
 empty result.
 
-`bing_cn` uses Bing China's regional RSS endpoint (`cn.bing.com`) with an
-explicit `zh-CN` locale so edge-selected international responses do not turn a
-valid query into an intermittent empty document.
+`bing_cn` requests the China RSS document on `/search` with `setlang=zh-CN`
+and `mkt=zh-CN`. The `cn.bing.com` host is not used: it redirects some clients
+off `/search` onto the homepage, which then returns HTML instead of results.
 
 <details>
 <summary><strong>Native provider capabilities and credentials</strong></summary>
