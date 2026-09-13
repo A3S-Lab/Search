@@ -50,7 +50,7 @@ pub(crate) fn list_engines(config_path: Option<&Path>) -> Result<()> {
             "disabled by config".to_string()
         };
         println!(
-            "    {:<10} - {} ({})",
+            "    {:<12} - {} ({})",
             provider.id(),
             descriptor.name,
             status
@@ -58,7 +58,9 @@ pub(crate) fn list_engines(config_path: Option<&Path>) -> Result<()> {
     }
 
     println!();
-    println!("Usage: a3s-search \"query\" -e ddg,wiki,anysearch,tavily");
+    println!(
+        "Usage: a3s-search \"query\" -e ddg,wiki,anysearch,tavily,tinyfish,bocha,aliyun,tencent,firecrawl"
+    );
     Ok(())
 }
 

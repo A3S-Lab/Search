@@ -243,6 +243,11 @@ by the host:
 | HTTP/RSS | `bing_cn` | Bing China | RSS | Explicit |
 | Native API | `anysearch` | AnySearch | MCP / JSON-RPC 2.0 | Primary tier |
 | Native API | `tavily` | Tavily | REST | Primary tier |
+| Native API | `tinyfish` | TinyFish Search | REST | Explicit |
+| Native API | `bocha` | Bocha Web Search | REST | Explicit |
+| Native API | `aliyun` | Alibaba Cloud IQS | REST | Explicit |
+| Native API | `tencent` | Tencent Cloud Search | REST | Explicit |
+| Native API | `firecrawl` | Firecrawl Search | REST | Explicit |
 
 HTML engines validate the response structure before parsing. CAPTCHA,
 verification, consent, and anti-bot pages become typed transient `challenge`
@@ -260,13 +265,24 @@ valid query into an intermittent empty document.
 | --- | --- | --- |
 | [AnySearch](https://www.anysearch.com/) | Anonymous | Full text, total count, timing, request ID |
 | [Tavily](https://www.tavily.com/) | Keyless header | Answers, relevance, raw content, images, favicon, usage, metadata |
+| [TinyFish](https://www.tinyfish.ai/) | None | Paging, freshness, thumbnails, news and paper categories |
+| [Bocha](https://open.bochaai.com/) | None | Freshness, page summaries, site icons |
+| [Alibaba Cloud IQS](https://www.aliyun.com/product/iqs) | None | Rerank score, page text, scene answers, usage |
+| [Tencent Cloud Search](https://cloud.tencent.com/product/wsa) | None | Relevance, freshness, dynamic summaries, images |
+| [Firecrawl](https://www.firecrawl.dev/) | None | Freshness, categories, news and images, usage |
 
-Both providers accept optional bearer authentication:
+AnySearch and Tavily accept optional bearer authentication. TinyFish, Bocha,
+Alibaba Cloud IQS, Tencent Cloud Search, and Firecrawl require an API key. Those
+five are omitted from the default CLI plan so a missing key does not fail every
+search and an ambient key does not start billing. Select them explicitly:
 
 ```bash
-export ANYSEARCH_API_KEY="..."
-export TAVILY_API_KEY="..."
-export TAVILY_PROJECT="..." # authenticated Tavily requests only
+export TINYFISH_API_KEY="..."
+export BOCHA_API_KEY="..."
+export ALIYUN_IQS_API_KEY="..."
+export TENCENTCLOUD_WSA_APIKEY="..."
+export FIRECRAWL_API_KEY="..."
+a3s-search "query" --engines tinyfish,bocha,aliyun,tencent,firecrawl
 ```
 
 Prefer `env("VARIABLE")` in ACL. Credentials are never placed in endpoint URLs
@@ -285,6 +301,26 @@ requirements are validated before transport. It requests plain source text by
 default so retrieval consumers can inspect provider-native evidence without a
 second page fetch. Set `include_raw_content = "none"` in ACL or use
 `TavilyConfig::with_raw_content(TavilyRawContent::None)` to opt out.
+
+Every native API implements the same `SearchProvider` protocol. `ProviderEngine`
+is the only adapter into cascade, ranking, and the CLI. Required-credential
+JSON APIs share one transport shell. That shell executes the call, classifies
+transport failures, and seals the success body against the credential before
+the reply is dropped. A vendor module supplies only its
+options, request mapping, response mapping, and error-code classification.
+Result caps use `max_results` in Rust and ACL. The vendor wire field (`count`,
+`limit`, `Cnt`, `numResults`) stays inside that module. Optional-auth and MCP
+codecs stay off this shell.
+
+TinyFish calls `GET https://api.search.tinyfish.ai` with `X-API-Key`. Bocha
+calls `POST https://api.bochaai.com/v1/web-search`. Alibaba Cloud IQS calls
+`POST https://cloud-iqs.aliyuncs.com/search/unified` with engine type
+`LiteAdvanced` by default. Tencent Cloud Search calls
+`POST https://api.wsa.cloud.tencent.com/SearchPro` and omits `Cnt` unless a
+premium `max_results` is configured. Firecrawl calls
+`POST https://api.firecrawl.dev/v2/search` and returns search metadata by
+default. Set `include_markdown = true` only when page text is required; that
+option scrapes each result and bills extra credits.
 
 </details>
 
@@ -450,6 +486,33 @@ provider "tavily" {
   include_images      = true
   include_favicon     = true
 }
+
+provider "tinyfish" {
+  api_key     = env("TINYFISH_API_KEY")
+  domain_type = "web"
+}
+
+provider "bocha" {
+  api_key = env("BOCHA_API_KEY")
+  max_results = 8
+  summary = true
+}
+
+provider "aliyun" {
+  api_key      = env("ALIYUN_IQS_API_KEY")
+  engine_type  = "lite-advanced"
+  max_results  = 8
+}
+
+provider "tencent" {
+  api_key = env("TENCENTCLOUD_WSA_APIKEY")
+}
+
+provider "firecrawl" {
+  api_key = env("FIRECRAWL_API_KEY")
+  max_results = 8
+  country = "US"
+}
 ```
 
 ```bash
@@ -465,6 +528,9 @@ See the complete typed surfaces for
 [`SearchConfig`](https://docs.rs/a3s-search/latest/a3s_search/struct.SearchConfig.html),
 [`AnySearchConfig`](https://docs.rs/a3s-search/latest/a3s_search/providers/struct.AnySearchConfig.html),
 and [`TavilyConfig`](https://docs.rs/a3s-search/latest/a3s_search/providers/struct.TavilyConfig.html).
+TinyFish, Bocha, Alibaba Cloud IQS, Tencent Cloud Search, and Firecrawl use
+`TinyFishConfig`, `BochaConfig`, `AliyunConfig`, `TencentConfig`, and
+`FirecrawlConfig`.
 
 ## Reliability without global policy
 

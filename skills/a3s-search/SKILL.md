@@ -1,6 +1,6 @@
 ---
 name: a3s-search
-description: Retrieve structured web results from multiple sources with the a3s-search CLI and its native AnySearch and Tavily providers. Use for source discovery, current web retrieval, domain-filtered search, or collecting URLs, snippets, full text, images, provider relevance, request reports, provenance, and partial-failure diagnostics. The calling agent remains responsible for query planning, semantic evaluation, corroboration, and conclusions.
+description: Retrieve structured web results from multiple sources with the a3s-search CLI. The default cascade uses AnySearch, Tavily, and conventional engines. Billed providers (tinyfish, bocha, aliyun, tencent, firecrawl) stay opt-in. Use for source discovery, current web retrieval, domain-filtered search, or collecting URLs, snippets, full text, images, provider relevance, request reports, provenance, and partial-failure diagnostics. The calling agent remains responsible for query planning, semantic evaluation, corroboration, and conclusions.
 ---
 
 # A3S Search
@@ -33,7 +33,12 @@ Use the CLI first. Request JSON whenever evidence must be inspected, compared, o
      Skill's `get_sub_domains` operation before inventing a vertical
      `sub_domain`; its required parameters must be copied into ACL.
    - Use `tavily` for ranked results, direct answers, raw content, images, and usage metadata.
-   - Use both for independent corroboration.
+   - Use `tinyfish`, `bocha`, `aliyun`, `tencent`, or `firecrawl` only when that provider's
+     API key is configured. They are billed search APIs and are not part of
+     the default cascade. They implement the same `SearchProvider` protocol.
+     In ACL, the result cap is always `max_results`; do not set vendor wire
+     names such as `count`, `limit`, or `cnt`.
+   - Use both `anysearch` and `tavily` for independent corroboration.
    - Combine browser, conventional, and API sources when independent retrieval
      paths materially improve coverage.
 
@@ -78,7 +83,7 @@ Use the CLI first. Request JSON whenever evidence must be inspected, compared, o
 
 ## Authenticate safely
 
-Use either provider without credentials when its documented anonymous/keyless service is sufficient:
+Use AnySearch or Tavily without credentials when its documented anonymous/keyless service is sufficient. The billed providers require their own API keys and never join that keyless path:
 
 ```bash
 unset ANYSEARCH_API_KEY TAVILY_API_KEY TAVILY_PROJECT
@@ -91,6 +96,11 @@ Set environment variables for authenticated requests:
 export ANYSEARCH_API_KEY="..."
 export TAVILY_API_KEY="..."
 export TAVILY_PROJECT="..."
+export TINYFISH_API_KEY="..."
+export BOCHA_API_KEY="..."
+export ALIYUN_IQS_API_KEY="..."
+export TENCENTCLOUD_WSA_APIKEY="..."
+export FIRECRAWL_API_KEY="..."
 ```
 
 Never print, commit, interpolate into shell history, or copy secret values into research output. Prefer `env("VARIABLE")` in ACL. `TAVILY_PROJECT` is sent only with authenticated Tavily requests.
@@ -147,6 +157,21 @@ When `auto_parameters = true`, omit `search_depth` and `topic` if Tavily should
 choose them; explicit values intentionally override Tavily's automatic choices.
 Treat a missing report value as unknown when Tavily does not disclose an
 automatically selected depth or topic.
+
+Select a billed provider only in an explicit `--engines` list. `include_markdown = true` on Firecrawl scrapes every result and bills extra. Tencent omits the premium result-count field unless `max_results` is set.
+
+```acl
+provider "bocha" {
+  api_key = env("BOCHA_API_KEY")
+  max_results = 8
+}
+
+provider "firecrawl" {
+  api_key = env("FIRECRAWL_API_KEY")
+  max_results = 8
+  country = "US"
+}
+```
 
 ## Handle partial failures
 

@@ -116,12 +116,28 @@ impl ProviderHttpClient {
 
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        self.send(
+            self.client
+                .post(endpoint.clone())
+                .headers(headers)
+                .body(body),
+        )
+        .await
+    }
 
-        let response = self
-            .client
-            .post(endpoint.clone())
-            .headers(headers)
-            .body(body)
+    pub(crate) async fn get(
+        &self,
+        endpoint: &Url,
+        mut headers: HeaderMap,
+    ) -> Result<ProviderHttpResponse> {
+        validate_provider_endpoint(self.provider, endpoint)?;
+        headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
+        self.send(self.client.get(endpoint.clone()).headers(headers))
+            .await
+    }
+
+    async fn send(&self, request: reqwest::RequestBuilder) -> Result<ProviderHttpResponse> {
+        let response = request
             .send()
             .await
             .map_err(|error| transport_error(self.provider, &error))?;

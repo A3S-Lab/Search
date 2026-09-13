@@ -466,9 +466,113 @@ pub(crate) fn sanitize_provider_text_with_secrets(
 ) -> String {
     let mut redacted = value.to_string();
     for secret in secrets.iter().copied().filter(|secret| !secret.is_empty()) {
-        redacted = redacted.replace(secret, "[REDACTED]");
+        redact_credential(&mut redacted, secret);
     }
     sanitize_provider_text(&redacted, max_chars)
+}
+
+/// Removes a credential from caller-visible text.
+///
+/// Exact text is not enough. A URL or message can carry the same credential
+/// after query encoding, and percent-encoding hex digits are case-insensitive.
+pub(crate) fn redact_credential(value: &mut String, secret: &str) {
+    if secret.is_empty() || value.is_empty() {
+        return;
+    }
+    if let Some(redacted) = redact_url_components(value, secret) {
+        *value = redacted;
+    }
+    replace_secret(value, secret);
+    for spelling in transport_spellings(secret) {
+        replace_secret(value, &spelling);
+        replace_secret(value, &flip_percent_hex_case(&spelling));
+    }
+}
+
+fn replace_secret(value: &mut String, secret: &str) {
+    if !secret.is_empty() && secret != "[REDACTED]" && value.contains(secret) {
+        *value = value.replace(secret, "[REDACTED]");
+    }
+}
+
+fn transport_spellings(secret: &str) -> Vec<String> {
+    let percent = urlencoding::encode(secret).into_owned();
+    let form: String = url::form_urlencoded::byte_serialize(secret.as_bytes()).collect();
+    [percent, form]
+        .into_iter()
+        .filter(|spelling| spelling != secret)
+        .collect()
+}
+
+fn flip_percent_hex_case(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut flipped = String::with_capacity(value.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && bytes[index + 1].is_ascii_hexdigit()
+            && bytes[index + 2].is_ascii_hexdigit()
+        {
+            flipped.push('%');
+            flipped.push(flip_hex_digit(bytes[index + 1]) as char);
+            flipped.push(flip_hex_digit(bytes[index + 2]) as char);
+            index += 3;
+            continue;
+        }
+        flipped.push(bytes[index] as char);
+        index += 1;
+    }
+    flipped
+}
+
+fn flip_hex_digit(byte: u8) -> u8 {
+    match byte {
+        b'a'..=b'f' => byte - b'a' + b'A',
+        b'A'..=b'F' => byte - b'A' + b'a',
+        _ => byte,
+    }
+}
+
+fn redact_url_components(value: &str, secret: &str) -> Option<String> {
+    let mut url = url::Url::parse(value).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let mut changed = false;
+    let pairs: Vec<(String, String)> = url.query_pairs().into_owned().collect();
+    if pairs.iter().any(|(_, item)| item.contains(secret)) {
+        url.set_query(None);
+        {
+            let mut serializer = url.query_pairs_mut();
+            for (key, item) in &pairs {
+                let mut item = item.clone();
+                replace_secret(&mut item, secret);
+                serializer.append_pair(key, &item);
+            }
+        }
+        changed = true;
+    }
+    if let Some(fragment) = url.fragment() {
+        if fragment.contains(secret) {
+            let mut fragment = fragment.to_string();
+            replace_secret(&mut fragment, secret);
+            url.set_fragment(Some(&fragment));
+            changed = true;
+        }
+    }
+    let segments: Vec<String> = url.path_segments()?.map(str::to_string).collect();
+    if segments.iter().any(|segment| segment.contains(secret)) {
+        let mut builder = url.path_segments_mut().ok()?;
+        builder.clear();
+        for mut segment in segments {
+            replace_secret(&mut segment, secret);
+            builder.push(&segment);
+        }
+        drop(builder);
+        changed = true;
+    }
+    changed.then(|| url.to_string())
 }
 
 pub(crate) fn validated_web_url(value: &str) -> Option<String> {
@@ -487,6 +591,59 @@ pub(crate) fn validated_web_url(value: &str) -> Option<String> {
         return None;
     }
     Some(url.to_string())
+}
+
+pub(crate) fn bounded_relevance(score: f64) -> Option<f64> {
+    (score.is_finite() && (0.0..=1.0).contains(&score)).then_some(score)
+}
+
+pub(crate) fn strip_simple_markup(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut chars = value.chars().peekable();
+    while let Some(character) = chars.next() {
+        if character == '<' {
+            for next in chars.by_ref() {
+                if next == '>' {
+                    break;
+                }
+            }
+            continue;
+        }
+        output.push(character);
+    }
+    output
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&nbsp;", " ")
+}
+
+pub(crate) fn validated_domain(value: &str) -> Option<String> {
+    let value = value.trim().trim_end_matches('.').to_ascii_lowercase();
+    if value.is_empty()
+        || value.len() > 253
+        || value.contains(['/', '?', '@', ':', ' ', '\\'])
+        || value.starts_with('.')
+        || value.starts_with('-')
+        || !value.contains('.')
+    {
+        return None;
+    }
+    Some(value)
+}
+
+/// Validates each hostname. An empty input is valid; a single invalid host fails the list.
+pub(crate) fn validated_hostnames<I, S>(domains: I) -> Option<Vec<String>>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    domains
+        .into_iter()
+        .map(|domain| validated_domain(domain.as_ref()))
+        .collect()
 }
 
 pub(crate) fn non_empty(value: Option<String>) -> Option<String> {
@@ -515,6 +672,24 @@ mod tests {
         assert_eq!(
             sanitize_provider_multiline_text(" \r\nalpha\u{0}\n\tbeta\r\n ", 64),
             "alpha\n\tbeta"
+        );
+    }
+
+    #[test]
+    fn markup_and_hostnames_are_normalized() {
+        assert_eq!(
+            strip_simple_markup("rust <em>async</em> &amp; tokio"),
+            "rust async & tokio"
+        );
+        assert_eq!(
+            validated_domain("Docs.Rust-Lang.org.").as_deref(),
+            Some("docs.rust-lang.org")
+        );
+        assert!(validated_domain("https://example.com/path").is_none());
+        assert!(validated_hostnames(["Docs.Example.com", "not a host"]).is_none());
+        assert_eq!(
+            validated_hostnames(["Docs.Example.com"]).as_deref(),
+            Some(["docs.example.com".to_string()].as_slice())
         );
     }
 

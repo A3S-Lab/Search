@@ -35,7 +35,10 @@ pub(super) fn apply_tavily_http_config(
     }
 }
 
-fn provider_http_config(block: &Block, provider: &str) -> Result<Option<ProviderHttpConfig>> {
+pub(super) fn provider_http_config(
+    block: &Block,
+    provider: &str,
+) -> Result<Option<ProviderHttpConfig>> {
     let timeout = optional_u64(block, provider, "http_timeout")?;
     let max_response_bytes = optional_u64(block, provider, "max_response_bytes")?;
     if timeout == Some(0) {

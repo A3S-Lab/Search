@@ -94,7 +94,7 @@ impl EngineTierPlan {
         for shortcut in DEFAULT_HTTP_TIER {
             plan.add(shortcut);
         }
-        for provider in BuiltinProvider::ALL {
+        for provider in BuiltinProvider::DEFAULT {
             plan.add(provider.id());
         }
         plan
@@ -202,6 +202,12 @@ mod tests {
 
         assert_eq!(tiers[0].0, EngineTier::Api);
         assert_eq!(tiers[0].1, ["anysearch", "tavily"]);
+        for billed in ["tinyfish", "bocha", "aliyun", "tencent", "firecrawl"] {
+            assert!(
+                !plan.shortcuts().iter().any(|shortcut| shortcut == billed),
+                "{billed} is billed and must stay out of the default plan"
+            );
+        }
         #[cfg(feature = "headless")]
         assert_eq!(tiers.last().unwrap().0, EngineTier::Headless);
         #[cfg(feature = "headless")]
@@ -228,6 +234,16 @@ mod tests {
         assert_eq!(plan.http_rss, vec!["ddg"]);
         assert!(plan.api.is_empty());
         assert_eq!(plan.unknown(), &["unknown"]);
+    }
+
+    #[test]
+    fn explicit_billed_provider_does_not_join_the_default_plan() {
+        let selected = vec!["tinyfish".to_string()];
+        let plan = EngineTierPlan::new(Some(&selected), None, None).unwrap();
+
+        assert_eq!(plan.api, ["tinyfish"]);
+        assert!(plan.headless.is_empty());
+        assert!(plan.http_rss.is_empty());
     }
 
     #[test]

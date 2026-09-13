@@ -3,11 +3,13 @@
 use a3s_acl::ast::Block;
 
 use crate::providers::{
-    AnySearchConfig, AnySearchProvider, BuiltinProvider, ProviderEngine, TavilyConfig,
-    TavilyProvider,
+    AliyunConfig, AliyunProvider, AnySearchConfig, AnySearchProvider, BochaConfig, BochaProvider,
+    BuiltinProvider, FirecrawlConfig, FirecrawlProvider, ProviderEngine, TavilyConfig,
+    TavilyProvider, TencentConfig, TencentProvider, TinyFishConfig, TinyFishProvider,
 };
 use crate::{Engine, Result, SearchError};
 
+mod ai;
 mod anysearch;
 mod common;
 mod tavily;
@@ -30,6 +32,32 @@ const COMMON_ATTRIBUTES: &[&str] = &[
 ];
 
 const ANYSEARCH_ATTRIBUTES: &[&str] = &["max_results", "domain", "sub_domain", "sub_domain_params"];
+
+const TINYFISH_ATTRIBUTES: &[&str] = &[
+    "purpose",
+    "location",
+    "domain_type",
+    "include_domains",
+    "exclude_domains",
+    "include_thumbnail",
+];
+
+const BOCHA_ATTRIBUTES: &[&str] = &["max_results", "summary"];
+
+const ALIYUN_ATTRIBUTES: &[&str] = &["engine_type", "max_results", "include_main_text"];
+
+const TENCENT_ATTRIBUTES: &[&str] = &["max_results", "site", "industry"];
+
+const FIRECRAWL_ATTRIBUTES: &[&str] = &[
+    "max_results",
+    "location",
+    "country",
+    "include_domains",
+    "exclude_domains",
+    "categories",
+    "sources",
+    "include_markdown",
+];
 
 const TAVILY_ATTRIBUTES: &[&str] = &[
     "project",
@@ -63,15 +91,35 @@ pub enum ProviderSettings {
     AnySearch(AnySearchConfig),
     /// Native Tavily configuration.
     Tavily(TavilyConfig),
+    /// Native TinyFish configuration.
+    TinyFish(TinyFishConfig),
+    /// Native Bocha configuration.
+    Bocha(BochaConfig),
+    /// Native Alibaba Cloud IQS configuration.
+    Aliyun(AliyunConfig),
+    /// Native Tencent Cloud Search configuration.
+    Tencent(TencentConfig),
+    /// Native Firecrawl configuration.
+    Firecrawl(FirecrawlConfig),
 }
 
 impl ProviderSettings {
+    /// Returns the catalog entry that owns this provider's identifier.
+    pub const fn builtin(&self) -> BuiltinProvider {
+        match self {
+            Self::AnySearch(_) => BuiltinProvider::AnySearch,
+            Self::Tavily(_) => BuiltinProvider::Tavily,
+            Self::TinyFish(_) => BuiltinProvider::TinyFish,
+            Self::Bocha(_) => BuiltinProvider::Bocha,
+            Self::Aliyun(_) => BuiltinProvider::Aliyun,
+            Self::Tencent(_) => BuiltinProvider::Tencent,
+            Self::Firecrawl(_) => BuiltinProvider::Firecrawl,
+        }
+    }
+
     /// Returns the stable provider identifier.
     pub const fn id(&self) -> &'static str {
-        match self {
-            Self::AnySearch(_) => "anysearch",
-            Self::Tavily(_) => "tavily",
-        }
+        self.builtin().id()
     }
 
     /// Creates an engine backed by the configured provider.
@@ -81,6 +129,15 @@ impl ProviderSettings {
                 Ok(ProviderEngine::new(AnySearchProvider::new(config.clone())?))
             }
             Self::Tavily(config) => Ok(ProviderEngine::new(TavilyProvider::new(config.clone())?)),
+            Self::TinyFish(config) => {
+                Ok(ProviderEngine::new(TinyFishProvider::new(config.clone())?))
+            }
+            Self::Bocha(config) => Ok(ProviderEngine::new(BochaProvider::new(config.clone())?)),
+            Self::Aliyun(config) => Ok(ProviderEngine::new(AliyunProvider::new(config.clone())?)),
+            Self::Tencent(config) => Ok(ProviderEngine::new(TencentProvider::new(config.clone())?)),
+            Self::Firecrawl(config) => {
+                Ok(ProviderEngine::new(FirecrawlProvider::new(config.clone())?))
+            }
         }
     }
 }
@@ -137,12 +194,24 @@ pub(super) fn parse_provider_block(block: &Block) -> Result<(String, ProviderEnt
     let builtin = BuiltinProvider::from_id(provider).ok_or_else(|| {
         config_error(
             provider,
-            "unknown provider; supported providers are anysearch and tavily",
+            format!(
+                "unknown provider; supported providers are {}",
+                BuiltinProvider::ALL
+                    .iter()
+                    .map(|provider| provider.id())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         )
     })?;
     let provider_attributes = match builtin {
         BuiltinProvider::AnySearch => ANYSEARCH_ATTRIBUTES,
         BuiltinProvider::Tavily => TAVILY_ATTRIBUTES,
+        BuiltinProvider::TinyFish => TINYFISH_ATTRIBUTES,
+        BuiltinProvider::Bocha => BOCHA_ATTRIBUTES,
+        BuiltinProvider::Aliyun => ALIYUN_ATTRIBUTES,
+        BuiltinProvider::Tencent => TENCENT_ATTRIBUTES,
+        BuiltinProvider::Firecrawl => FIRECRAWL_ATTRIBUTES,
     };
     reject_unknown_attributes(block, provider, provider_attributes)?;
 
@@ -167,6 +236,15 @@ pub(super) fn parse_provider_block(block: &Block) -> Result<(String, ProviderEnt
             ProviderSettings::AnySearch(anysearch::parse(block, provider)?)
         }
         BuiltinProvider::Tavily => ProviderSettings::Tavily(tavily::parse(block, provider)?),
+        BuiltinProvider::TinyFish => {
+            ProviderSettings::TinyFish(ai::parse_tinyfish(block, provider)?)
+        }
+        BuiltinProvider::Bocha => ProviderSettings::Bocha(ai::parse_bocha(block, provider)?),
+        BuiltinProvider::Aliyun => ProviderSettings::Aliyun(ai::parse_aliyun(block, provider)?),
+        BuiltinProvider::Tencent => ProviderSettings::Tencent(ai::parse_tencent(block, provider)?),
+        BuiltinProvider::Firecrawl => {
+            ProviderSettings::Firecrawl(ai::parse_firecrawl(block, provider)?)
+        }
     };
 
     Ok((
@@ -263,6 +341,10 @@ mod tests {
             provider "tavily" {
                 api_key = env("A3S_SEARCH_CONFIG_TEST_KEY_THAT_MUST_NOT_EXIST")
             }
+            provider "bocha" {
+                api_key = "bocha-secret"
+                max_results = 8
+            }
             "#,
         )
         .unwrap();
@@ -281,6 +363,15 @@ mod tests {
             .unwrap()
             .readiness()
             .is_ready());
+        assert!(config
+            .provider_entry("bocha")
+            .unwrap()
+            .create_engine()
+            .unwrap()
+            .readiness()
+            .is_ready());
+        let debug = format!("{config:?}");
+        assert!(!debug.contains("bocha-secret"));
     }
 
     #[test]
@@ -299,6 +390,15 @@ mod tests {
             r#"provider "tavily" { start_date = "2026-07-20" end_date = "2026-01-01" }"#,
             r#"provider "unknown" {}"#,
             r#"provider "tavily" { api_key = env("bad-name") }"#,
+            r#"provider "tinyfish" { location = "USA" }"#,
+            r#"provider "bocha" { count = 8 }"#,
+            r#"provider "firecrawl" { limit = 8 }"#,
+            r#"provider "tencent" { cnt = 10 }"#,
+            r#"provider "bocha" { max_results = 51 }"#,
+            r#"provider "aliyun" { engine_type = "generic" max_results = 5 }"#,
+            r#"provider "tencent" { max_results = 15 }"#,
+            r#"provider "firecrawl" { max_results = 0 }"#,
+            r#"provider "firecrawl" { include_domains = ["example.com"] exclude_domains = ["other.com"] }"#,
         ] {
             assert!(SearchConfig::parse(acl).is_err(), "{acl}");
         }

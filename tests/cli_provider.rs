@@ -19,6 +19,13 @@ fn run_search(query: &str, provider: &str, config: &NamedTempFile) -> Output {
     run_search_with_args(query, provider, config, &[])
 }
 
+fn run_cli(args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_a3s-search"))
+        .args(args)
+        .output()
+        .expect("run a3s-search")
+}
+
 fn run_search_with_args(
     query: &str,
     provider: &str,
@@ -342,4 +349,196 @@ fn provider_cli_explains_that_the_scraping_proxy_is_not_inherited() {
     );
     assert!(!String::from_utf8_lossy(&output.stderr).contains("proxy-secret"));
     assert_eq!(server.requests().len(), 1);
+}
+
+#[test]
+fn billed_cli_selection_uses_only_that_provider() {
+    let server = MockServer::start(vec![MockResponse::json(
+        200,
+        br#"{
+            "code": 200,
+            "log_id": "bocha-cli",
+            "data": {
+                "webPages": {
+                    "value": [{
+                        "name": "Rust",
+                        "url": "https://www.rust-lang.org/",
+                        "snippet": "language"
+                    }]
+                }
+            }
+        }"#,
+    )]);
+    let config = config_file(&format!(
+        r#"
+        provider "bocha" {{
+            endpoint = "{}"
+            api_key = "bocha-cli-secret"
+            max_results = 8
+            summary = false
+        }}
+        provider "anysearch" {{ enabled = true }}
+        "#,
+        server.endpoint
+    ));
+
+    let output = run_search_with_args("rust", "bocha", &config, &["--time-range", "day"]);
+    assert!(
+        output.status.success(),
+        "CLI failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: Value = serde_json::from_slice(&output.stdout).expect("CLI JSON");
+    assert_eq!(payload["results"][0]["url"], "https://www.rust-lang.org/");
+    assert_eq!(payload["results"][0]["engines"], json!(["Bocha"]));
+    assert_eq!(payload["reports"].as_array().map(Vec::len), Some(1));
+    assert_eq!(payload["reports"][0]["provider"], "bocha");
+    assert_eq!(
+        payload["cascade_receipt"]["configured_tiers"],
+        json!(["api"])
+    );
+    let rendered = String::from_utf8_lossy(&output.stdout);
+    assert!(!rendered.contains("bocha-cli-secret"));
+
+    assert_eq!(server.requests().len(), 1);
+    let body: Value = serde_json::from_slice(&server.requests()[0].body).unwrap();
+    assert_eq!(body["count"], 8);
+    assert_eq!(body["summary"], false);
+    assert_eq!(body["freshness"], "oneDay");
+    assert_eq!(
+        server.requests()[0].header("authorization"),
+        Some("Bearer bocha-cli-secret")
+    );
+}
+
+#[test]
+fn billed_cli_rejects_an_out_of_contract_page_before_the_network() {
+    let server = MockServer::start(vec![MockResponse::json(200, br#"{"results":[]}"#)]);
+    let config = config_file(&format!(
+        r#"provider "tinyfish" {{ endpoint = "{}" api_key = "tf-cli-secret" }}"#,
+        server.endpoint
+    ));
+
+    let output = run_search_with_args("rust", "tinyfish", &config, &["--page", "12"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("page must be between 1 and 11"), "{stderr}");
+    assert!(!stderr.contains("tf-cli-secret"));
+    assert!(server.requests().is_empty());
+}
+
+#[test]
+fn help_lists_billed_providers_as_explicit_engines() {
+    let output = run_cli(&["--help"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for id in ["tinyfish", "bocha", "aliyun", "tencent", "firecrawl"] {
+        assert!(stdout.contains(id), "{id} missing from help:\n{stdout}");
+    }
+}
+
+#[test]
+fn engines_command_lists_native_readiness_without_printing_secrets() {
+    let config = config_file(
+        r#"
+        provider "anysearch" { api_key = null }
+        provider "tavily" { api_key = null }
+        provider "tinyfish" { api_key = "tf-list-secret" }
+        provider "bocha" { api_key = null }
+        provider "aliyun" { api_key = null }
+        provider "tencent" { api_key = null }
+        provider "firecrawl" { api_key = null }
+        "#,
+    );
+    let output = run_cli(&[
+        "--config",
+        config.path().to_str().expect("UTF-8 temporary path"),
+        "engines",
+    ]);
+    assert!(
+        output.status.success(),
+        "engines failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("tf-list-secret"), "{stdout}");
+    for id in [
+        "anysearch",
+        "tavily",
+        "tinyfish",
+        "bocha",
+        "aliyun",
+        "tencent",
+        "firecrawl",
+    ] {
+        assert!(stdout.contains(id), "missing {id} in {stdout}");
+    }
+    assert!(stdout.contains("ready, keyless/anonymous"), "{stdout}");
+    assert!(stdout.contains("ready, authenticated"), "{stdout}");
+    assert!(
+        stdout.matches("not ready, missing credential").count() >= 4,
+        "{stdout}"
+    );
+}
+
+#[test]
+fn disabled_billed_provider_is_not_contacted() {
+    let server = MockServer::start(vec![MockResponse::json(
+        200,
+        br#"{"code":200,"data":{"webPages":{"value":[]}}}"#,
+    )]);
+    let config = config_file(&format!(
+        r#"provider "bocha" {{ endpoint = "{}" api_key = "bocha-disabled-secret" enabled = false }}"#,
+        server.endpoint
+    ));
+    let output = run_search("rust", "bocha", &config);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("disabled"), "{stderr}");
+    assert!(!stderr.contains("bocha-disabled-secret"));
+    assert!(server.requests().is_empty());
+}
+
+#[test]
+fn billed_api_requests_ignore_proxy_and_stay_direct() {
+    let server = MockServer::start(vec![MockResponse::json(
+        200,
+        br#"{
+            "code": 200,
+            "data": {"webPages": {"value": [{
+                "name": "Rust",
+                "url": "https://www.rust-lang.org/",
+                "snippet": "language"
+            }]}}
+        }"#,
+    )]);
+    let config = config_file(&format!(
+        r#"provider "bocha" {{ endpoint = "{}" api_key = "bocha-proxy-secret" }}"#,
+        server.endpoint
+    ));
+    let output = run_search_with_args(
+        "rust",
+        "bocha",
+        &config,
+        &["--proxy", "not-a-valid-proxy://proxy-user:proxy-secret"],
+    );
+    assert!(
+        output.status.success(),
+        "CLI failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("native provider API requests remain direct"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("bocha-proxy-secret"));
+    assert!(!stderr.contains("proxy-secret"));
+    assert_eq!(server.requests().len(), 1);
+    assert_eq!(
+        server.requests()[0].header("authorization"),
+        Some("Bearer bocha-proxy-secret")
+    );
 }
