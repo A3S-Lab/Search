@@ -244,10 +244,6 @@ pub enum SearchError {
     #[error("Invalid search response: {0}")]
     InvalidResponse(String),
 
-    /// Engine is temporarily suspended.
-    #[error("Engine '{0}' is suspended until {1}")]
-    EngineSuspended(String, String),
-
     /// Search timeout exceeded.
     #[error("Search timeout exceeded")]
     Timeout,
@@ -324,7 +320,6 @@ impl SearchError {
             Self::Parse(_) => "parse",
             Self::Challenge(_) => "challenge",
             Self::InvalidResponse(_) => "invalid_response",
-            Self::EngineSuspended(_, _) => "engine_suspended",
             Self::Timeout => "timeout",
             Self::RetryBudgetExhausted(_) => "retry_budget_exhausted",
             Self::NoEngines => "no_engines",
@@ -442,7 +437,6 @@ impl SearchError {
             Self::NotFound(_) => 10,
             Self::PermissionDenied(_) => 5,
             Self::InvalidQuery(_) => 0,
-            Self::EngineSuspended(_, _) => 0,
             Self::NoEngines => 0,
             Self::Parse(_) => 20,
             Self::Challenge(_) => 25,
@@ -475,15 +469,6 @@ mod tests {
     fn test_error_display_parse() {
         let err = SearchError::Parse("invalid JSON".to_string());
         assert_eq!(err.to_string(), "Failed to parse response: invalid JSON");
-    }
-
-    #[test]
-    fn test_error_display_engine_suspended() {
-        let err = SearchError::EngineSuspended("Google".to_string(), "2024-01-01".to_string());
-        assert_eq!(
-            err.to_string(),
-            "Engine 'Google' is suspended until 2024-01-01"
-        );
     }
 
     #[test]

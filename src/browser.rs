@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use tracing::warn;
 use url::Url;
 
-use crate::{Metrics, PageFetcher, Result, RetryBudget, SearchError, WaitStrategy};
+use crate::{retry_budget::RetryBudget, Metrics, PageFetcher, Result, SearchError, WaitStrategy};
 
 pub use a3s_use_browser::{BrowserBackend, BrowserPool, BrowserPoolConfig, BrowserProvider};
 
@@ -404,7 +404,7 @@ mod tests {
     #[tokio::test]
     async fn exhausted_shared_budget_stops_transient_retry_amplification() {
         let renderer = Arc::new(RecordingRenderer::new(2));
-        let budget = RetryBudget::new(crate::RetryBudgetConfig {
+        let budget = RetryBudget::new(crate::retry::RetryBudgetConfig {
             capacity: 0,
             ..Default::default()
         });

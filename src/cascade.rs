@@ -49,7 +49,11 @@ pub struct RetrievalHealth {
     pub timed_out_engine_count: usize,
     /// Engine attempts rejected by local concurrency isolation.
     pub rejected_engine_count: usize,
-    /// Engines skipped because a circuit or local health gate was open.
+    /// Engines skipped by an admission gate (shared circuit or local health).
+    ///
+    /// Outcome kinds distinguish the gate: [`EngineOutcomeKind::CircuitOpen`]
+    /// versus [`EngineOutcomeKind::HealthSuspended`]. The counter stays shared
+    /// so V2 cascade receipt bindings remain stable.
     pub circuit_open_engine_count: usize,
 }
 
@@ -65,7 +69,9 @@ impl RetrievalHealth {
                 EngineOutcomeKind::Failure => &mut health.failed_engine_count,
                 EngineOutcomeKind::Timeout => &mut health.timed_out_engine_count,
                 EngineOutcomeKind::Rejected => &mut health.rejected_engine_count,
-                EngineOutcomeKind::CircuitOpen => &mut health.circuit_open_engine_count,
+                EngineOutcomeKind::CircuitOpen | EngineOutcomeKind::HealthSuspended => {
+                    &mut health.circuit_open_engine_count
+                }
             };
             *counter = counter.saturating_add(1);
         }

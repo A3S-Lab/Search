@@ -868,7 +868,7 @@ async fn test_health_suspends_after_repeated_failures() {
     assert_eq!(results.failures()[0].kind, "engine_suspended");
     assert_eq!(results.outcomes().len(), 2);
     assert!(results.outcomes().iter().any(|outcome| {
-        outcome.kind == EngineOutcomeKind::CircuitOpen && outcome.shortcut == "flaky"
+        outcome.kind == EngineOutcomeKind::HealthSuspended && outcome.shortcut == "flaky"
     }));
 
     let health = search.health.lock().unwrap();

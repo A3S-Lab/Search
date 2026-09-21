@@ -112,7 +112,7 @@ impl EngineRegistry {
                 skipped_outcomes.push(EngineOutcome::failed(
                     shortcut.clone(),
                     failure.clone(),
-                    EngineOutcomeKind::CircuitOpen,
+                    EngineOutcomeKind::HealthSuspended,
                 ));
                 skipped_failures.push(failure);
                 continue;

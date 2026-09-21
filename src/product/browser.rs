@@ -2,7 +2,9 @@
 
 use std::time::Instant;
 
-use a3s_search::{EngineFailure, EngineOutcomeKind, SearchReport, SearchResults};
+use crate::{EngineFailure, EngineOutcomeKind, SearchReport, SearchResults};
+
+use super::run::{CascadeControls, CascadeRequest};
 
 const RETRY_OBSERVATION_SCHEMA: &str = "a3s/search-retry-observation/v1";
 
@@ -33,9 +35,9 @@ fn add_retry_observation(
     );
 }
 
-/// Browser backend used by the CLI headless tier.
-#[derive(clap::ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum HeadlessBrowser {
+/// Browser backend used by the product headless tier.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HeadlessBrowser {
     /// Moli's standalone, JavaScript-capable headless browser.
     #[default]
     Moli,
@@ -46,7 +48,8 @@ pub(crate) enum HeadlessBrowser {
 }
 
 impl HeadlessBrowser {
-    pub(crate) const fn as_str(self) -> &'static str {
+    /// Stable backend identifier.
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Moli => "moli",
             Self::Chrome => "chrome",
@@ -62,23 +65,25 @@ use std::{sync::Arc, time::Duration};
 use futures::future::join_all;
 
 #[cfg(feature = "headless")]
-use a3s_search::{
-    a3s_use_browser::{BrowserPool, BrowserPoolConfig, BrowserProvider, PageRenderer},
-    engines::{Baidu, BingBrowser, BraveBrowser, Google},
-    BrowserFetcher, Engine, MoliPool, MoliPoolConfig, PageFetcher, RetryBudget, Search,
-    WaitStrategy,
-};
+use crate::a3s_use_browser::{BrowserPool, BrowserPoolConfig, BrowserProvider, PageRenderer};
+#[cfg(feature = "headless")]
+use crate::engines::{Baidu, BingBrowser, BraveBrowser, Google};
+#[cfg(feature = "headless")]
+use crate::product::sources::configured_engine_config;
+#[cfg(feature = "headless")]
+use crate::retry::RetryBudget;
+#[cfg(feature = "headless")]
+use crate::{BrowserFetcher, Engine, MoliPool, MoliPoolConfig, PageFetcher, Search, WaitStrategy};
 
 #[cfg(feature = "headless")]
-use super::{configured_search, deadline_exhausted, execute_search_tier, record_disabled_engine};
-use super::{CascadeRequest, SharedControls};
-#[cfg(feature = "headless")]
-use crate::configured_engine_config;
+use super::run::{
+    configured_search, deadline_exhausted, execute_search_tier, record_disabled_engine,
+};
 
 #[cfg(feature = "headless")]
 pub(super) async fn execute_headless_tier(
     request: &CascadeRequest<'_>,
-    controls: &SharedControls,
+    controls: &CascadeControls,
     shortcuts: &[String],
     deadline: Instant,
     remaining_tiers: usize,
@@ -100,7 +105,7 @@ pub(super) async fn execute_headless_tier(
 #[cfg(feature = "headless")]
 async fn execute_moli_headless_tier(
     request: &CascadeRequest<'_>,
-    controls: &SharedControls,
+    controls: &CascadeControls,
     shortcuts: &[String],
     deadline: Instant,
     remaining_tiers: usize,
@@ -148,7 +153,7 @@ async fn execute_moli_headless_tier(
 #[cfg(feature = "headless")]
 async fn execute_browser_headless_tier(
     request: &CascadeRequest<'_>,
-    controls: &SharedControls,
+    controls: &CascadeControls,
     shortcuts: &[String],
     deadline: Instant,
     remaining_tiers: usize,
@@ -291,7 +296,7 @@ fn configure_one_headless_engine(
 #[cfg(not(feature = "headless"))]
 pub(super) async fn execute_headless_tier(
     request: &CascadeRequest<'_>,
-    _controls: &SharedControls,
+    _controls: &CascadeControls,
     shortcuts: &[String],
     _deadline: Instant,
     _remaining_tiers: usize,
@@ -343,7 +348,7 @@ fn moli_pool_config(proxy: Option<&str>) -> MoliPoolConfig {
 }
 
 #[cfg(feature = "headless")]
-fn moli_setup_failure(error: a3s_search::a3s_use_browser::UseError) -> EngineFailure {
+fn moli_setup_failure(error: crate::a3s_use_browser::UseError) -> EngineFailure {
     let mut message = format!("Moli headless backend is unavailable: {}", error.message);
     if let Some(suggestion) = error.suggestion {
         message.push_str(" Suggestion: ");

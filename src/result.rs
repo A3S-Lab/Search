@@ -451,8 +451,10 @@ pub enum EngineOutcomeKind {
     Timeout,
     /// The engine was rejected by a bounded local concurrency policy.
     Rejected,
-    /// The engine was skipped because a circuit or local health gate was open.
+    /// The engine was skipped because a shared circuit breaker was open.
     CircuitOpen,
+    /// The engine was skipped because the local [`crate::HealthMonitor`] suspended it.
+    HealthSuspended,
 }
 
 /// Observable result of one selected engine for one search request.

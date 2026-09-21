@@ -35,7 +35,9 @@ A3S Search is a Rust library and CLI that runs one typed query across the
 sources you select, then returns one `SearchResults` value. Browser pages,
 HTTP/RSS documents, and native search APIs all cross the same `Engine`
 boundary. The runtime executes concurrently, keeps partial failures, normalizes
-and deduplicates URLs, and fuses source ranks.
+and deduplicates URLs, and fuses source ranks. The default cascade plan
+(`EngineTierPlan`) lives in the library so embedders and the CLI share one
+product policy.
 
 > [!IMPORTANT]
 > A3S Search retrieves. It does not plan queries, judge meaning, verify claims,
@@ -118,7 +120,9 @@ async fn main() -> a3s_search::Result<()> {
 
 `Search` is caller-owned. The host chooses engines, weights, timeouts, and
 shared reliability controls. The crate does not hide them in global state.
-Use `default-features = false` for an HTTP/API-only build.
+Use [`EngineTierPlan`] plus [`product::execute_cascade`] for the same default
+cascade the CLI ships with. Use `default-features = false` for an HTTP/API-only
+build.
 
 ## Choose sources
 
@@ -337,12 +341,12 @@ impl a3s_search::Engine for MyEngine {
 
 | Control | What it bounds |
 | --- | --- |
-| `HealthMonitor` | Consecutive-failure suspension on one `Search` |
-| `CircuitBreaker` | Shared closed/open/half-open source state |
+| `HealthMonitor` | Consecutive-failure suspension on one `Search` without a shared circuit (`HealthSuspended`) |
+| `CircuitBreaker` | Shared closed/open/half-open source state (`CircuitOpen`); owns isolation when attached |
 | `Bulkhead` | In-flight work and queue wait per engine |
-| `RetryBudget` | Retry amplification |
 | `SearchCoalescer` | Identical overlapping requests; not a cache |
 | `Metrics` | In-memory counts and latency percentiles |
+| `retry::RetryBudget` | Browser render retry amplification only (not a `Search` peer) |
 
 Share controls only across compatible tenants, credentials, endpoints, and
 proxies. The CLI persists credential-independent challenge circuits, not

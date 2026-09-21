@@ -308,6 +308,7 @@ fn outcome_kind_tag(value: EngineOutcomeKind) -> u8 {
         EngineOutcomeKind::Timeout => 3,
         EngineOutcomeKind::Rejected => 4,
         EngineOutcomeKind::CircuitOpen => 5,
+        EngineOutcomeKind::HealthSuspended => 6,
     }
 }
 

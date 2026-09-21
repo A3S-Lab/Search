@@ -114,6 +114,8 @@ mod fetcher_http;
 mod health;
 mod html_engine;
 pub mod metrics;
+mod plan;
+pub mod product;
 pub mod proxy;
 mod query;
 mod ranking;
@@ -160,15 +162,22 @@ pub use fetcher_http::{HttpFetcher, PooledHttpFetcher};
 pub use health::{HealthConfig, HealthMonitor};
 pub use html_engine::{selector, HtmlEngine, HtmlParser};
 pub use metrics::{Metrics, MetricsSnapshot, TimingGuard};
+pub use plan::{EngineTier, EngineTierPlan};
 pub use query::{SafeSearch, SearchQuery, TimeRange};
 pub use ranking::RankingConfig;
 pub use result::{
     EngineFailure, EngineOutcome, EngineOutcomeKind, ResultType, SearchImage, SearchReport,
     SearchResult, SearchResults, SearchUsage,
 };
-pub use retry_budget::{RetryBudget, RetryBudgetConfig, RetryBudgetSnapshot};
 pub use search::Search;
 pub use window::select_structural_window;
+
+/// Browser render retry budget. Not a [`Search`] peer control — only browser
+/// transports consume it. Prefer [`BrowserFetcher::with_retry_budget`] when the
+/// `headless` feature is enabled.
+pub mod retry {
+    pub use crate::retry_budget::{RetryBudget, RetryBudgetConfig, RetryBudgetSnapshot};
+}
 
 #[cfg(feature = "headless")]
 pub use browser::{

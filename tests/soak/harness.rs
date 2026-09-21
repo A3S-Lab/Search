@@ -359,7 +359,12 @@ impl SoakRuntime {
             .results()
             .outcomes()
             .iter()
-            .filter(|outcome| outcome.kind == EngineOutcomeKind::CircuitOpen)
+            .filter(|outcome| {
+                matches!(
+                    outcome.kind,
+                    EngineOutcomeKind::CircuitOpen | EngineOutcomeKind::HealthSuspended
+                )
+            })
             .count() as u64;
         let rejected = cascade
             .results()

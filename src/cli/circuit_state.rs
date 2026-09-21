@@ -204,7 +204,12 @@ impl PersistentCircuitState {
             .filter_map(|outcome| {
                 let snapshot = self.breaker.snapshot(&outcome.shortcut);
                 match (outcome.kind, snapshot.state) {
-                    (EngineOutcomeKind::CircuitOpen | EngineOutcomeKind::Rejected, _) => None,
+                    (
+                        EngineOutcomeKind::CircuitOpen
+                        | EngineOutcomeKind::HealthSuspended
+                        | EngineOutcomeKind::Rejected,
+                        _,
+                    ) => None,
                     (
                         EngineOutcomeKind::Success | EngineOutcomeKind::Empty,
                         CircuitState::Closed,

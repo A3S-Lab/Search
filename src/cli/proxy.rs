@@ -1,10 +1,6 @@
-//! CLI proxy scope and conventional HTTP fetcher construction.
+//! CLI proxy scope reporting.
 
-use std::sync::Arc;
-
-use anyhow::Result;
-
-use a3s_search::{providers::BuiltinProvider, HttpFetcher, PageFetcher};
+use a3s_search::providers::BuiltinProvider;
 
 pub(crate) fn report_proxy_scope(
     proxy: Option<&str>,
@@ -31,33 +27,4 @@ pub(crate) fn report_proxy_scope(
     } else if text_output {
         eprintln!("Proxy enabled for conventional engines");
     }
-}
-
-pub(crate) fn create_http_fetcher(
-    proxy: Option<&str>,
-    engine_shortcuts: &[String],
-) -> Result<Arc<dyn PageFetcher>> {
-    let uses_http_engine = engine_shortcuts.iter().any(|shortcut| {
-        matches!(
-            shortcut.as_str(),
-            "ddg"
-                | "duckduckgo"
-                | "brave"
-                | "bing"
-                | "wiki"
-                | "wikipedia"
-                | "sogou"
-                | "360"
-                | "so360"
-                | "bing_cn"
-        )
-    });
-
-    let fetcher = match proxy.filter(|_| uses_http_engine) {
-        Some(proxy) => HttpFetcher::with_proxy(proxy).map_err(|error| {
-            anyhow::anyhow!("Failed to create HTTP fetcher with proxy: {error}")
-        })?,
-        None => HttpFetcher::new(),
-    };
-    Ok(Arc::new(fetcher))
 }

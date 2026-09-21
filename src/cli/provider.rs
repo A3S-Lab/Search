@@ -4,9 +4,10 @@ use std::path::Path;
 
 use anyhow::Result;
 
+use a3s_search::product::create_provider_engine as product_create_provider_engine;
 use a3s_search::{
     providers::{BuiltinProvider, ProviderAuthentication, ProviderEngine, ProviderReadiness},
-    Engine, SearchConfig,
+    SearchConfig,
 };
 
 pub(crate) fn list_engines(config_path: Option<&Path>) -> Result<()> {
@@ -76,15 +77,7 @@ pub(crate) fn create_provider_engine(
     provider: BuiltinProvider,
     config: Option<&SearchConfig>,
 ) -> Result<ProviderEngine> {
-    if let Some(config) = config {
-        if let Some(engine) = config.create_provider_engine(provider.id())? {
-            return Ok(engine);
-        }
-    }
-
-    let engine = provider.create_engine()?;
-    let engine_config = super::super::configured_engine_config(config, engine.config().clone());
-    Ok(engine.with_config(engine_config))
+    product_create_provider_engine(provider, config).map_err(anyhow::Error::from)
 }
 
 pub(crate) fn provider_readiness_summary(readiness: &ProviderReadiness) -> String {
@@ -104,34 +97,5 @@ pub(crate) fn provider_readiness_summary(readiness: &ProviderReadiness) -> Strin
         } => "not ready, missing credential".to_string(),
         ProviderReadiness::InvalidCredential => "not ready, invalid credential".to_string(),
         _ => "not ready, unsupported readiness state".to_string(),
-    }
-}
-
-pub(crate) fn ensure_provider_ready(engine: &ProviderEngine) -> Result<()> {
-    match engine.readiness() {
-        ProviderReadiness::Ready { .. } => Ok(()),
-        ProviderReadiness::MissingCredential {
-            environment_variable: Some(variable),
-        } => anyhow::bail!(
-            "{} provider requires credential environment variable {}",
-            engine.descriptor().name,
-            variable
-        ),
-        ProviderReadiness::MissingCredential {
-            environment_variable: None,
-        } => anyhow::bail!(
-            "{} provider requires a credential",
-            engine.descriptor().name
-        ),
-        ProviderReadiness::InvalidCredential => {
-            anyhow::bail!(
-                "{} provider credential is invalid",
-                engine.descriptor().name
-            )
-        }
-        _ => anyhow::bail!(
-            "{} provider returned an unsupported readiness state",
-            engine.descriptor().name
-        ),
     }
 }

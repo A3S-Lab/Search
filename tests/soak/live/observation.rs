@@ -105,8 +105,10 @@ pub(super) fn evaluate_attempt(
             if !shortcuts.insert((index, outcome.shortcut.clone())) {
                 return Err("executed tier repeated an engine outcome".to_string());
             }
-            circuit_open = circuit_open
-                .saturating_add(u64::from(outcome.kind == EngineOutcomeKind::CircuitOpen));
+            circuit_open = circuit_open.saturating_add(u64::from(matches!(
+                outcome.kind,
+                EngineOutcomeKind::CircuitOpen | EngineOutcomeKind::HealthSuspended
+            )));
             outcomes.push(outcome.clone());
         }
         validate_result_attribution(tier_outcomes, tier.results.items())?;

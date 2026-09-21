@@ -31,7 +31,7 @@
 
 ---
 
-A3S Search 是一个 Rust 库和 CLI。它对你选择的源执行一次类型化查询，并返回一个 `SearchResults`。浏览器页面、HTTP/RSS 文档和原生搜索 API 都穿越同一 `Engine` 边界。运行时并发执行、保留部分失败、规范化并去重 URL，然后融合源排序。
+A3S Search 是一个 Rust 库和 CLI。它对你选择的源执行一次类型化查询，并返回一个 `SearchResults`。浏览器页面、HTTP/RSS 文档和原生搜索 API 都穿越同一 `Engine` 边界。运行时并发执行、保留部分失败、规范化并去重 URL，然后融合源排序。默认级联计划（`EngineTierPlan`）属于库，以便嵌入方与 CLI 共享同一产品策略。
 
 > [!IMPORTANT]
 > A3S Search 只负责检索。它不规划查询、不判断含义、不核实主张、不撰写报告。DeepResearch 等调用方拥有这些决定。级联收据记录的是结构执行，不是语义批准。
@@ -287,12 +287,12 @@ impl a3s_search::Engine for MyEngine {
 
 | 控制 | 约束什么 |
 | --- | --- |
-| `HealthMonitor` | 单个 `Search` 上的连续失败挂起 |
-| `CircuitBreaker` | 共享的 closed/open/half-open 源状态 |
+| `HealthMonitor` | 单个无共享熔断的 `Search` 上的连续失败挂起（`HealthSuspended`） |
+| `CircuitBreaker` | 共享的 closed/open/half-open 源状态（`CircuitOpen`）；附加后拥有准入隔离 |
 | `Bulkhead` | 每个引擎的在途工作与队列等待 |
-| `RetryBudget` | 重试放大 |
 | `SearchCoalescer` | 相同的重叠请求；不是缓存 |
 | `Metrics` | 内存中的计数与延迟百分位 |
+| `retry::RetryBudget` | 仅浏览器渲染重试放大（不是 `Search` 对等控件） |
 
 只在兼容的租户、凭证、端点和代理之间共享这些控制。CLI 只持久化与凭证无关的挑战熔断，不保存查询、结果或密钥。需要隔离状态范围时，把 `A3S_SEARCH_STATE_DIR` 设为绝对目录。
 

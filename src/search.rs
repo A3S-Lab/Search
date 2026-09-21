@@ -230,14 +230,17 @@ impl Search {
             })
             .collect();
 
-        // Update health state for each engine
-        if let Ok(mut health) = self.health.lock() {
-            for (name, _) in &outputs {
-                health.record_success(name);
-            }
-            for (failure, affects_health) in &engine_errors {
-                if *affects_health {
-                    health.record_failure(&failure.engine);
+        // Local health isolation only applies when no shared circuit is attached.
+        // With a circuit breaker, CircuitBreaker owns admission and recovery.
+        if self.circuit_breaker.is_none() {
+            if let Ok(mut health) = self.health.lock() {
+                for (name, _) in &outputs {
+                    health.record_success(name);
+                }
+                for (failure, affects_health) in &engine_errors {
+                    if *affects_health {
+                        health.record_failure(&failure.engine);
+                    }
                 }
             }
         }
@@ -279,9 +282,16 @@ impl Search {
         Ok(search_results)
     }
 
-    /// Selects engines based on query parameters, filtering out suspended engines.
+    /// Selects engines based on query parameters.
+    ///
+    /// When a shared [`CircuitBreaker`] is attached, it alone owns admission.
+    /// Local [`HealthMonitor`] suspension applies only without a circuit.
     fn select_engines(&self, query: &SearchQuery) -> EngineSelection {
-        let health = self.health.lock().ok();
+        let health = if self.circuit_breaker.is_some() {
+            None
+        } else {
+            self.health.lock().ok()
+        };
         self.engine_registry
             .select(query, health.as_deref(), self.circuit_breaker.as_ref())
     }
