@@ -114,6 +114,37 @@ impl Engine for FailingEngine {
     }
 }
 
+struct CountingFailingEngine {
+    config: EngineConfig,
+    calls: Arc<AtomicUsize>,
+}
+
+impl CountingFailingEngine {
+    fn new(name: &str, calls: Arc<AtomicUsize>) -> Self {
+        Self {
+            config: EngineConfig {
+                name: name.to_string(),
+                shortcut: name.to_string(),
+                categories: vec![EngineCategory::General],
+                ..Default::default()
+            },
+            calls,
+        }
+    }
+}
+
+#[async_trait]
+impl Engine for CountingFailingEngine {
+    fn config(&self) -> &EngineConfig {
+        &self.config
+    }
+
+    async fn search(&self, _query: &SearchQuery) -> Result<Vec<SearchResult>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Err(SearchError::Other("Engine failed".to_string()))
+    }
+}
+
 struct ClientErrorEngine {
     config: EngineConfig,
 }
@@ -873,6 +904,73 @@ async fn test_health_suspends_after_repeated_failures() {
 
     let health = search.health.lock().unwrap();
     assert!(health.is_suspended("flaky"));
+}
+
+#[tokio::test]
+async fn attached_circuit_owns_admission_without_local_health_suspension() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let breaker = CircuitBreaker::new(crate::CircuitBreakerConfig {
+        failure_threshold: 3,
+        transient_open_duration: Duration::from_secs(3_600),
+        open_jitter_ratio: 0.0,
+        window: None,
+        ..Default::default()
+    });
+    let mut search = Search::with_health_config(HealthConfig {
+        max_failures: 1,
+        suspend_duration: Duration::from_secs(3_600),
+    })
+    .with_circuit_breaker(breaker);
+    search.add_engine(CountingFailingEngine::new("flaky", Arc::clone(&calls)));
+    search.add_engine(MockEngine::new(
+        "stable",
+        vec![SearchResult::new(
+            "https://stable.example",
+            "Stable",
+            "Content",
+        )],
+    ));
+
+    let first = search.search(SearchQuery::new("first")).await.unwrap();
+    let second = search.search(SearchQuery::new("second")).await.unwrap();
+
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    for results in [&first, &second] {
+        assert!(results.outcomes().iter().any(|outcome| {
+            outcome.shortcut == "flaky" && outcome.kind == EngineOutcomeKind::Failure
+        }));
+        assert!(results
+            .outcomes()
+            .iter()
+            .all(|outcome| outcome.kind != EngineOutcomeKind::HealthSuspended));
+        assert!(results.outcomes().iter().any(|outcome| {
+            outcome.shortcut == "stable" && outcome.kind == EngineOutcomeKind::Success
+        }));
+    }
+    {
+        let health = search.health.lock().unwrap();
+        assert_eq!(health.failure_count("flaky"), 0);
+        assert!(!health.is_suspended("flaky"));
+    }
+
+    let third = search.search(SearchQuery::new("third")).await.unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    assert!(third.outcomes().iter().any(|outcome| {
+        outcome.shortcut == "flaky" && outcome.kind == EngineOutcomeKind::Failure
+    }));
+
+    let fourth = search.search(SearchQuery::new("fourth")).await.unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    assert!(fourth.outcomes().iter().any(|outcome| {
+        outcome.shortcut == "flaky" && outcome.kind == EngineOutcomeKind::CircuitOpen
+    }));
+    assert!(fourth
+        .outcomes()
+        .iter()
+        .all(|outcome| outcome.kind != EngineOutcomeKind::HealthSuspended));
+    let health = search.health.lock().unwrap();
+    assert_eq!(health.failure_count("flaky"), 0);
+    assert!(!health.is_suspended("flaky"));
 }
 
 #[tokio::test]

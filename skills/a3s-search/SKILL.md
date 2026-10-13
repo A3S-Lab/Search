@@ -5,7 +5,7 @@ description: Retrieve structured web results from multiple sources with the a3s-
 
 # A3S Search
 
-Use the CLI first. Request JSON whenever evidence must be inspected, compared, or cited.
+Use the CLI first. Request JSON whenever evidence must be inspected, compared, or cited. Library embedders use `EngineTierPlan::builtin_default` and `product::execute_cascade`; the CLI remains the agent's first entry.
 
 ## Search
 

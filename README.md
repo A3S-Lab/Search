@@ -96,33 +96,47 @@ tokio = { version = "1", features = ["full"] }
 ```
 
 ```rust
-use a3s_search::{
-    engines::{DuckDuckGo, Wikipedia},
-    Search, SearchQuery,
-};
+use std::time::Duration;
+
+use a3s_search::product::{self, HeadlessBrowser};
+use a3s_search::{EngineTierPlan, SearchQuery};
 
 #[tokio::main]
 async fn main() -> a3s_search::Result<()> {
-    let mut search = Search::new();
-    search.add_engine(DuckDuckGo::new());
-    search.add_engine(Wikipedia::new());
+    let plan = EngineTierPlan::builtin_default();
+    let outcome = product::execute_cascade(
+        &plan,
+        product::CascadeRequest {
+            query: SearchQuery::new("rust programming"),
+            limit: 10,
+            timeout: Duration::from_secs(product::DEFAULT_TIMEOUT_SECONDS),
+            proxy: None,
+            config: None,
+            browser: HeadlessBrowser::default(),
+            browser_max_retries: 0,
+        },
+        product::CascadeControls::default(),
+    )
+    .await?;
+    let receipt = &outcome.receipt;
 
-    let results = search
-        .search(SearchQuery::new("extensible Rust search"))
-        .await?;
-
-    for result in results.items() {
+    println!(
+        "{} requirements_met={}",
+        receipt.schema, receipt.retrieval_requirements_met
+    );
+    for result in outcome.results.items() {
         println!("{:.3} {} {:?}", result.score, result.url, result.engines);
     }
     Ok(())
 }
 ```
 
-`Search` is caller-owned. The host chooses engines, weights, timeouts, and
-shared reliability controls. The crate does not hide them in global state.
-Use [`EngineTierPlan`] plus [`product::execute_cascade`] for the same default
-cascade the CLI ships with. Use `default-features = false` for an HTTP/API-only
-build.
+This is the supported embedder entry: the same default cascade the CLI ships
+with, plus its structural receipt. `Search` stays caller-owned for hosts that
+attach their own engines, weights, timeouts, and reliability controls. The
+crate does not hide those controls in global state. Use
+`default-features = false` for an HTTP/API-only build. Adding a new source
+uses the extension seam in [Extend](#extend), not this entry.
 
 ## Choose sources
 
@@ -302,6 +316,9 @@ Typed surfaces:
 `FirecrawlConfig`.
 
 ## Extend
+
+`Engine` and `ProviderEngine` are the extension seam for a new source. They
+are not the default search entry.
 
 Use `Engine` for a source that returns ordinary web or media results. Use
 `SearchProvider` when the source has capabilities, readiness, rich output, or

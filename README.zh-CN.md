@@ -86,29 +86,42 @@ tokio = { version = "1", features = ["full"] }
 ```
 
 ```rust
-use a3s_search::{
-    engines::{DuckDuckGo, Wikipedia},
-    Search, SearchQuery,
-};
+use std::time::Duration;
+
+use a3s_search::product::{self, HeadlessBrowser};
+use a3s_search::{EngineTierPlan, SearchQuery};
 
 #[tokio::main]
 async fn main() -> a3s_search::Result<()> {
-    let mut search = Search::new();
-    search.add_engine(DuckDuckGo::new());
-    search.add_engine(Wikipedia::new());
+    let plan = EngineTierPlan::builtin_default();
+    let outcome = product::execute_cascade(
+        &plan,
+        product::CascadeRequest {
+            query: SearchQuery::new("rust programming"),
+            limit: 10,
+            timeout: Duration::from_secs(product::DEFAULT_TIMEOUT_SECONDS),
+            proxy: None,
+            config: None,
+            browser: HeadlessBrowser::default(),
+            browser_max_retries: 0,
+        },
+        product::CascadeControls::default(),
+    )
+    .await?;
+    let receipt = &outcome.receipt;
 
-    let results = search
-        .search(SearchQuery::new("extensible Rust search"))
-        .await?;
-
-    for result in results.items() {
+    println!(
+        "{} requirements_met={}",
+        receipt.schema, receipt.retrieval_requirements_met
+    );
+    for result in outcome.results.items() {
         println!("{:.3} {} {:?}", result.score, result.url, result.engines);
     }
     Ok(())
 }
 ```
 
-`Search` 由调用方拥有。宿主选择引擎、权重、超时和共享可靠性控制。crate 不把它们藏进全局状态。只要 HTTP/API 构建时使用 `default-features = false`。
+这是支持的嵌入入口：与 CLI 相同的默认级联，并带上结构收据。`Search` 仍由调用方拥有，供宿主自行挂引擎、权重、超时和可靠性控制。crate 不把这些控制藏进全局状态。只要 HTTP/API 构建时使用 `default-features = false`。添加新源走[扩展](#扩展)里的缝，不走这个入口。
 
 ## 选择源
 
@@ -251,6 +264,8 @@ provider "firecrawl" {
 `FirecrawlConfig`。
 
 ## 扩展
+
+`Engine` 和 `ProviderEngine` 是添加新源的扩展缝，不是默认搜索入口。
 
 源只返回普通网页或媒体结果时使用 `Engine`。源有能力、就绪状态、丰富输出或结构化报告时使用 `SearchProvider`，再用 `ProviderEngine` 适配：
 

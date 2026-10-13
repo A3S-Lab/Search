@@ -17,20 +17,33 @@
 //!
 //! ## Example
 //!
+//! The supported embedder entry is the same API-first cascade the CLI runs.
+//! `Search::add_engine` remains the extension seam for a new source.
+//!
 //! ```rust,no_run
-//! use a3s_search::{Search, SearchQuery, engines::DuckDuckGo};
+//! use std::time::Duration;
+//!
+//! use a3s_search::product::{self, HeadlessBrowser};
+//! use a3s_search::{EngineTierPlan, SearchQuery};
 //!
 //! #[tokio::main]
-//! async fn main() -> anyhow::Result<()> {
-//!     let mut search = Search::new();
-//!     search.add_engine(DuckDuckGo::new());
-//!
-//!     let query = SearchQuery::new("rust programming");
-//!     let results = search.search(query).await?;
-//!
-//!     for result in results.items() {
-//!         println!("{}: {}", result.title, result.url);
-//!     }
+//! async fn main() -> a3s_search::Result<()> {
+//!     let plan = EngineTierPlan::builtin_default();
+//!     let outcome = product::execute_cascade(
+//!         &plan,
+//!         product::CascadeRequest {
+//!             query: SearchQuery::new("rust programming"),
+//!             limit: 10,
+//!             timeout: Duration::from_secs(product::DEFAULT_TIMEOUT_SECONDS),
+//!             proxy: None,
+//!             config: None,
+//!             browser: HeadlessBrowser::default(),
+//!             browser_max_retries: 0,
+//!         },
+//!         product::CascadeControls::default(),
+//!     )
+//!     .await?;
+//!     let _receipt = &outcome.receipt;
 //!     Ok(())
 //! }
 //! ```

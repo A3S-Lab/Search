@@ -7,24 +7,7 @@ use a3s_search::{
 #[test]
 fn downstream_callers_can_finish_serialize_and_validate_a_lazy_cascade() {
     let query = "portable public receipt";
-    let results = Aggregator::new().aggregate(vec![(
-        "generic-engine".to_string(),
-        vec![SearchResult::new(
-            "https://example.test/portable-receipt",
-            "opaque title",
-            "opaque snippet",
-        )],
-    )]);
-    let mut cascade =
-        SearchCascade::new(SearchQuery::new(query), RetrievalRequirements::for_limit(1));
-    assert_eq!(
-        cascade.push_tier("caller-tier", results),
-        SearchTierDecision::Stop
-    );
-
-    let outcome = cascade
-        .finish_with_tier_plan(["caller-tier", "unused-tier"])
-        .expect("public cascade should finish");
+    let outcome = portable_lazy_cascade_outcome();
     assert_eq!(outcome.receipt.schema, SEARCH_CASCADE_RECEIPT_V2_SCHEMA);
     assert_eq!(outcome.receipt.executed_tiers.len(), 1);
     assert_eq!(
@@ -60,4 +43,38 @@ fn downstream_callers_can_finish_serialize_and_validate_a_lazy_cascade() {
     let mut substituted = decoded;
     substituted.results.items_mut()[0].content = "same-count replacement".to_string();
     assert!(substituted.validate().is_err());
+}
+
+#[test]
+fn lazy_cascade_receipt_v2_binding_digest_stays_fixed() {
+    let outcome = portable_lazy_cascade_outcome();
+    let binding = outcome
+        .receipt_binding()
+        .expect("bind complete public receipt");
+    assert_eq!(outcome.results.duration_ms, 0);
+    assert_eq!(
+        binding.sha256, "654e046c572c8d98894bae3f7a6b580bac2af3275f162865d516a43507663282",
+        "V2 receipt binding changed; add a new schema constant instead of updating this digest"
+    );
+}
+
+fn portable_lazy_cascade_outcome() -> SearchCascadeOutcomeV2 {
+    let query = "portable public receipt";
+    let results = Aggregator::new().aggregate(vec![(
+        "generic-engine".to_string(),
+        vec![SearchResult::new(
+            "https://example.test/portable-receipt",
+            "opaque title",
+            "opaque snippet",
+        )],
+    )]);
+    let mut cascade =
+        SearchCascade::new(SearchQuery::new(query), RetrievalRequirements::for_limit(1));
+    assert_eq!(
+        cascade.push_tier("caller-tier", results),
+        SearchTierDecision::Stop
+    );
+    cascade
+        .finish_with_tier_plan(["caller-tier", "unused-tier"])
+        .expect("public cascade should finish")
 }
