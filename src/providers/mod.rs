@@ -15,6 +15,7 @@
 //! the vendor wire field stays inside that module. Optional-auth and MCP
 //! codecs stay off this shell.
 
+mod a3s;
 mod aliyun;
 mod anysearch;
 mod bocha;
@@ -31,6 +32,7 @@ mod tavily;
 mod tencent;
 mod tinyfish;
 
+pub use a3s::{A3sAuth, A3sConfig, A3sProvider};
 pub use aliyun::{AliyunConfig, AliyunEngineType, AliyunProvider};
 pub use anysearch::{AnySearchConfig, AnySearchDomain, AnySearchProvider, AnySearchSubDomain};
 pub use bocha::{BochaConfig, BochaProvider};

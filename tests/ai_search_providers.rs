@@ -1,9 +1,10 @@
 mod support;
 
 use a3s_search::providers::{
-    AliyunConfig, AliyunProvider, BochaConfig, BochaProvider, CredentialSource, FirecrawlCategory,
-    FirecrawlConfig, FirecrawlProvider, FirecrawlSource, ProviderRequest, SearchProvider,
-    TencentConfig, TencentProvider, TinyFishConfig, TinyFishDomainType, TinyFishProvider,
+    A3sAuth, A3sConfig, A3sProvider, AliyunConfig, AliyunProvider, BochaConfig, BochaProvider,
+    CredentialSource, FirecrawlCategory, FirecrawlConfig, FirecrawlProvider, FirecrawlSource,
+    ProviderRequest, SearchProvider, TencentConfig, TencentProvider, TinyFishConfig,
+    TinyFishDomainType, TinyFishProvider,
 };
 use a3s_search::TimeRange;
 use serde_json::Value;
@@ -355,4 +356,75 @@ async fn firecrawl_posts_web_search_and_maps_usage() {
     let error = provider.search(&request("rust")).await.unwrap_err();
     assert_eq!(error.kind(), "provider_authentication");
     assert!(!error.to_string().contains("fc-secret"));
+}
+
+#[tokio::test]
+async fn a3s_posts_web_search_and_redacts_the_key() {
+    let server = MockServer::start(vec![
+        MockResponse::json(
+            200,
+            br#"{
+                "success": true,
+                "data": {
+                    "results": {
+                        "web": [{
+                            "url": "https://www.rust-lang.org/",
+                            "title": "Rust",
+                            "description": "A language mentioning a3s-secret",
+                            "markdown": "body a3s-secret"
+                        }]
+                    }
+                }
+            }"#,
+        ),
+        MockResponse::json(
+            200,
+            br#"{"success":false,"error":"need credits a3s-secret","code":"INSUFFICIENT_CREDITS"}"#,
+        ),
+        MockResponse::json(
+            401,
+            br#"{"success":false,"error":"bad key a3s-secret","code":"UNAUTHORIZED"}"#,
+        ),
+    ]);
+    let provider = A3sProvider::new(
+        A3sConfig::new()
+            .unwrap()
+            .with_endpoint(server.endpoint.clone())
+            .unwrap()
+            .with_api_key(CredentialSource::value("a3s-secret"))
+            .with_auth(A3sAuth::ApiKey)
+            .with_max_results(4)
+            .unwrap()
+            .with_include_markdown(true),
+    )
+    .unwrap();
+
+    let response = provider.search(&request("rust")).await.unwrap();
+    assert_eq!(response.results.len(), 1);
+    assert_eq!(response.results[0].url, "https://www.rust-lang.org/");
+    assert!(!response.results[0].snippet.contains("a3s-secret"));
+    assert!(response.results[0]
+        .full_text
+        .as_deref()
+        .is_some_and(|text| !text.contains("a3s-secret")));
+    assert!(response.report.request_id.is_none());
+    assert!(response.report.usage.is_none());
+    let body: Value = serde_json::from_slice(&server.requests()[0].body).unwrap();
+    assert_eq!(body["query"], "rust");
+    assert_eq!(body["limit"], 4);
+    assert_eq!(body["sources"][0], "web");
+    assert_eq!(body["scrapeOptions"]["formats"][0]["type"], "markdown");
+    assert!(body.get("categories").is_none());
+    assert!(body.get("country").is_none());
+    assert!(body.get("tbs").is_none());
+    assert_eq!(server.requests()[0].header("x-api-key"), Some("a3s-secret"));
+    assert!(server.requests()[0].header("authorization").is_none());
+
+    let quota = provider.search(&request("rust")).await.unwrap_err();
+    assert_eq!(quota.kind(), "provider_quota");
+    assert!(!quota.to_string().contains("a3s-secret"));
+
+    let error = provider.search(&request("rust")).await.unwrap_err();
+    assert_eq!(error.kind(), "provider_authentication");
+    assert!(!error.to_string().contains("a3s-secret"));
 }

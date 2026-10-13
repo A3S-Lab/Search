@@ -3,8 +3,9 @@
 use a3s_acl::ast::Block;
 
 use crate::providers::{
-    AliyunConfig, AliyunEngineType, BochaConfig, FirecrawlCategory, FirecrawlConfig,
-    FirecrawlSource, TencentConfig, TencentIndustry, TinyFishConfig, TinyFishDomainType,
+    A3sAuth, A3sConfig, AliyunConfig, AliyunEngineType, BochaConfig, FirecrawlCategory,
+    FirecrawlConfig, FirecrawlSource, TencentConfig, TencentIndustry, TinyFishConfig,
+    TinyFishDomainType,
 };
 use crate::Result;
 
@@ -132,6 +133,38 @@ pub(super) fn parse_tencent(block: &Block, provider: &str) -> Result<TencentConf
                 return Err(config_error(
                     provider,
                     "attribute \"industry\" must be gov, news, acad, or finance",
+                ));
+            }
+        });
+    }
+    if let Some(http) = provider_http_config(block, provider)? {
+        config = config.with_http_config(http);
+    }
+    Ok(config)
+}
+
+pub(super) fn parse_a3s(block: &Block, provider: &str) -> Result<A3sConfig> {
+    let mut config = A3sConfig::new()?;
+    if let Some(endpoint) = optional_url(block, provider, "endpoint")? {
+        config = config.with_endpoint(endpoint)?;
+    }
+    if let Some(api_key) = optional_credential(block, provider, "api_key")? {
+        config = config.with_api_key(api_key);
+    }
+    if let Some(max_results) = optional_u8(block, provider, "max_results")? {
+        config = config.with_max_results(max_results)?;
+    }
+    if let Some(include_markdown) = optional_bool(block, provider, "include_markdown")? {
+        config = config.with_include_markdown(include_markdown);
+    }
+    if let Some(auth_header) = optional_string(block, provider, "auth_header")? {
+        config = config.with_auth(match auth_header.as_str() {
+            "bearer" => A3sAuth::Bearer,
+            "x-api-key" => A3sAuth::ApiKey,
+            _ => {
+                return Err(config_error(
+                    provider,
+                    "attribute \"auth_header\" must be bearer or x-api-key",
                 ));
             }
         });

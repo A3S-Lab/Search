@@ -7,10 +7,10 @@
 mod support;
 
 use a3s_search::providers::{
-    AliyunConfig, AliyunProvider, AnySearchProvider, BochaConfig, BochaProvider, BuiltinProvider,
-    CredentialSource, FirecrawlConfig, FirecrawlProvider, ProviderEngine, ProviderReadiness,
-    ProviderRequest, SearchProvider, TavilyProvider, TencentConfig, TencentProvider,
-    TinyFishConfig, TinyFishProvider,
+    A3sConfig, A3sProvider, AliyunConfig, AliyunProvider, AnySearchProvider, BochaConfig,
+    BochaProvider, BuiltinProvider, CredentialSource, FirecrawlConfig, FirecrawlProvider,
+    ProviderEngine, ProviderReadiness, ProviderRequest, SearchProvider, TavilyProvider,
+    TencentConfig, TencentProvider, TinyFishConfig, TinyFishProvider,
 };
 use a3s_search::{Engine, SafeSearch, SearchQuery};
 use serde_json::json;
@@ -18,7 +18,7 @@ use support::provider_server::{MockResponse, MockServer};
 use url::Url;
 
 const SECRET: &str = "sk-architecture-secret";
-const BILLED: [&str; 5] = ["tinyfish", "bocha", "aliyun", "tencent", "firecrawl"];
+const BILLED: [&str; 6] = ["tinyfish", "bocha", "aliyun", "tencent", "firecrawl", "a3s"];
 
 type EchoBody = fn() -> String;
 type KeyedProvider = fn(Url) -> a3s_search::Result<Box<dyn SearchProvider>>;
@@ -44,9 +44,10 @@ fn billed_providers_are_explicit_and_optional_auth_codecs_stay_anonymous() {
                 "{} must not enter an anonymous default plan",
                 provider.id()
             );
-            assert!(
+            assert_eq!(
                 descriptor.capabilities.time_range,
-                "{} advertises time range",
+                provider.id() != "a3s",
+                "{} time range follows the fields it sends",
                 provider.id()
             );
             assert!(
@@ -103,8 +104,9 @@ fn required_key_shell_rejects_unsafe_endpoints_and_missing_credentials() {
         .is_err());
     assert!(FirecrawlConfig::new()
         .unwrap()
-        .with_endpoint(insecure)
+        .with_endpoint(insecure.clone())
         .is_err());
+    assert!(A3sConfig::new().unwrap().with_endpoint(insecure).is_err());
 
     assert!(matches!(
         BochaProvider::new(
@@ -126,6 +128,16 @@ fn required_key_shell_rejects_unsafe_endpoints_and_missing_credentials() {
         .readiness(),
         ProviderReadiness::MissingCredential { .. }
     ));
+    assert!(matches!(
+        A3sProvider::new(
+            A3sConfig::new()
+                .unwrap()
+                .with_api_key(CredentialSource::none())
+        )
+        .unwrap()
+        .readiness(),
+        ProviderReadiness::MissingCredential { .. }
+    ));
 }
 
 #[tokio::test]
@@ -136,6 +148,7 @@ async fn missing_credential_fails_before_the_network() {
         missing_aliyun,
         missing_tencent,
         missing_firecrawl,
+        missing_a3s,
     ] {
         let server = MockServer::start(vec![MockResponse::json(200, b"{}")]);
         let provider = build(server.endpoint.clone()).unwrap();
@@ -154,12 +167,13 @@ async fn missing_credential_fails_before_the_network() {
 
 #[tokio::test]
 async fn success_urls_are_sealed_against_the_call_credential() {
-    let cases: [(&str, EchoBody, KeyedProvider); 5] = [
+    let cases: [(&str, EchoBody, KeyedProvider); 6] = [
         ("tinyfish", tinyfish_echo, keyed_tinyfish),
         ("bocha", bocha_echo, keyed_bocha),
         ("aliyun", aliyun_echo, keyed_aliyun),
         ("tencent", tencent_echo, keyed_tencent),
         ("firecrawl", firecrawl_echo, keyed_firecrawl),
+        ("a3s", a3s_echo, keyed_a3s),
     ];
 
     for (id, body, build) in cases {
@@ -195,6 +209,7 @@ async fn http_errors_redact_the_credential() {
         keyed_aliyun,
         keyed_tencent,
         keyed_firecrawl,
+        keyed_a3s,
     ] {
         let server = MockServer::start(vec![MockResponse::json(401, body.clone().into_bytes())]);
         let provider = build(server.endpoint.clone()).unwrap();
@@ -378,6 +393,10 @@ fn tencent_echo() -> String {
     .to_string()
 }
 
+fn a3s_echo() -> String {
+    firecrawl_echo()
+}
+
 fn firecrawl_echo() -> String {
     json!({
         "success": true,
@@ -435,6 +454,14 @@ fn missing_tencent(endpoint: Url) -> a3s_search::Result<Box<dyn SearchProvider>>
     )?))
 }
 
+fn missing_a3s(endpoint: Url) -> a3s_search::Result<Box<dyn SearchProvider>> {
+    Ok(Box::new(A3sProvider::new(
+        A3sConfig::new()?
+            .with_endpoint(endpoint)?
+            .with_api_key(CredentialSource::none()),
+    )?))
+}
+
 fn missing_firecrawl(endpoint: Url) -> a3s_search::Result<Box<dyn SearchProvider>> {
     Ok(Box::new(FirecrawlProvider::new(
         FirecrawlConfig::new()?
@@ -470,6 +497,14 @@ fn keyed_aliyun(endpoint: Url) -> a3s_search::Result<Box<dyn SearchProvider>> {
 fn keyed_tencent(endpoint: Url) -> a3s_search::Result<Box<dyn SearchProvider>> {
     Ok(Box::new(TencentProvider::new(
         TencentConfig::new()?
+            .with_endpoint(endpoint)?
+            .with_api_key(CredentialSource::value(SECRET)),
+    )?))
+}
+
+fn keyed_a3s(endpoint: Url) -> a3s_search::Result<Box<dyn SearchProvider>> {
+    Ok(Box::new(A3sProvider::new(
+        A3sConfig::new()?
             .with_endpoint(endpoint)?
             .with_api_key(CredentialSource::value(SECRET)),
     )?))

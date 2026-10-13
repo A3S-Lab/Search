@@ -43,7 +43,7 @@ struct Cli {
 
     /// Exact search engines to use (comma-separated); omit for the default cascade
     /// Available: brave_browser, bing_browser, g, baidu, ddg, brave, bing, wiki,
-    /// sogou, 360, bing_cn, anysearch, tavily, tinyfish, bocha, aliyun, tencent, firecrawl
+    /// sogou, 360, bing_cn, anysearch, tavily, tinyfish, bocha, aliyun, tencent, firecrawl, a3s
     #[arg(short, long, value_delimiter = ',')]
     engines: Option<Vec<String>>,
 
@@ -120,6 +120,13 @@ struct Cli {
 enum Commands {
     /// List available search engines
     Engines,
+    /// Serve native web search on a loopback address
+    Serve {
+        /// Listen address. Loopback is the default. A public bind requires
+        /// A3S_SEARCH_API_KEY. The unified gateway reaches the host on :8090.
+        #[arg(long, default_value = "127.0.0.1:8090")]
+        listen: String,
+    },
     /// Update a3s-search to the latest version
     Update,
 }
@@ -197,6 +204,9 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Some(Commands::Engines) => list_engines(cli.config.as_deref()),
+        Some(Commands::Serve { listen }) => a3s_search::serve_native(&listen)
+            .await
+            .map_err(anyhow::Error::from),
         Some(Commands::Update) => {
             a3s_updater::run_update(&a3s_updater::UpdateConfig {
                 binary_name: "a3s-search",

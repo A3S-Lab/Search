@@ -1,8 +1,8 @@
 //! Registry for providers shipped with `a3s-search`.
 
 use super::{
-    AliyunProvider, AnySearchProvider, BochaProvider, FirecrawlProvider, ProviderEngine,
-    TavilyProvider, TencentProvider, TinyFishProvider,
+    A3sProvider, AliyunProvider, AnySearchProvider, BochaProvider, FirecrawlProvider,
+    ProviderEngine, TavilyProvider, TencentProvider, TinyFishProvider,
 };
 use crate::Result;
 
@@ -24,11 +24,13 @@ pub enum BuiltinProvider {
     Tencent,
     /// Firecrawl Search API. Requires `FIRECRAWL_API_KEY`.
     Firecrawl,
+    /// A3S search API. Requires `A3S_GATEWAY_KEY`.
+    A3s,
 }
 
 impl BuiltinProvider {
     /// All built-in providers in stable display order.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::AnySearch,
         Self::Tavily,
         Self::TinyFish,
@@ -36,6 +38,7 @@ impl BuiltinProvider {
         Self::Aliyun,
         Self::Tencent,
         Self::Firecrawl,
+        Self::A3s,
     ];
 
     /// Providers included in the default CLI plan.
@@ -54,6 +57,7 @@ impl BuiltinProvider {
             "aliyun" => Some(Self::Aliyun),
             "tencent" => Some(Self::Tencent),
             "firecrawl" => Some(Self::Firecrawl),
+            "a3s" => Some(Self::A3s),
             _ => None,
         }
     }
@@ -68,6 +72,7 @@ impl BuiltinProvider {
             Self::Aliyun => "aliyun",
             Self::Tencent => "tencent",
             Self::Firecrawl => "firecrawl",
+            Self::A3s => "a3s",
         }
     }
 
@@ -81,6 +86,7 @@ impl BuiltinProvider {
             Self::Aliyun => Ok(ProviderEngine::new(AliyunProvider::from_env()?)),
             Self::Tencent => Ok(ProviderEngine::new(TencentProvider::from_env()?)),
             Self::Firecrawl => Ok(ProviderEngine::new(FirecrawlProvider::from_env()?)),
+            Self::A3s => Ok(ProviderEngine::new(A3sProvider::from_env()?)),
         }
     }
 }
@@ -106,7 +112,8 @@ mod tests {
                 "bocha",
                 "aliyun",
                 "tencent",
-                "firecrawl"
+                "firecrawl",
+                "a3s"
             ]
         );
         let defaults: Vec<_> = BuiltinProvider::DEFAULT

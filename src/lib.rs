@@ -11,7 +11,7 @@
 //! - Configurable ranking algorithms
 //! - Extensible engine interface
 //! - Provider-neutral [`SearchProvider`](providers::SearchProvider) extensions
-//! - Native AnySearch and Tavily integrations in the default plan, plus explicit TinyFish, Bocha, Alibaba Cloud IQS, Tencent Cloud Search, and Firecrawl providers. Those billed APIs stay out of [`BuiltinProvider::DEFAULT`](providers::BuiltinProvider::DEFAULT) so a missing key cannot fail every search and an ambient key cannot start billing.
+//! - Native AnySearch and Tavily integrations in the default plan, plus explicit TinyFish, Bocha, Alibaba Cloud IQS, Tencent Cloud Search, Firecrawl, and A3S providers. Those billed APIs stay out of [`BuiltinProvider::DEFAULT`](providers::BuiltinProvider::DEFAULT) so a missing key cannot fail every search and an ambient key cannot start billing.
 //! - Rich answers, full text, images, relevance, usage, and request reports
 //! - Dynamic proxy IP pool for anti-crawler protection
 //!
@@ -135,6 +135,7 @@ mod ranking;
 mod result;
 mod retry_budget;
 mod search;
+mod service;
 mod window;
 
 pub mod engines;
@@ -183,6 +184,7 @@ pub use result::{
     SearchResult, SearchResults, SearchUsage,
 };
 pub use search::Search;
+pub use service::serve_native;
 pub use window::select_structural_window;
 
 /// Browser render retry budget. Not a [`Search`] peer control — only browser

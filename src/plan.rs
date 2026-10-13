@@ -271,7 +271,7 @@ mod tests {
 
         assert_eq!(tiers[0].0, EngineTier::Api);
         assert_eq!(tiers[0].1, ["anysearch", "tavily"]);
-        for billed in ["tinyfish", "bocha", "aliyun", "tencent", "firecrawl"] {
+        for billed in ["tinyfish", "bocha", "aliyun", "tencent", "firecrawl", "a3s"] {
             assert!(
                 !plan.shortcuts().iter().any(|shortcut| shortcut == billed),
                 "{billed} is billed and must stay out of the default plan"
