@@ -78,7 +78,7 @@ impl RetryBudget {
         let admitted = self
             .inner
             .available
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |available| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |available| {
                 (available >= self.inner.retry_cost)
                     .then_some(available.saturating_sub(self.inner.retry_cost))
             })
@@ -96,16 +96,16 @@ impl RetryBudget {
         if self.inner.success_credit == 0 || self.inner.capacity == 0 {
             return;
         }
-        let _ =
-            self.inner
-                .available
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |available| {
-                    Some(
-                        available
-                            .saturating_add(self.inner.success_credit)
-                            .min(self.inner.capacity),
-                    )
-                });
+        let _ = self
+            .inner
+            .available
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |available| {
+                Some(
+                    available
+                        .saturating_add(self.inner.success_credit)
+                        .min(self.inner.capacity),
+                )
+            });
     }
 
     /// Returns point-in-time token and admission counters.
