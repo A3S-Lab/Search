@@ -8,9 +8,10 @@ mod support;
 
 use a3s_search::providers::{
     A3sConfig, A3sProvider, AliyunConfig, AliyunProvider, AnySearchProvider, BochaConfig,
-    BochaProvider, BuiltinProvider, CredentialSource, FirecrawlConfig, FirecrawlProvider,
-    ProviderEngine, ProviderReadiness, ProviderRequest, SearchProvider, TavilyProvider,
-    TencentConfig, TencentProvider, TinyFishConfig, TinyFishProvider,
+    BochaProvider, BuiltinProvider, CredentialSource, DoubaoConfig, DoubaoProvider,
+    FirecrawlConfig, FirecrawlProvider, ProviderEngine, ProviderReadiness, ProviderRequest,
+    SearchProvider, TavilyProvider, TencentConfig, TencentProvider, TinyFishConfig,
+    TinyFishProvider,
 };
 use a3s_search::{Engine, SafeSearch, SearchQuery};
 use serde_json::json;
@@ -18,7 +19,15 @@ use support::provider_server::{MockResponse, MockServer};
 use url::Url;
 
 const SECRET: &str = "sk-architecture-secret";
-const BILLED: [&str; 6] = ["tinyfish", "bocha", "aliyun", "tencent", "firecrawl", "a3s"];
+const BILLED: [&str; 7] = [
+    "tinyfish",
+    "bocha",
+    "aliyun",
+    "tencent",
+    "firecrawl",
+    "a3s",
+    "doubao",
+];
 
 type EchoBody = fn() -> String;
 type KeyedProvider = fn(Url) -> a3s_search::Result<Box<dyn SearchProvider>>;
@@ -106,7 +115,14 @@ fn required_key_shell_rejects_unsafe_endpoints_and_missing_credentials() {
         .unwrap()
         .with_endpoint(insecure.clone())
         .is_err());
-    assert!(A3sConfig::new().unwrap().with_endpoint(insecure).is_err());
+    assert!(A3sConfig::new()
+        .unwrap()
+        .with_endpoint(insecure.clone())
+        .is_err());
+    assert!(DoubaoConfig::new()
+        .unwrap()
+        .with_endpoint(insecure)
+        .is_err());
 
     assert!(matches!(
         BochaProvider::new(
@@ -149,6 +165,7 @@ async fn missing_credential_fails_before_the_network() {
         missing_tencent,
         missing_firecrawl,
         missing_a3s,
+        missing_doubao,
     ] {
         let server = MockServer::start(vec![MockResponse::json(200, b"{}")]);
         let provider = build(server.endpoint.clone()).unwrap();
@@ -167,13 +184,14 @@ async fn missing_credential_fails_before_the_network() {
 
 #[tokio::test]
 async fn success_urls_are_sealed_against_the_call_credential() {
-    let cases: [(&str, EchoBody, KeyedProvider); 6] = [
+    let cases: [(&str, EchoBody, KeyedProvider); 7] = [
         ("tinyfish", tinyfish_echo, keyed_tinyfish),
         ("bocha", bocha_echo, keyed_bocha),
         ("aliyun", aliyun_echo, keyed_aliyun),
         ("tencent", tencent_echo, keyed_tencent),
         ("firecrawl", firecrawl_echo, keyed_firecrawl),
         ("a3s", a3s_echo, keyed_a3s),
+        ("doubao", doubao_echo, keyed_doubao),
     ];
 
     for (id, body, build) in cases {
@@ -210,6 +228,7 @@ async fn http_errors_redact_the_credential() {
         keyed_tencent,
         keyed_firecrawl,
         keyed_a3s,
+        keyed_doubao,
     ] {
         let server = MockServer::start(vec![MockResponse::json(401, body.clone().into_bytes())]);
         let provider = build(server.endpoint.clone()).unwrap();
@@ -513,6 +532,36 @@ fn keyed_a3s(endpoint: Url) -> a3s_search::Result<Box<dyn SearchProvider>> {
 fn keyed_firecrawl(endpoint: Url) -> a3s_search::Result<Box<dyn SearchProvider>> {
     Ok(Box::new(FirecrawlProvider::new(
         FirecrawlConfig::new()?
+            .with_endpoint(endpoint)?
+            .with_api_key(CredentialSource::value(SECRET)),
+    )?))
+}
+
+fn doubao_echo() -> String {
+    json!({
+        "ResponseMetadata": {"RequestId": "doubao-echo"},
+        "Result": {
+            "WebResults": [{
+                "Title": "Example",
+                "Url": format!("https://example.com/?key={SECRET}"),
+                "Snippet": "Example snippet",
+            }],
+        },
+    })
+    .to_string()
+}
+
+fn missing_doubao(endpoint: Url) -> a3s_search::Result<Box<dyn SearchProvider>> {
+    Ok(Box::new(DoubaoProvider::new(
+        DoubaoConfig::new()?
+            .with_endpoint(endpoint)?
+            .with_api_key(CredentialSource::none()),
+    )?))
+}
+
+fn keyed_doubao(endpoint: Url) -> a3s_search::Result<Box<dyn SearchProvider>> {
+    Ok(Box::new(DoubaoProvider::new(
+        DoubaoConfig::new()?
             .with_endpoint(endpoint)?
             .with_api_key(CredentialSource::value(SECRET)),
     )?))

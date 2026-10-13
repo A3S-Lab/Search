@@ -69,7 +69,15 @@ fn library_owns_default_cascade_plan_and_excludes_billed_apis() {
             .collect::<Vec<_>>()
             .as_slice()
     );
-    for billed in ["tinyfish", "bocha", "aliyun", "tencent", "firecrawl"] {
+    for billed in [
+        "tinyfish",
+        "bocha",
+        "aliyun",
+        "tencent",
+        "firecrawl",
+        "a3s",
+        "doubao",
+    ] {
         assert!(!plan.shortcuts().iter().any(|shortcut| shortcut == billed));
     }
 }

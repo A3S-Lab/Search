@@ -1,6 +1,6 @@
 ---
 name: a3s-search
-description: Retrieve structured web results from multiple sources with the a3s-search CLI. The default cascade uses AnySearch, Tavily, and conventional engines. Billed providers (tinyfish, bocha, aliyun, tencent, firecrawl) stay opt-in. Use for source discovery, current web retrieval, domain-filtered search, or collecting URLs, snippets, full text, images, provider relevance, request reports, provenance, and partial-failure diagnostics. The calling agent remains responsible for query planning, semantic evaluation, corroboration, and conclusions.
+description: Retrieve structured web results from multiple sources with the a3s-search CLI. The default cascade uses AnySearch, Tavily, and conventional engines. Billed providers (tinyfish, bocha, aliyun, tencent, firecrawl, doubao) stay opt-in. Use for source discovery, current web retrieval, domain-filtered search, or collecting URLs, snippets, full text, images, provider relevance, request reports, provenance, and partial-failure diagnostics. The calling agent remains responsible for query planning, semantic evaluation, corroboration, and conclusions.
 ---
 
 # A3S Search
@@ -33,8 +33,8 @@ Use the CLI first. Request JSON whenever evidence must be inspected, compared, o
      Skill's `get_sub_domains` operation before inventing a vertical
      `sub_domain`; its required parameters must be copied into ACL.
    - Use `tavily` for ranked results, direct answers, raw content, images, and usage metadata.
-   - Use `tinyfish`, `bocha`, `aliyun`, `tencent`, or `firecrawl` only when that provider's
-     API key is configured. They are billed search APIs and are not part of
+   - Use `tinyfish`, `bocha`, `aliyun`, `tencent`, `firecrawl`, or `doubao` only when that
+     provider's API key is configured. They are billed search APIs and are not part of
      the default cascade. They implement the same `SearchProvider` protocol.
      In ACL, the result cap is always `max_results`; do not set vendor wire
      names such as `count`, `limit`, or `cnt`.
@@ -101,6 +101,7 @@ export BOCHA_API_KEY="..."
 export ALIYUN_IQS_API_KEY="..."
 export TENCENTCLOUD_WSA_APIKEY="..."
 export FIRECRAWL_API_KEY="..."
+export DOUBAO_SEARCH_API_KEY="..."
 ```
 
 Never print, commit, interpolate into shell history, or copy secret values into research output. Prefer `env("VARIABLE")` in ACL. `TAVILY_PROJECT` is sent only with authenticated Tavily requests.
@@ -159,7 +160,7 @@ choose them; explicit values intentionally override Tavily's automatic choices.
 Treat a missing report value as unknown when Tavily does not disclose an
 automatically selected depth or topic.
 
-Select a billed provider only in an explicit `--engines` list. Advertised images and full text follow the request flag that produces them: TinyFish thumbnails stay off unless `include_thumbnail = true`, Aliyun page text stays off unless `include_main_text = true`, and Bocha summaries stay on unless `summary = false`. `include_markdown = true` on Firecrawl scrapes every result and bills extra. Tencent omits the premium result-count field unless `max_results` is set.
+Select a billed provider only in an explicit `--engines` list. Advertised images and full text follow the request flag that produces them: TinyFish thumbnails stay off unless `include_thumbnail = true`, Aliyun page text stays off unless `include_main_text = true`, and Bocha summaries stay on unless `summary = false`. `include_markdown = true` on Firecrawl scrapes every result and bills extra. Tencent omits the premium result-count field unless `max_results` is set. Doubao Search returns page summaries as full text and URL-less cards as answers; `authoritative_only = true` keeps only very authoritative sources and `query_rewrite = true` rewrites conversational questions.
 
 ```acl
 provider "bocha" {

@@ -60,7 +60,7 @@ pub(crate) fn list_engines(config_path: Option<&Path>) -> Result<()> {
 
     println!();
     println!(
-        "Usage: a3s-search \"query\" -e ddg,wiki,anysearch,tavily,tinyfish,bocha,aliyun,tencent,firecrawl,a3s"
+        "Usage: a3s-search \"query\" -e ddg,wiki,anysearch,tavily,tinyfish,bocha,aliyun,tencent,firecrawl,a3s,doubao"
     );
     Ok(())
 }

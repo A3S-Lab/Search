@@ -435,7 +435,15 @@ fn help_lists_billed_providers_as_explicit_engines() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    for id in ["tinyfish", "bocha", "aliyun", "tencent", "firecrawl", "a3s"] {
+    for id in [
+        "tinyfish",
+        "bocha",
+        "aliyun",
+        "tencent",
+        "firecrawl",
+        "a3s",
+        "doubao",
+    ] {
         assert!(stdout.contains(id), "{id} missing from help:\n{stdout}");
     }
 }
@@ -452,6 +460,7 @@ fn engines_command_lists_native_readiness_without_printing_secrets() {
         provider "tencent" { api_key = null }
         provider "firecrawl" { api_key = null }
         provider "a3s" { api_key = null }
+        provider "doubao" { api_key = null }
         "#,
     );
     let output = run_cli(&[
@@ -475,13 +484,14 @@ fn engines_command_lists_native_readiness_without_printing_secrets() {
         "tencent",
         "firecrawl",
         "a3s",
+        "doubao",
     ] {
         assert!(stdout.contains(id), "missing {id} in {stdout}");
     }
     assert!(stdout.contains("ready, keyless/anonymous"), "{stdout}");
     assert!(stdout.contains("ready, authenticated"), "{stdout}");
     assert!(
-        stdout.matches("not ready, missing credential").count() >= 5,
+        stdout.matches("not ready, missing credential").count() >= 6,
         "{stdout}"
     );
 }

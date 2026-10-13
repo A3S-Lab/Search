@@ -4,9 +4,9 @@ use a3s_acl::ast::Block;
 
 use crate::providers::{
     A3sConfig, A3sProvider, AliyunConfig, AliyunProvider, AnySearchConfig, AnySearchProvider,
-    BochaConfig, BochaProvider, BuiltinProvider, FirecrawlConfig, FirecrawlProvider,
-    ProviderEngine, TavilyConfig, TavilyProvider, TencentConfig, TencentProvider, TinyFishConfig,
-    TinyFishProvider,
+    BochaConfig, BochaProvider, BuiltinProvider, DoubaoConfig, DoubaoProvider, FirecrawlConfig,
+    FirecrawlProvider, ProviderEngine, TavilyConfig, TavilyProvider, TencentConfig,
+    TencentProvider, TinyFishConfig, TinyFishProvider,
 };
 use crate::{Engine, Result, SearchError};
 
@@ -50,6 +50,8 @@ const ALIYUN_ATTRIBUTES: &[&str] = &["engine_type", "max_results", "include_main
 const TENCENT_ATTRIBUTES: &[&str] = &["max_results", "site", "industry"];
 
 const A3S_ATTRIBUTES: &[&str] = &["max_results", "include_markdown", "auth_header"];
+
+const DOUBAO_ATTRIBUTES: &[&str] = &["max_results", "authoritative_only", "query_rewrite"];
 
 const FIRECRAWL_ATTRIBUTES: &[&str] = &[
     "max_results",
@@ -106,6 +108,8 @@ pub enum ProviderSettings {
     Firecrawl(FirecrawlConfig),
     /// Native A3S configuration.
     A3s(A3sConfig),
+    /// Native Doubao Search configuration.
+    Doubao(DoubaoConfig),
 }
 
 impl ProviderSettings {
@@ -120,6 +124,7 @@ impl ProviderSettings {
             Self::Tencent(_) => BuiltinProvider::Tencent,
             Self::Firecrawl(_) => BuiltinProvider::Firecrawl,
             Self::A3s(_) => BuiltinProvider::A3s,
+            Self::Doubao(_) => BuiltinProvider::Doubao,
         }
     }
 
@@ -145,6 +150,7 @@ impl ProviderSettings {
                 Ok(ProviderEngine::new(FirecrawlProvider::new(config.clone())?))
             }
             Self::A3s(config) => Ok(ProviderEngine::new(A3sProvider::new(config.clone())?)),
+            Self::Doubao(config) => Ok(ProviderEngine::new(DoubaoProvider::new(config.clone())?)),
         }
     }
 }
@@ -220,6 +226,7 @@ pub(super) fn parse_provider_block(block: &Block) -> Result<(String, ProviderEnt
         BuiltinProvider::Tencent => TENCENT_ATTRIBUTES,
         BuiltinProvider::Firecrawl => FIRECRAWL_ATTRIBUTES,
         BuiltinProvider::A3s => A3S_ATTRIBUTES,
+        BuiltinProvider::Doubao => DOUBAO_ATTRIBUTES,
     };
     reject_unknown_attributes(block, provider, provider_attributes)?;
 
@@ -254,6 +261,7 @@ pub(super) fn parse_provider_block(block: &Block) -> Result<(String, ProviderEnt
             ProviderSettings::Firecrawl(ai::parse_firecrawl(block, provider)?)
         }
         BuiltinProvider::A3s => ProviderSettings::A3s(ai::parse_a3s(block, provider)?),
+        BuiltinProvider::Doubao => ProviderSettings::Doubao(ai::parse_doubao(block, provider)?),
     };
 
     Ok((
@@ -411,6 +419,9 @@ mod tests {
             r#"provider "a3s" { categories = ["research"] }"#,
             r#"provider "a3s" { max_results = 0 }"#,
             r#"provider "a3s" { auth_header = "basic" }"#,
+            r#"provider "doubao" { max_results = 51 }"#,
+            r#"provider "doubao" { authoritative_only = "yes" }"#,
+            r#"provider "doubao" { auth_level = 1 }"#,
         ] {
             assert!(SearchConfig::parse(acl).is_err(), "{acl}");
         }

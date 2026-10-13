@@ -175,6 +175,7 @@ not met the structural requirement.
 | Native API | `aliyun` | Alibaba Cloud IQS | Explicit, billed |
 | Native API | `tencent` | Tencent Cloud Search | Explicit, billed |
 | Native API | `firecrawl` | Firecrawl Search | Explicit, billed |
+| Native API | `doubao` | Volcengine Doubao Search | Explicit, billed |
 
 `bing_cn` requests `www.bing.com/search` with `format=rss`, `setlang=zh-CN`,
 and `mkt=zh-CN`. It does not use `cn.bing.com`: that host redirects some
@@ -186,8 +187,8 @@ result set.
 
 ### Billed APIs stay out of the default plan
 
-TinyFish, Bocha, Alibaba Cloud IQS, Tencent Cloud Search, and Firecrawl require
-an API key. They are omitted from the default cascade so a missing key does not
+TinyFish, Bocha, Alibaba Cloud IQS, Tencent Cloud Search, Firecrawl, and
+Volcengine Doubao Search require an API key. They are omitted from the default cascade so a missing key does not
 fail every search and an ambient key does not start billing. Select them
 explicitly:
 
@@ -197,6 +198,7 @@ export BOCHA_API_KEY="..."
 export ALIYUN_IQS_API_KEY="..."
 export TENCENTCLOUD_WSA_APIKEY="..."
 export FIRECRAWL_API_KEY="..."
+export DOUBAO_SEARCH_API_KEY="..."
 
 a3s-search "query" --engines bocha --format json
 ```
@@ -228,6 +230,7 @@ treat an omitted answer, image, usage record, or page text as available.
 | Aliyun IQS | `LiteAdvanced`, no page text | `full_text` follows `include_main_text` (default false). Images may still appear; the request cannot disable them |
 | Tencent | `Cnt` omitted | Full text and images may appear. Set premium `max_results` only when that billed count is intended |
 | Firecrawl | Web metadata | `full_text` follows `include_markdown` (default false). That flag scrapes each result and bills extra. `images` follows image sources |
+| Doubao Search | All authority levels, no query rewrite | Page summaries arrive as `full_text`. URL-less rich cards (weather, rates) become answers. Set `authoritative_only = true` for very authoritative sources only and `query_rewrite = true` for conversational questions. Application errors arrive as HTTP 200 and are still classified |
 
 Required-credential JSON APIs share one transport shell. The vendor module owns
 options, request mapping, response mapping, and error-code classification.
@@ -288,6 +291,13 @@ provider "bocha" {
   api_key     = env("BOCHA_API_KEY")
   max_results = 8
   summary     = true
+}
+
+provider "doubao" {
+  api_key            = env("DOUBAO_SEARCH_API_KEY")
+  max_results        = 10
+  authoritative_only = false
+  query_rewrite      = true
 }
 
 provider "aliyun" {

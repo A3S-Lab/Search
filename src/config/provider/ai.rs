@@ -3,9 +3,9 @@
 use a3s_acl::ast::Block;
 
 use crate::providers::{
-    A3sAuth, A3sConfig, AliyunConfig, AliyunEngineType, BochaConfig, FirecrawlCategory,
-    FirecrawlConfig, FirecrawlSource, TencentConfig, TencentIndustry, TinyFishConfig,
-    TinyFishDomainType,
+    A3sAuth, A3sConfig, AliyunConfig, AliyunEngineType, BochaConfig, DoubaoConfig,
+    FirecrawlCategory, FirecrawlConfig, FirecrawlSource, TencentConfig, TencentIndustry,
+    TinyFishConfig, TinyFishDomainType,
 };
 use crate::Result;
 
@@ -168,6 +168,29 @@ pub(super) fn parse_a3s(block: &Block, provider: &str) -> Result<A3sConfig> {
                 ));
             }
         });
+    }
+    if let Some(http) = provider_http_config(block, provider)? {
+        config = config.with_http_config(http);
+    }
+    Ok(config)
+}
+
+pub(super) fn parse_doubao(block: &Block, provider: &str) -> Result<DoubaoConfig> {
+    let mut config = DoubaoConfig::new()?;
+    if let Some(endpoint) = optional_url(block, provider, "endpoint")? {
+        config = config.with_endpoint(endpoint)?;
+    }
+    if let Some(api_key) = optional_credential(block, provider, "api_key")? {
+        config = config.with_api_key(api_key);
+    }
+    if let Some(max_results) = optional_u8(block, provider, "max_results")? {
+        config = config.with_max_results(max_results)?;
+    }
+    if let Some(authoritative_only) = optional_bool(block, provider, "authoritative_only")? {
+        config = config.with_authoritative_only(authoritative_only);
+    }
+    if let Some(query_rewrite) = optional_bool(block, provider, "query_rewrite")? {
+        config = config.with_query_rewrite(query_rewrite);
     }
     if let Some(http) = provider_http_config(block, provider)? {
         config = config.with_http_config(http);

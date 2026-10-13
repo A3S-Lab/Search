@@ -10,10 +10,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use a3s_search::providers::{
     A3sConfig, A3sProvider, AliyunConfig, AliyunProvider, BochaConfig, BochaProvider,
-    CredentialSource, FirecrawlCategory, FirecrawlConfig, FirecrawlProvider, FirecrawlSource,
-    ProviderEngine, ProviderRequest, SearchProvider, TavilyAnswer, TavilyConfig, TavilyProvider,
-    TavilyRawContent, TencentConfig, TencentProvider, TinyFishConfig, TinyFishDomainType,
-    TinyFishProvider,
+    CredentialSource, DoubaoConfig, DoubaoProvider, FirecrawlCategory, FirecrawlConfig,
+    FirecrawlProvider, FirecrawlSource, ProviderEngine, ProviderRequest, SearchProvider,
+    TavilyAnswer, TavilyConfig, TavilyProvider, TavilyRawContent, TencentConfig, TencentProvider,
+    TinyFishConfig, TinyFishDomainType, TinyFishProvider,
 };
 use a3s_search::{Engine, SearchConfig, SearchQuery, TimeRange};
 use serde_json::{json, Value};
@@ -78,6 +78,23 @@ async fn http_200_application_errors_are_not_empty_success() {
             .to_string(),
             "provider_quota",
             "w-app",
+        ),
+        (
+            "doubao",
+            json!({
+                "ResponseMetadata": {
+                    "RequestId": "d-app",
+                    "Error": {
+                        "CodeN": 10412,
+                        "Code": "10412",
+                        "Message": format!("plan exhausted {SECRET}"),
+                    },
+                },
+                "Result": null,
+            })
+            .to_string(),
+            "provider_quota",
+            "d-app",
         ),
     ];
 
@@ -406,7 +423,15 @@ fn vendor_options_that_the_api_rejects_never_become_a_request() {
 
 #[tokio::test]
 async fn empty_queries_fail_before_the_network() {
-    for id in ["tinyfish", "bocha", "aliyun", "tencent", "firecrawl", "a3s"] {
+    for id in [
+        "tinyfish",
+        "bocha",
+        "aliyun",
+        "tencent",
+        "firecrawl",
+        "a3s",
+        "doubao",
+    ] {
         let server = MockServer::start(vec![ok(id)]);
         let error = keyed(id, server.endpoint.clone())
             .search(&ProviderRequest::new("   "))
@@ -658,6 +683,7 @@ fn ok(id: &str) -> MockResponse {
         "tencent" => json!({"Response": {}}),
         "firecrawl" => json!({"success": true, "data": {}}),
         "a3s" => json!({"success": true, "data": {}}),
+        "doubao" => json!({"ResponseMetadata": {}, "Result": {}}),
         _ => unreachable!("{id}"),
     };
     MockResponse::json(200, body.to_string().into_bytes())
@@ -718,6 +744,16 @@ fn keyed(id: &str, endpoint: Url) -> Box<dyn SearchProvider> {
         "firecrawl" => Box::new(
             FirecrawlProvider::new(
                 FirecrawlConfig::new()
+                    .unwrap()
+                    .with_endpoint(endpoint)
+                    .unwrap()
+                    .with_api_key(CredentialSource::value(SECRET)),
+            )
+            .unwrap(),
+        ),
+        "doubao" => Box::new(
+            DoubaoProvider::new(
+                DoubaoConfig::new()
                     .unwrap()
                     .with_endpoint(endpoint)
                     .unwrap()

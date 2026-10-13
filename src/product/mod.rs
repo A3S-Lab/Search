@@ -1,7 +1,7 @@
 //! Product cascade: library-owned plan execution for embedders and the CLI.
 //!
 //! [`crate::EngineTierPlan`] selects sources. This module runs that plan through
-//! [`SearchCascade`] with shared reliability controls.
+//! [`crate::SearchCascade`] with shared reliability controls.
 
 mod browser;
 mod run;

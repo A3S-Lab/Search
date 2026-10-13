@@ -155,6 +155,7 @@ A3S Search 不维护私有网页索引。没有显式选择、也没有 ACL 源�
 | 原生 API | `aliyun` | 阿里云 IQS | 显式，计费 |
 | 原生 API | `tencent` | 腾讯云搜索 | 显式，计费 |
 | 原生 API | `firecrawl` | Firecrawl Search | 显式，计费 |
+| 原生 API | `doubao` | 火山引擎豆包搜索 | 显式，计费 |
 
 `bing_cn` 请求 `www.bing.com/search`，并带上 `format=rss`、`setlang=zh-CN` 和 `mkt=zh-CN`。不使用 `cn.bing.com`：该主机会把部分客户端从 `/search` 重定向到首页，随后返回 HTML。
 
@@ -162,7 +163,7 @@ HTML 引擎把 CAPTCHA、同意页和反爬页拒绝为类型化的 `challenge` 
 
 ### 计费 API 不进入默认计划
 
-TinyFish、Bocha、阿里云 IQS、腾讯云搜索和 Firecrawl 需要 API key。它们被排除在默认级联之外，以免缺少 key 时每次搜索都失败，或环境里已有 key 时意外计费。必须显式选择：
+TinyFish、Bocha、阿里云 IQS、腾讯云搜索、Firecrawl 和火山引擎豆包搜索需要 API key。它们被排除在默认级联之外，以免缺少 key 时每次搜索都失败，或环境里已有 key 时意外计费。必须显式选择：
 
 ```bash
 export TINYFISH_API_KEY="..."
@@ -170,6 +171,7 @@ export BOCHA_API_KEY="..."
 export ALIYUN_IQS_API_KEY="..."
 export TENCENTCLOUD_WSA_APIKEY="..."
 export FIRECRAWL_API_KEY="..."
+export DOUBAO_SEARCH_API_KEY="..."
 
 a3s-search "query" --engines bocha --format json
 ```
@@ -195,6 +197,7 @@ AnySearch 和 Tavily 接受可选 bearer 认证，也可以无 key 运行。`--p
 | 阿里云 IQS | `LiteAdvanced`，无页面正文 | `full_text` 跟随 `include_main_text`（默认 false）。图片仍可能出现；请求无法关闭它们 |
 | 腾讯云 | 省略 `Cnt` | 全文和图片仍可能出现。只有打算使用该付费条数时才设置 `max_results` |
 | Firecrawl | 网页元数据 | `full_text` 跟随 `include_markdown`（默认 false）。该标志会抓取每条结果并额外计费。`images` 跟随图片源 |
+| 豆包搜索 | 全部权威等级，不改写查询 | 页面摘要作为 `full_text` 返回。没有 URL 的卡片（天气、汇率）转为答案。设置 `authoritative_only = true` 只要非常权威的来源，设置 `query_rewrite = true` 改写口语化问题。应用错误以 HTTP 200 返回，仍会被分类 |
 
 需要凭证的 JSON API 共享一个传输外壳。厂商模块只拥有选项、请求映射、响应映射和错误码分类。可选认证和 MCP 编解码不进入这个外壳。凭证放在 `env("VARIABLE")` 中，不放进端点 URL，并在响应丢弃前从成功体中封口。
 

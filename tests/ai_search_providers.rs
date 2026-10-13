@@ -2,9 +2,9 @@ mod support;
 
 use a3s_search::providers::{
     A3sAuth, A3sConfig, A3sProvider, AliyunConfig, AliyunProvider, BochaConfig, BochaProvider,
-    CredentialSource, FirecrawlCategory, FirecrawlConfig, FirecrawlProvider, FirecrawlSource,
-    ProviderRequest, SearchProvider, TencentConfig, TencentProvider, TinyFishConfig,
-    TinyFishDomainType, TinyFishProvider,
+    CredentialSource, DoubaoConfig, DoubaoProvider, FirecrawlCategory, FirecrawlConfig,
+    FirecrawlProvider, FirecrawlSource, ProviderRequest, SearchProvider, TencentConfig,
+    TencentProvider, TinyFishConfig, TinyFishDomainType, TinyFishProvider,
 };
 use a3s_search::TimeRange;
 use serde_json::Value;
@@ -427,4 +427,132 @@ async fn a3s_posts_web_search_and_redacts_the_key() {
     let error = provider.search(&request("rust")).await.unwrap_err();
     assert_eq!(error.kind(), "provider_authentication");
     assert!(!error.to_string().contains("a3s-secret"));
+}
+
+#[tokio::test]
+async fn doubao_posts_web_search_maps_cards_and_classifies_200_errors() {
+    let server = MockServer::start(vec![
+        MockResponse::json(
+            200,
+            br##"{
+                "ResponseMetadata": {"RequestId": "db-1"},
+                "Result": {
+                    "ResultCount": 2,
+                    "TimeCost": 87,
+                    "WebResults": [
+                        {
+                            "Title": "# Weather",
+                            "Url": "",
+                            "Summary": "# Hangzhou weather\n\n## Today\n- 25C sunny doubao-secret"
+                        },
+                        {
+                            "Title": "Rust <em>1.90</em>",
+                            "Url": "https://blog.rust-lang.org/2025/09/18/Rust-1.90.0/",
+                            "Snippet": "Announcing doubao-secret",
+                            "Summary": "Rust 1.90 ships workspace publishing",
+                            "Content": "full page",
+                            "PublishTime": "2025-09-18T00:00:00+08:00",
+                            "LogoUrl": "https://blog.rust-lang.org/favicon.ico"
+                        }
+                    ]
+                }
+            }"##,
+        ),
+        MockResponse::json(
+            200,
+            br#"{"ResponseMetadata":{"RequestId":"db-2","Error":{"CodeN":700901,"Code":"invalid_api_key","Message":"invalid api key doubao-secret"}},"Result":null}"#,
+        ),
+        MockResponse::json(
+            200,
+            br#"{"ResponseMetadata":{"Error":{"CodeN":10406,"Code":"10406","Message":"free quota exhausted"}},"Result":null}"#,
+        ),
+        MockResponse::json(429, br#"{"ResponseMetadata":{"Error":{"Code":"FlowLimitExceeded"}}}"#),
+    ]);
+    let provider = DoubaoProvider::new(
+        DoubaoConfig::new()
+            .unwrap()
+            .with_endpoint(server.endpoint.clone())
+            .unwrap()
+            .with_api_key(CredentialSource::value("doubao-secret"))
+            .with_max_results(5)
+            .unwrap()
+            .with_authoritative_only(true)
+            .with_query_rewrite(true),
+    )
+    .unwrap();
+
+    let response = provider
+        .search(&request("rust").with_time_range(TimeRange::Week))
+        .await
+        .unwrap();
+    assert_eq!(response.results.len(), 1);
+    let hit = &response.results[0];
+    assert_eq!(
+        hit.url,
+        "https://blog.rust-lang.org/2025/09/18/Rust-1.90.0/"
+    );
+    assert_eq!(hit.title, "Rust 1.90");
+    assert!(!hit.snippet.contains("doubao-secret"));
+    assert_eq!(
+        hit.full_text.as_deref(),
+        Some("Rust 1.90 ships workspace publishing")
+    );
+    assert_eq!(
+        hit.published_date.as_deref(),
+        Some("2025-09-18T00:00:00+08:00")
+    );
+    assert_eq!(
+        response.answers,
+        ["Hangzhou weather Today 25C sunny [REDACTED]"]
+    );
+    assert_eq!(response.report.request_id.as_deref(), Some("db-1"));
+    assert_eq!(response.report.total_results, Some(2));
+    assert_eq!(response.report.response_time_ms, Some(87));
+
+    let captured = &server.requests()[0];
+    assert_eq!(
+        captured.header("authorization"),
+        Some("Bearer doubao-secret")
+    );
+    let body: Value = serde_json::from_slice(&captured.body).unwrap();
+    assert_eq!(body["Query"], "rust");
+    assert_eq!(body["SearchType"], "web");
+    assert_eq!(body["Count"], 5);
+    assert_eq!(body["TimeRange"], "OneWeek");
+    assert_eq!(body["Filter"]["AuthInfoLevel"], 1);
+    assert_eq!(body["QueryControl"]["QueryRewrite"], true);
+
+    let auth = provider.search(&request("rust")).await.unwrap_err();
+    assert_eq!(auth.kind(), "provider_authentication");
+    assert!(!auth.to_string().contains("doubao-secret"));
+
+    let quota = provider.search(&request("rust")).await.unwrap_err();
+    assert_eq!(quota.kind(), "provider_quota");
+
+    let limited = provider.search(&request("rust")).await.unwrap_err();
+    assert_eq!(limited.kind(), "provider_rate_limited");
+}
+
+#[tokio::test]
+async fn doubao_default_request_omits_optional_filters() {
+    let server = MockServer::start(vec![MockResponse::json(
+        200,
+        br#"{"ResponseMetadata":{},"Result":{"WebResults":null}}"#,
+    )]);
+    let provider = DoubaoProvider::new(
+        DoubaoConfig::new()
+            .unwrap()
+            .with_endpoint(server.endpoint.clone())
+            .unwrap()
+            .with_api_key(CredentialSource::value("doubao-secret")),
+    )
+    .unwrap();
+
+    let response = provider.search(&request("rust")).await.unwrap();
+    assert!(response.results.is_empty());
+    let body: Value = serde_json::from_slice(&server.requests()[0].body).unwrap();
+    assert_eq!(body["Count"], 10);
+    for absent in ["TimeRange", "Filter", "QueryControl"] {
+        assert!(body.get(absent).is_none(), "{absent} must be omitted");
+    }
 }

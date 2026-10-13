@@ -43,7 +43,7 @@ struct Cli {
 
     /// Exact search engines to use (comma-separated); omit for the default cascade
     /// Available: brave_browser, bing_browser, g, baidu, ddg, brave, bing, wiki,
-    /// sogou, 360, bing_cn, anysearch, tavily, tinyfish, bocha, aliyun, tencent, firecrawl, a3s
+    /// sogou, 360, bing_cn, anysearch, tavily, tinyfish, bocha, aliyun, tencent, firecrawl, a3s, doubao
     #[arg(short, long, value_delimiter = ',')]
     engines: Option<Vec<String>>,
 
