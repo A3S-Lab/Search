@@ -170,6 +170,17 @@ pub struct ProviderEntry {
 }
 
 impl ProviderEntry {
+    /// Creates an enabled entry with default weight and timeout, for hosts that
+    /// build configuration in code rather than from ACL.
+    pub fn new(settings: ProviderSettings) -> Self {
+        Self {
+            enabled: true,
+            weight: 1.0,
+            timeout: None,
+            settings,
+        }
+    }
+
     /// Returns the stable provider identifier.
     pub const fn id(&self) -> &'static str {
         self.settings.id()

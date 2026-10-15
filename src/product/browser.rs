@@ -1,6 +1,9 @@
 //! Lazy browser-tier construction and cleanup.
 
+use std::path::PathBuf;
 use std::time::Instant;
+
+use futures::future::{BoxFuture, Shared};
 
 use crate::{EngineFailure, EngineOutcomeKind, SearchReport, SearchResults};
 
@@ -58,6 +61,22 @@ impl HeadlessBrowser {
     }
 }
 
+/// Browser runtime the host already provisioned. A3S Search never downloads
+/// or installs a browser for it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HeadlessRuntime {
+    /// Exact executable for the selected backend; discovery when unset.
+    pub executable: Option<PathBuf>,
+    /// Concurrent page limit; the backend default when unset.
+    pub max_tabs: Option<usize>,
+    /// Extra launch arguments for Chrome-compatible backends.
+    pub launch_args: Vec<String>,
+}
+
+/// A runtime the host may still be provisioning. The cascade awaits it only
+/// when the headless tier runs, so provisioning can overlap earlier tiers.
+pub type PendingHeadlessRuntime = Shared<BoxFuture<'static, Result<HeadlessRuntime, String>>>;
+
 #[cfg(feature = "headless")]
 use std::{sync::Arc, time::Duration};
 
@@ -94,23 +113,65 @@ pub(super) async fn execute_headless_tier(
         return results;
     }
 
+    let waited = Instant::now();
+    let runtime = match controls.headless_runtime.clone() {
+        Some(pending) => match pending.await {
+            Ok(runtime) => runtime,
+            Err(message) => {
+                let mut results = SearchResults::new();
+                results.add_failure(
+                    EngineFailure::new(
+                        request.browser.as_str(),
+                        "headless_backend_unavailable",
+                        message,
+                    )
+                    .with_transient(true),
+                );
+                add_retry_observation(&mut results, 0, request.browser_max_retries);
+                return results;
+            }
+        },
+        None => HeadlessRuntime::default(),
+    };
+    // Host provisioning runs on its own budget, not the retrieval deadline.
+    let deadline = deadline.checked_add(waited.elapsed()).unwrap_or(deadline);
+    let tier = HeadlessTier {
+        request,
+        controls,
+        runtime: &runtime,
+        shortcuts,
+        deadline,
+        remaining_tiers,
+    };
+
     if request.browser == HeadlessBrowser::Moli {
-        return execute_moli_headless_tier(request, controls, shortcuts, deadline, remaining_tiers)
-            .await;
+        return execute_moli_headless_tier(tier).await;
     }
 
-    execute_browser_headless_tier(request, controls, shortcuts, deadline, remaining_tiers).await
+    execute_browser_headless_tier(tier).await
 }
 
 #[cfg(feature = "headless")]
-async fn execute_moli_headless_tier(
-    request: &CascadeRequest<'_>,
-    controls: &CascadeControls,
-    shortcuts: &[String],
+struct HeadlessTier<'a> {
+    request: &'a CascadeRequest<'a>,
+    controls: &'a CascadeControls,
+    runtime: &'a HeadlessRuntime,
+    shortcuts: &'a [String],
     deadline: Instant,
     remaining_tiers: usize,
-) -> SearchResults {
-    let pool = Arc::new(MoliPool::new(moli_pool_config(request.proxy)));
+}
+
+#[cfg(feature = "headless")]
+async fn execute_moli_headless_tier(tier: HeadlessTier<'_>) -> SearchResults {
+    let HeadlessTier {
+        request,
+        controls,
+        runtime,
+        shortcuts,
+        deadline,
+        remaining_tiers,
+    } = tier;
+    let pool = Arc::new(MoliPool::new(moli_pool_config(request.proxy, runtime)));
     if let Err(error) = pool.warm_up() {
         let mut results = SearchResults::new();
         results.add_failure(moli_setup_failure(error));
@@ -122,7 +183,8 @@ async fn execute_moli_headless_tier(
         deadline.saturating_duration_since(Instant::now()),
         remaining_tiers,
     );
-    let retry_budget = RetryBudget::default();
+    let retry_budget: RetryBudget = controls.retry_budget.clone().unwrap_or_default();
+    let retries_before = retry_budget.snapshot().admitted_retries;
     let mut search = configured_search(request.config, controls);
     let mut setup_results = SearchResults::new();
     let renderer: Arc<dyn PageRenderer> = pool.clone();
@@ -145,20 +207,25 @@ async fn execute_moli_headless_tier(
     )
     .await;
     pool.shutdown();
-    let retries = retry_budget.snapshot().admitted_retries;
+    let retries = retry_budget
+        .snapshot()
+        .admitted_retries
+        .saturating_sub(retries_before);
     add_retry_observation(&mut results, retries, request.browser_max_retries);
     results
 }
 
 #[cfg(feature = "headless")]
-async fn execute_browser_headless_tier(
-    request: &CascadeRequest<'_>,
-    controls: &CascadeControls,
-    shortcuts: &[String],
-    deadline: Instant,
-    remaining_tiers: usize,
-) -> SearchResults {
-    let pool_config = match browser_pool_config(request.proxy, request.browser) {
+async fn execute_browser_headless_tier(tier: HeadlessTier<'_>) -> SearchResults {
+    let HeadlessTier {
+        request,
+        controls,
+        runtime,
+        shortcuts,
+        deadline,
+        remaining_tiers,
+    } = tier;
+    let pool_config = match browser_pool_config(request.proxy, request.browser, runtime) {
         Ok(config) => config,
         Err(failure) => {
             let mut results = SearchResults::new();
@@ -177,7 +244,8 @@ async fn execute_browser_headless_tier(
         deadline.saturating_duration_since(Instant::now()),
         remaining_tiers,
     );
-    let retry_budget = RetryBudget::default();
+    let retry_budget: RetryBudget = controls.retry_budget.clone().unwrap_or_default();
+    let retries_before = retry_budget.snapshot().admitted_retries;
     let mut search = configured_search(request.config, controls);
     let mut setup_results = SearchResults::new();
     let renderer_for_shortcuts = shared_pool.clone();
@@ -213,7 +281,10 @@ async fn execute_browser_headless_tier(
     )
     .await;
     cleanup.shutdown(deadline).await;
-    let retries = retry_budget.snapshot().admitted_retries;
+    let retries = retry_budget
+        .snapshot()
+        .admitted_retries
+        .saturating_sub(retries_before);
     add_retry_observation(&mut results, retries, request.browser_max_retries);
     results
 }
@@ -320,6 +391,7 @@ pub(super) async fn execute_headless_tier(
 fn browser_pool_config(
     proxy: Option<&str>,
     browser: HeadlessBrowser,
+    runtime: &HeadlessRuntime,
 ) -> Result<BrowserPoolConfig, EngineFailure> {
     let provider = match browser {
         HeadlessBrowser::Moli => {
@@ -329,21 +401,30 @@ fn browser_pool_config(
                 "Moli is configured through its standalone renderer, not BrowserPool",
             ));
         }
-        HeadlessBrowser::Chrome => BrowserProvider::DiscoveredChrome,
-        HeadlessBrowser::Lightpanda => lightpanda_provider()?,
+        HeadlessBrowser::Chrome => runtime.executable.clone().map_or(
+            BrowserProvider::DiscoveredChrome,
+            BrowserProvider::ChromeExecutable,
+        ),
+        HeadlessBrowser::Lightpanda => lightpanda_provider(runtime.executable.clone())?,
     };
+    let defaults = BrowserPoolConfig::default();
     Ok(BrowserPoolConfig {
         proxy_url: proxy.map(str::to_string),
         provider,
-        ..BrowserPoolConfig::default()
+        max_tabs: runtime.max_tabs.unwrap_or(defaults.max_tabs),
+        launch_args: runtime.launch_args.clone(),
+        ..defaults
     })
 }
 
 #[cfg(feature = "headless")]
-fn moli_pool_config(proxy: Option<&str>) -> MoliPoolConfig {
+fn moli_pool_config(proxy: Option<&str>, runtime: &HeadlessRuntime) -> MoliPoolConfig {
+    let defaults = MoliPoolConfig::default();
     MoliPoolConfig {
+        executable: runtime.executable.clone(),
         proxy_url: proxy.map(str::to_string),
-        ..MoliPoolConfig::default()
+        max_tabs: runtime.max_tabs.unwrap_or(defaults.max_tabs),
+        ..defaults
     }
 }
 
@@ -358,12 +439,15 @@ fn moli_setup_failure(error: crate::a3s_use_browser::UseError) -> EngineFailure 
 }
 
 #[cfg(all(feature = "headless", feature = "lightpanda"))]
-fn lightpanda_provider() -> Result<BrowserProvider, EngineFailure> {
-    Ok(BrowserProvider::DiscoveredLightpanda)
+fn lightpanda_provider(executable: Option<PathBuf>) -> Result<BrowserProvider, EngineFailure> {
+    Ok(executable.map_or(
+        BrowserProvider::DiscoveredLightpanda,
+        BrowserProvider::LightpandaExecutable,
+    ))
 }
 
 #[cfg(all(feature = "headless", not(feature = "lightpanda")))]
-fn lightpanda_provider() -> Result<BrowserProvider, EngineFailure> {
+fn lightpanda_provider(_executable: Option<PathBuf>) -> Result<BrowserProvider, EngineFailure> {
     Err(EngineFailure::new(
         "lightpanda",
         "headless_backend_unavailable",
@@ -491,7 +575,7 @@ mod tests {
     #[cfg(feature = "headless")]
     #[test]
     fn default_moli_pool_preserves_the_cli_proxy() {
-        let config = moli_pool_config(Some("http://127.0.0.1:8080"));
+        let config = moli_pool_config(Some("http://127.0.0.1:8080"), &HeadlessRuntime::default());
 
         assert_eq!(config.proxy_url.as_deref(), Some("http://127.0.0.1:8080"));
         assert!(config.executable.is_none());
@@ -500,11 +584,38 @@ mod tests {
     #[cfg(feature = "headless")]
     #[test]
     fn explicit_chrome_pool_is_pinned_to_discovery() {
-        let config = browser_pool_config(Some("http://127.0.0.1:8080"), HeadlessBrowser::Chrome)
-            .expect("Chrome pool configuration");
+        let config = browser_pool_config(
+            Some("http://127.0.0.1:8080"),
+            HeadlessBrowser::Chrome,
+            &HeadlessRuntime::default(),
+        )
+        .expect("Chrome pool configuration");
 
         assert!(matches!(config.provider, BrowserProvider::DiscoveredChrome));
         assert_eq!(config.proxy_url.as_deref(), Some("http://127.0.0.1:8080"));
+    }
+
+    #[cfg(feature = "headless")]
+    #[test]
+    fn host_prepared_runtime_reaches_both_pool_kinds() {
+        let runtime = HeadlessRuntime {
+            executable: Some(PathBuf::from("/opt/host/browser")),
+            max_tabs: Some(2),
+            launch_args: vec!["--lang=en".to_string()],
+        };
+
+        let moli = moli_pool_config(None, &runtime);
+        assert_eq!(moli.executable, runtime.executable);
+        assert_eq!(moli.max_tabs, 2);
+
+        let chrome = browser_pool_config(None, HeadlessBrowser::Chrome, &runtime)
+            .expect("Chrome pool configuration");
+        assert_eq!(
+            chrome.provider,
+            BrowserProvider::ChromeExecutable(PathBuf::from("/opt/host/browser"))
+        );
+        assert_eq!(chrome.max_tabs, 2);
+        assert_eq!(chrome.launch_args, ["--lang=en"]);
     }
 
     #[cfg(feature = "headless")]
@@ -529,8 +640,12 @@ mod tests {
     #[cfg(all(feature = "headless", not(feature = "lightpanda")))]
     #[test]
     fn lightpanda_requires_explicit_cargo_feature() {
-        let failure = browser_pool_config(None, HeadlessBrowser::Lightpanda)
-            .expect_err("Lightpanda must not be implicit in a default build");
+        let failure = browser_pool_config(
+            None,
+            HeadlessBrowser::Lightpanda,
+            &HeadlessRuntime::default(),
+        )
+        .expect_err("Lightpanda must not be implicit in a default build");
 
         assert_eq!(failure.kind, "headless_backend_unavailable");
     }
@@ -538,8 +653,12 @@ mod tests {
     #[cfg(all(feature = "headless", feature = "lightpanda"))]
     #[test]
     fn explicit_lightpanda_selection_uses_lightpanda_provider() {
-        let config = browser_pool_config(None, HeadlessBrowser::Lightpanda)
-            .expect("compiled Lightpanda pool configuration");
+        let config = browser_pool_config(
+            None,
+            HeadlessBrowser::Lightpanda,
+            &HeadlessRuntime::default(),
+        )
+        .expect("compiled Lightpanda pool configuration");
 
         assert!(matches!(
             config.provider,

@@ -7,16 +7,17 @@ use crate::engines::{
     Bing, BingChina, BingParser, Brave, BraveParser, DuckDuckGo, DuckDuckGoParser, So360,
     So360Parser, Sogou, SogouParser, Wikipedia,
 };
-use crate::product::browser::{self, HeadlessBrowser};
+use crate::product::browser::{self, HeadlessBrowser, PendingHeadlessRuntime};
 use crate::product::sources::{
     configured_engine_config, create_http_fetcher, create_provider_engine, ensure_provider_ready,
     is_config_enabled,
 };
 use crate::providers::BuiltinProvider;
+use crate::retry::RetryBudget;
 use crate::{
     Bulkhead, CircuitBreaker, Engine, EngineFailure, EngineTier, EngineTierPlan, HttpFetcher,
-    PageFetcher, RetrievalRequirements, Search, SearchCascade, SearchCascadeOutcomeV2,
-    SearchCoalescer, SearchConfig, SearchError, SearchQuery, SearchResults,
+    Metrics, PageFetcher, RetrievalRequirements, Search, SearchCascade, SearchCascadeOutcomeV2,
+    SearchCoalescer, SearchConfig, SearchError, SearchQuery, SearchResult, SearchResults,
 };
 
 /// Default end-to-end deadline when ACL and callers omit one.
@@ -33,12 +34,23 @@ pub struct CascadeRequest<'a> {
     pub browser_max_retries: u32,
 }
 
-/// Shared reliability controls for one cascade run.
+/// Decides whether a host can use a result; rejected rows never count toward
+/// the structural gate.
+pub type ResultAdmission = Arc<dyn Fn(&SearchResult) -> bool + Send + Sync>;
+
+/// Shared reliability controls and host-owned resources for one cascade run.
 #[derive(Clone, Default)]
 pub struct CascadeControls {
     pub circuit: CircuitBreaker,
     pub bulkhead: Bulkhead,
     pub coalescer: SearchCoalescer,
+    /// Host metrics sink shared by every tier.
+    pub metrics: Option<Arc<Metrics>>,
+    /// Host retry budget for browser renders; a fresh budget per run when unset.
+    pub retry_budget: Option<RetryBudget>,
+    /// Browser runtime the host prepares; awaited only when the headless tier runs.
+    pub headless_runtime: Option<PendingHeadlessRuntime>,
+    pub admission: Option<ResultAdmission>,
 }
 
 impl CascadeControls {
@@ -73,7 +85,7 @@ pub async fn execute_cascade(
             break;
         }
         let remaining_tiers = tiers.len().saturating_sub(index + 1);
-        let results = match tier {
+        let mut results = match tier {
             EngineTier::Headless => {
                 browser::execute_headless_tier(
                     &request,
@@ -96,12 +108,20 @@ pub async fn execute_cascade(
                 .await?
             }
         };
+        admit_results(&mut results, controls.admission.as_ref());
         cascade.push_tier(tier.receipt_name(), results);
     }
 
     cascade
         .finish_with_tier_plan(configured_tiers)
         .map_err(|error| SearchError::Other(error.to_string()))
+}
+
+fn admit_results(results: &mut SearchResults, admission: Option<&ResultAdmission>) {
+    if let Some(admit) = admission {
+        results.items_mut().retain(|result| admit(result));
+        results.count = results.items().len();
+    }
 }
 
 pub(crate) fn configured_search(
@@ -114,6 +134,9 @@ pub(crate) fn configured_search(
         .with_circuit_breaker(controls.circuit.clone())
         .with_bulkhead(controls.bulkhead.clone())
         .with_request_coalescer(controls.coalescer.clone());
+    if let Some(metrics) = controls.metrics.as_ref() {
+        search = search.with_metrics(Arc::clone(metrics));
+    }
     if let Some(config) = config {
         search.set_ranking_config(config.ranking);
     }
@@ -356,5 +379,52 @@ mod tests {
         assert!(error
             .to_string()
             .contains("search timeout exceeds the platform limit"));
+    }
+
+    #[test]
+    fn rejected_rows_are_dropped_before_the_structural_gate() {
+        let mut results = SearchResults::new();
+        for url in ["https://kept.example/a", "https://dropped.example/b"] {
+            results.add_result(SearchResult::new(url, "title", "content"));
+        }
+        let admission: ResultAdmission = Arc::new(|result| result.url.contains("kept"));
+
+        admit_results(&mut results, Some(&admission));
+
+        assert_eq!(results.count, 1);
+        assert_eq!(results.items()[0].url, "https://kept.example/a");
+    }
+
+    #[tokio::test]
+    async fn host_provisioning_failure_is_a_typed_headless_failure() {
+        use futures::FutureExt;
+
+        let plan = EngineTierPlan::new(Some(&["g".to_string()]), None, None).unwrap();
+        let pending = async { Err("host could not provision Moli".to_string()) }
+            .boxed()
+            .shared();
+        let outcome = execute_cascade(
+            &plan,
+            CascadeRequest {
+                query: SearchQuery::new("portable query"),
+                limit: 1,
+                timeout: Duration::from_secs(5),
+                proxy: None,
+                config: None,
+                browser: HeadlessBrowser::Moli,
+                browser_max_retries: 0,
+            },
+            CascadeControls {
+                headless_runtime: Some(pending),
+                ..CascadeControls::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let failure = &outcome.results.failures()[0];
+        assert_eq!(failure.engine, "moli");
+        assert_eq!(failure.kind, "headless_backend_unavailable");
+        assert!(failure.message.contains("host could not provision Moli"));
     }
 }

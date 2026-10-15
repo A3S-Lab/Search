@@ -7,8 +7,10 @@ mod browser;
 mod run;
 mod sources;
 
-pub use browser::HeadlessBrowser;
-pub use run::{execute_cascade, CascadeControls, CascadeRequest, DEFAULT_TIMEOUT_SECONDS};
+pub use browser::{HeadlessBrowser, HeadlessRuntime, PendingHeadlessRuntime};
+pub use run::{
+    execute_cascade, CascadeControls, CascadeRequest, ResultAdmission, DEFAULT_TIMEOUT_SECONDS,
+};
 pub use sources::{
     configured_engine_config, create_http_fetcher, create_provider_engine, ensure_provider_ready,
     is_config_enabled,
