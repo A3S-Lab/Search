@@ -395,6 +395,7 @@ mod tests {
         assert_eq!(results.items()[0].url, "https://kept.example/a");
     }
 
+    #[cfg(feature = "headless")]
     #[tokio::test]
     async fn host_provisioning_failure_is_a_typed_headless_failure() {
         use futures::FutureExt;
