@@ -8,10 +8,10 @@ mod support;
 
 use a3s_search::providers::{
     A3sConfig, A3sProvider, AliyunConfig, AliyunProvider, AnySearchProvider, BochaConfig,
-    BochaProvider, BuiltinProvider, CredentialSource, DoubaoConfig, DoubaoProvider,
-    FirecrawlConfig, FirecrawlProvider, ProviderEngine, ProviderReadiness, ProviderRequest,
-    SearchProvider, TavilyProvider, TencentConfig, TencentProvider, TinyFishConfig,
-    TinyFishProvider,
+    BochaProvider, BuiltinProvider, CredentialSource, DeepSeekConfig, DeepSeekProvider,
+    DoubaoConfig, DoubaoProvider, FirecrawlConfig, FirecrawlProvider, ProviderEngine,
+    ProviderReadiness, ProviderRequest, SearchProvider, TavilyProvider, TencentConfig,
+    TencentProvider, TinyFishConfig, TinyFishProvider,
 };
 use a3s_search::{Engine, SafeSearch, SearchQuery};
 use serde_json::json;
@@ -19,7 +19,7 @@ use support::provider_server::{MockResponse, MockServer};
 use url::Url;
 
 const SECRET: &str = "sk-architecture-secret";
-const BILLED: [&str; 7] = [
+const BILLED: [&str; 8] = [
     "tinyfish",
     "bocha",
     "aliyun",
@@ -27,6 +27,7 @@ const BILLED: [&str; 7] = [
     "firecrawl",
     "a3s",
     "doubao",
+    "deepseek",
 ];
 
 type EchoBody = fn() -> String;
@@ -166,6 +167,7 @@ async fn missing_credential_fails_before_the_network() {
         missing_firecrawl,
         missing_a3s,
         missing_doubao,
+        missing_deepseek,
     ] {
         let server = MockServer::start(vec![MockResponse::json(200, b"{}")]);
         let provider = build(server.endpoint.clone()).unwrap();
@@ -184,7 +186,7 @@ async fn missing_credential_fails_before_the_network() {
 
 #[tokio::test]
 async fn success_urls_are_sealed_against_the_call_credential() {
-    let cases: [(&str, EchoBody, KeyedProvider); 7] = [
+    let cases: [(&str, EchoBody, KeyedProvider); 8] = [
         ("tinyfish", tinyfish_echo, keyed_tinyfish),
         ("bocha", bocha_echo, keyed_bocha),
         ("aliyun", aliyun_echo, keyed_aliyun),
@@ -192,6 +194,7 @@ async fn success_urls_are_sealed_against_the_call_credential() {
         ("firecrawl", firecrawl_echo, keyed_firecrawl),
         ("a3s", a3s_echo, keyed_a3s),
         ("doubao", doubao_echo, keyed_doubao),
+        ("deepseek", deepseek_echo, keyed_deepseek),
     ];
 
     for (id, body, build) in cases {
@@ -229,6 +232,7 @@ async fn http_errors_redact_the_credential() {
         keyed_firecrawl,
         keyed_a3s,
         keyed_doubao,
+        keyed_deepseek,
     ] {
         let server = MockServer::start(vec![MockResponse::json(401, body.clone().into_bytes())]);
         let provider = build(server.endpoint.clone()).unwrap();
@@ -556,6 +560,34 @@ fn missing_doubao(endpoint: Url) -> a3s_search::Result<Box<dyn SearchProvider>> 
         DoubaoConfig::new()?
             .with_endpoint(endpoint)?
             .with_api_key(CredentialSource::none()),
+    )?))
+}
+
+fn deepseek_echo() -> String {
+    json!({
+        "results": [{
+            "title": "Example",
+            "url": echo_url(),
+            "snippet": "Example snippet",
+            "summary": "Example summary",
+        }]
+    })
+    .to_string()
+}
+
+fn missing_deepseek(endpoint: Url) -> a3s_search::Result<Box<dyn SearchProvider>> {
+    Ok(Box::new(DeepSeekProvider::new(
+        DeepSeekConfig::new()?
+            .with_endpoint(endpoint)?
+            .with_api_key(CredentialSource::none()),
+    )?))
+}
+
+fn keyed_deepseek(endpoint: Url) -> a3s_search::Result<Box<dyn SearchProvider>> {
+    Ok(Box::new(DeepSeekProvider::new(
+        DeepSeekConfig::new()?
+            .with_endpoint(endpoint)?
+            .with_api_key(CredentialSource::value(SECRET)),
     )?))
 }
 

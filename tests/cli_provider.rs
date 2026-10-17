@@ -443,6 +443,7 @@ fn help_lists_billed_providers_as_explicit_engines() {
         "firecrawl",
         "a3s",
         "doubao",
+        "deepseek",
     ] {
         assert!(stdout.contains(id), "{id} missing from help:\n{stdout}");
     }
@@ -461,6 +462,7 @@ fn engines_command_lists_native_readiness_without_printing_secrets() {
         provider "firecrawl" { api_key = null }
         provider "a3s" { api_key = null }
         provider "doubao" { api_key = null }
+        provider "deepseek" { api_key = null }
         "#,
     );
     let output = run_cli(&[
@@ -485,13 +487,14 @@ fn engines_command_lists_native_readiness_without_printing_secrets() {
         "firecrawl",
         "a3s",
         "doubao",
+        "deepseek",
     ] {
         assert!(stdout.contains(id), "missing {id} in {stdout}");
     }
     assert!(stdout.contains("ready, keyless/anonymous"), "{stdout}");
     assert!(stdout.contains("ready, authenticated"), "{stdout}");
     assert!(
-        stdout.matches("not ready, missing credential").count() >= 6,
+        stdout.matches("not ready, missing credential").count() >= 7,
         "{stdout}"
     );
 }

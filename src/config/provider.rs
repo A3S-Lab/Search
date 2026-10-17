@@ -4,9 +4,9 @@ use a3s_acl::ast::Block;
 
 use crate::providers::{
     A3sConfig, A3sProvider, AliyunConfig, AliyunProvider, AnySearchConfig, AnySearchProvider,
-    BochaConfig, BochaProvider, BuiltinProvider, DoubaoConfig, DoubaoProvider, FirecrawlConfig,
-    FirecrawlProvider, ProviderEngine, TavilyConfig, TavilyProvider, TencentConfig,
-    TencentProvider, TinyFishConfig, TinyFishProvider,
+    BochaConfig, BochaProvider, BuiltinProvider, DeepSeekConfig, DeepSeekProvider, DoubaoConfig,
+    DoubaoProvider, FirecrawlConfig, FirecrawlProvider, ProviderEngine, TavilyConfig,
+    TavilyProvider, TencentConfig, TencentProvider, TinyFishConfig, TinyFishProvider,
 };
 use crate::{Engine, Result, SearchError};
 
@@ -52,6 +52,8 @@ const TENCENT_ATTRIBUTES: &[&str] = &["max_results", "site", "industry"];
 const A3S_ATTRIBUTES: &[&str] = &["max_results", "include_markdown", "auth_header"];
 
 const DOUBAO_ATTRIBUTES: &[&str] = &["max_results", "authoritative_only", "query_rewrite"];
+
+const DEEPSEEK_ATTRIBUTES: &[&str] = &["max_results", "need_content"];
 
 const FIRECRAWL_ATTRIBUTES: &[&str] = &[
     "max_results",
@@ -110,6 +112,8 @@ pub enum ProviderSettings {
     A3s(A3sConfig),
     /// Native Doubao Search configuration.
     Doubao(DoubaoConfig),
+    /// Native DeepSeek Search configuration.
+    DeepSeek(DeepSeekConfig),
 }
 
 impl ProviderSettings {
@@ -125,6 +129,7 @@ impl ProviderSettings {
             Self::Firecrawl(_) => BuiltinProvider::Firecrawl,
             Self::A3s(_) => BuiltinProvider::A3s,
             Self::Doubao(_) => BuiltinProvider::Doubao,
+            Self::DeepSeek(_) => BuiltinProvider::DeepSeek,
         }
     }
 
@@ -151,6 +156,9 @@ impl ProviderSettings {
             }
             Self::A3s(config) => Ok(ProviderEngine::new(A3sProvider::new(config.clone())?)),
             Self::Doubao(config) => Ok(ProviderEngine::new(DoubaoProvider::new(config.clone())?)),
+            Self::DeepSeek(config) => {
+                Ok(ProviderEngine::new(DeepSeekProvider::new(config.clone())?))
+            }
         }
     }
 }
@@ -238,6 +246,7 @@ pub(super) fn parse_provider_block(block: &Block) -> Result<(String, ProviderEnt
         BuiltinProvider::Firecrawl => FIRECRAWL_ATTRIBUTES,
         BuiltinProvider::A3s => A3S_ATTRIBUTES,
         BuiltinProvider::Doubao => DOUBAO_ATTRIBUTES,
+        BuiltinProvider::DeepSeek => DEEPSEEK_ATTRIBUTES,
     };
     reject_unknown_attributes(block, provider, provider_attributes)?;
 
@@ -273,6 +282,9 @@ pub(super) fn parse_provider_block(block: &Block) -> Result<(String, ProviderEnt
         }
         BuiltinProvider::A3s => ProviderSettings::A3s(ai::parse_a3s(block, provider)?),
         BuiltinProvider::Doubao => ProviderSettings::Doubao(ai::parse_doubao(block, provider)?),
+        BuiltinProvider::DeepSeek => {
+            ProviderSettings::DeepSeek(ai::parse_deepseek(block, provider)?)
+        }
     };
 
     Ok((
@@ -433,6 +445,9 @@ mod tests {
             r#"provider "doubao" { max_results = 51 }"#,
             r#"provider "doubao" { authoritative_only = "yes" }"#,
             r#"provider "doubao" { auth_level = 1 }"#,
+            r#"provider "deepseek" { max_results = 51 }"#,
+            r#"provider "deepseek" { need_content = "yes" }"#,
+            r#"provider "deepseek" { count = 5 }"#,
         ] {
             assert!(SearchConfig::parse(acl).is_err(), "{acl}");
         }

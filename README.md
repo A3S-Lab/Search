@@ -176,6 +176,7 @@ not met the structural requirement.
 | Native API | `tencent` | Tencent Cloud Search | Explicit, billed |
 | Native API | `firecrawl` | Firecrawl Search | Explicit, billed |
 | Native API | `doubao` | Volcengine Doubao Search | Explicit, billed |
+| Native API | `deepseek` | DeepSeek Search | Explicit, billed |
 
 `bing_cn` requests `www.bing.com/search` with `format=rss`, `setlang=zh-CN`,
 and `mkt=zh-CN`. It does not use `cn.bing.com`: that host redirects some
@@ -188,7 +189,7 @@ result set.
 ### Billed APIs stay out of the default plan
 
 TinyFish, Bocha, Alibaba Cloud IQS, Tencent Cloud Search, Firecrawl, and
-Volcengine Doubao Search require an API key. They are omitted from the default cascade so a missing key does not
+Volcengine Doubao Search, and DeepSeek Search require an API key. They are omitted from the default cascade so a missing key does not
 fail every search and an ambient key does not start billing. Select them
 explicitly:
 
@@ -199,6 +200,7 @@ export ALIYUN_IQS_API_KEY="..."
 export TENCENTCLOUD_WSA_APIKEY="..."
 export FIRECRAWL_API_KEY="..."
 export DOUBAO_SEARCH_API_KEY="..."
+export DEEPSEEK_API_KEY="..."
 
 a3s-search "query" --engines bocha --format json
 ```

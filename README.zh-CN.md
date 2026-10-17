@@ -156,6 +156,7 @@ A3S Search 不维护私有网页索引。没有显式选择、也没有 ACL 源�
 | 原生 API | `tencent` | 腾讯云搜索 | 显式，计费 |
 | 原生 API | `firecrawl` | Firecrawl Search | 显式，计费 |
 | 原生 API | `doubao` | 火山引擎豆包搜索 | 显式，计费 |
+| 原生 API | `deepseek` | DeepSeek Search | 显式，计费 |
 
 `bing_cn` 请求 `www.bing.com/search`，并带上 `format=rss`、`setlang=zh-CN` 和 `mkt=zh-CN`。不使用 `cn.bing.com`：该主机会把部分客户端从 `/search` 重定向到首页，随后返回 HTML。
 
@@ -163,7 +164,7 @@ HTML 引擎把 CAPTCHA、同意页和反爬页拒绝为类型化的 `challenge` 
 
 ### 计费 API 不进入默认计划
 
-TinyFish、Bocha、阿里云 IQS、腾讯云搜索、Firecrawl 和火山引擎豆包搜索需要 API key。它们被排除在默认级联之外，以免缺少 key 时每次搜索都失败，或环境里已有 key 时意外计费。必须显式选择：
+TinyFish、Bocha、阿里云 IQS、腾讯云搜索、Firecrawl 和火山引擎豆包搜索和 DeepSeek Search 需要 API key。它们被排除在默认级联之外，以免缺少 key 时每次搜索都失败，或环境里已有 key 时意外计费。必须显式选择：
 
 ```bash
 export TINYFISH_API_KEY="..."
@@ -172,6 +173,7 @@ export ALIYUN_IQS_API_KEY="..."
 export TENCENTCLOUD_WSA_APIKEY="..."
 export FIRECRAWL_API_KEY="..."
 export DOUBAO_SEARCH_API_KEY="..."
+export DEEPSEEK_API_KEY="..."
 
 a3s-search "query" --engines bocha --format json
 ```

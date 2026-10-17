@@ -3,7 +3,7 @@
 use a3s_acl::ast::Block;
 
 use crate::providers::{
-    A3sAuth, A3sConfig, AliyunConfig, AliyunEngineType, BochaConfig, DoubaoConfig,
+    A3sAuth, A3sConfig, AliyunConfig, AliyunEngineType, BochaConfig, DeepSeekConfig, DoubaoConfig,
     FirecrawlCategory, FirecrawlConfig, FirecrawlSource, TencentConfig, TencentIndustry,
     TinyFishConfig, TinyFishDomainType,
 };
@@ -168,6 +168,26 @@ pub(super) fn parse_a3s(block: &Block, provider: &str) -> Result<A3sConfig> {
                 ));
             }
         });
+    }
+    if let Some(http) = provider_http_config(block, provider)? {
+        config = config.with_http_config(http);
+    }
+    Ok(config)
+}
+
+pub(super) fn parse_deepseek(block: &Block, provider: &str) -> Result<DeepSeekConfig> {
+    let mut config = DeepSeekConfig::new()?;
+    if let Some(endpoint) = optional_url(block, provider, "endpoint")? {
+        config = config.with_endpoint(endpoint)?;
+    }
+    if let Some(api_key) = optional_credential(block, provider, "api_key")? {
+        config = config.with_api_key(api_key);
+    }
+    if let Some(max_results) = optional_u8(block, provider, "max_results")? {
+        config = config.with_max_results(max_results)?;
+    }
+    if let Some(need_content) = optional_bool(block, provider, "need_content")? {
+        config = config.with_need_content(need_content);
     }
     if let Some(http) = provider_http_config(block, provider)? {
         config = config.with_http_config(http);

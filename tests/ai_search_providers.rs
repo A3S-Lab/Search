@@ -2,9 +2,10 @@ mod support;
 
 use a3s_search::providers::{
     A3sAuth, A3sConfig, A3sProvider, AliyunConfig, AliyunProvider, BochaConfig, BochaProvider,
-    CredentialSource, DoubaoConfig, DoubaoProvider, FirecrawlCategory, FirecrawlConfig,
-    FirecrawlProvider, FirecrawlSource, ProviderRequest, SearchProvider, TencentConfig,
-    TencentProvider, TinyFishConfig, TinyFishDomainType, TinyFishProvider,
+    CredentialSource, DeepSeekConfig, DeepSeekProvider, DoubaoConfig, DoubaoProvider,
+    FirecrawlCategory, FirecrawlConfig, FirecrawlProvider, FirecrawlSource, ProviderRequest,
+    SearchProvider, TencentConfig, TencentProvider, TinyFishConfig, TinyFishDomainType,
+    TinyFishProvider,
 };
 use a3s_search::TimeRange;
 use serde_json::Value;
@@ -531,6 +532,124 @@ async fn doubao_posts_web_search_maps_cards_and_classifies_200_errors() {
 
     let limited = provider.search(&request("rust")).await.unwrap_err();
     assert_eq!(limited.kind(), "provider_rate_limited");
+}
+
+#[tokio::test]
+async fn deepseek_maps_summaries_and_keeps_filters_inside_the_query_bound() {
+    let server = MockServer::start(vec![
+        MockResponse::json(
+            200,
+            br##"{
+                "results": [
+                    {
+                        "title": "Rust 1.90",
+                        "url": "https://blog.rust-lang.org/2025/09/18/Rust-1.90.0/",
+                        "snippet": "Announcing deepseek-secret",
+                        "summary": "Rust 1.90 ships workspace publishing",
+                        "content": "",
+                        "site_icon": "https://blog.rust-lang.org/favicon.ico",
+                        "date": "2025-09-18T00:00:00+00:00"
+                    },
+                    {"title": "Dropped", "url": "", "snippet": "no url"}
+                ]
+            }"##,
+        ),
+        MockResponse::json(
+            402,
+            br#"{"error":{"message":"insufficient balance deepseek-secret","type":"insufficient_quota","code":"insufficient_quota"}}"#,
+        ),
+        MockResponse::json(
+            429,
+            br#"{"error":{"message":"slow down","type":"rate_limit_error","code":"rate_limit_exceeded"}}"#,
+        ),
+    ]);
+    let provider = DeepSeekProvider::new(
+        DeepSeekConfig::new()
+            .unwrap()
+            .with_endpoint(server.endpoint.clone())
+            .unwrap()
+            .with_api_key(CredentialSource::value("deepseek-secret"))
+            .with_max_results(5)
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(provider.descriptor().capabilities.full_text);
+    assert!(provider.descriptor().capabilities.time_range);
+
+    let response = provider
+        .search(
+            &request("rust")
+                .with_language("zh-CN")
+                .with_time_range(TimeRange::Week),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.results.len(), 1);
+    let hit = &response.results[0];
+    assert_eq!(hit.title, "Rust 1.90");
+    assert!(!hit.snippet.contains("deepseek-secret"));
+    assert_eq!(
+        hit.full_text.as_deref(),
+        Some("Rust 1.90 ships workspace publishing")
+    );
+    assert_eq!(
+        hit.published_date.as_deref(),
+        Some("2025-09-18T00:00:00+00:00")
+    );
+    assert_eq!(
+        hit.favicon.as_deref(),
+        Some("https://blog.rust-lang.org/favicon.ico")
+    );
+
+    let body: Value = serde_json::from_slice(&server.requests()[0].body).unwrap();
+    assert_eq!(body["count"], 5);
+    assert_eq!(body["need_content"], false);
+    let query = body["query"].as_str().unwrap();
+    assert!(query.starts_with("rust lang:zh after:"), "{query}");
+    assert!(query.chars().count() <= 128, "{query}");
+    assert_eq!(
+        server.requests()[0].header("authorization"),
+        Some("Bearer deepseek-secret")
+    );
+
+    let quota = provider.search(&request("rust")).await.unwrap_err();
+    assert_eq!(quota.kind(), "provider_quota");
+    assert!(!quota.to_string().contains("deepseek-secret"));
+
+    let limited = provider.search(&request("rust")).await.unwrap_err();
+    assert_eq!(limited.kind(), "provider_rate_limited");
+
+    let too_long = "查".repeat(129);
+    let error = provider.search(&request(&too_long)).await.unwrap_err();
+    assert_eq!(error.kind(), "provider_invalid_request");
+    assert_eq!(server.requests().len(), 3);
+}
+
+#[tokio::test]
+async fn deepseek_page_body_is_opt_in_and_a_tight_query_drops_filters() {
+    let server = MockServer::start(vec![MockResponse::json(
+        200,
+        br#"{"results":[{"title":"Page","url":"https://example.com/a","snippet":"short","summary":"model text","content":"full page"}]}"#,
+    )]);
+    let provider = DeepSeekProvider::new(
+        DeepSeekConfig::new()
+            .unwrap()
+            .with_endpoint(server.endpoint.clone())
+            .unwrap()
+            .with_api_key(CredentialSource::value("deepseek-secret"))
+            .with_need_content(true),
+    )
+    .unwrap();
+    // 122 + " lang:zh" exceeds the 128-character query bound, so the filter is omitted.
+    let tight = "a".repeat(122);
+    let response = provider
+        .search(&request(&tight).with_language("zh-CN"))
+        .await
+        .unwrap();
+    assert_eq!(response.results[0].full_text.as_deref(), Some("full page"));
+    let body: Value = serde_json::from_slice(&server.requests()[0].body).unwrap();
+    assert_eq!(body["query"], tight);
+    assert_eq!(body["need_content"], true);
 }
 
 #[tokio::test]

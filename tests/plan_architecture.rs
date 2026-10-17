@@ -77,6 +77,7 @@ fn library_owns_default_cascade_plan_and_excludes_billed_apis() {
         "firecrawl",
         "a3s",
         "doubao",
+        "deepseek",
     ] {
         assert!(!plan.shortcuts().iter().any(|shortcut| shortcut == billed));
     }

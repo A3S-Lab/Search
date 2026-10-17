@@ -279,6 +279,7 @@ mod tests {
             "firecrawl",
             "a3s",
             "doubao",
+            "deepseek",
         ] {
             assert!(
                 !plan.shortcuts().iter().any(|shortcut| shortcut == billed),

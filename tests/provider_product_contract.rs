@@ -10,10 +10,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use a3s_search::providers::{
     A3sConfig, A3sProvider, AliyunConfig, AliyunProvider, BochaConfig, BochaProvider,
-    CredentialSource, DoubaoConfig, DoubaoProvider, FirecrawlCategory, FirecrawlConfig,
-    FirecrawlProvider, FirecrawlSource, ProviderEngine, ProviderRequest, SearchProvider,
-    TavilyAnswer, TavilyConfig, TavilyProvider, TavilyRawContent, TencentConfig, TencentProvider,
-    TinyFishConfig, TinyFishDomainType, TinyFishProvider,
+    CredentialSource, DeepSeekConfig, DeepSeekProvider, DoubaoConfig, DoubaoProvider,
+    FirecrawlCategory, FirecrawlConfig, FirecrawlProvider, FirecrawlSource, ProviderEngine,
+    ProviderRequest, SearchProvider, TavilyAnswer, TavilyConfig, TavilyProvider, TavilyRawContent,
+    TencentConfig, TencentProvider, TinyFishConfig, TinyFishDomainType, TinyFishProvider,
 };
 use a3s_search::{Engine, SearchConfig, SearchQuery, TimeRange};
 use serde_json::{json, Value};
@@ -232,6 +232,12 @@ async fn defaults_omit_billed_extras() {
     let tinyfish = search_default("tinyfish").await;
     assert!(!tinyfish.request_line.contains("include_thumbnail"));
 
+    let deepseek = search_default("deepseek").await;
+    let body = json_body(&deepseek.body);
+    assert_eq!(body["query"], "rust");
+    assert_eq!(body["count"], 10);
+    assert_eq!(body["need_content"], false);
+
     let bocha = search_default("bocha").await;
     let body = json_body(&bocha.body);
     assert_eq!(body["summary"], true);
@@ -431,6 +437,7 @@ async fn empty_queries_fail_before_the_network() {
         "firecrawl",
         "a3s",
         "doubao",
+        "deepseek",
     ] {
         let server = MockServer::start(vec![ok(id)]);
         let error = keyed(id, server.endpoint.clone())
@@ -665,6 +672,27 @@ async fn acl_public_attributes_reach_the_vendor_wire() {
     assert_eq!(body["country"], "US");
     assert_eq!(body["scrapeOptions"]["formats"][0]["type"], "markdown");
     assert!(body.get("max_results").is_none());
+
+    let deepseek = MockServer::start(vec![ok("deepseek")]);
+    let engine = engine_from_acl(
+        "deepseek",
+        &format!(
+            r#"provider "deepseek" {{ endpoint = "{}" api_key = "{SECRET}" max_results = 4 need_content = true }}"#,
+            deepseek.endpoint
+        ),
+    );
+    assert!(engine.descriptor().capabilities.full_text);
+    engine.search(&SearchQuery::new("rust")).await.unwrap();
+    let body = json_body(&deepseek.requests()[0].body);
+    assert_eq!(body["count"], 4);
+    assert_eq!(body["need_content"], true);
+    assert_eq!(body["query"], "rust");
+    assert!(body.get("max_results").is_none());
+    let authorization = format!("Bearer {SECRET}");
+    assert_eq!(
+        deepseek.requests()[0].header("authorization"),
+        Some(authorization.as_str())
+    );
 }
 
 fn request_with_range(range: TimeRange) -> ProviderRequest {
@@ -684,6 +712,7 @@ fn ok(id: &str) -> MockResponse {
         "firecrawl" => json!({"success": true, "data": {}}),
         "a3s" => json!({"success": true, "data": {}}),
         "doubao" => json!({"ResponseMetadata": {}, "Result": {}}),
+        "deepseek" => json!({"results": []}),
         _ => unreachable!("{id}"),
     };
     MockResponse::json(200, body.to_string().into_bytes())
@@ -754,6 +783,16 @@ fn keyed(id: &str, endpoint: Url) -> Box<dyn SearchProvider> {
         "doubao" => Box::new(
             DoubaoProvider::new(
                 DoubaoConfig::new()
+                    .unwrap()
+                    .with_endpoint(endpoint)
+                    .unwrap()
+                    .with_api_key(CredentialSource::value(SECRET)),
+            )
+            .unwrap(),
+        ),
+        "deepseek" => Box::new(
+            DeepSeekProvider::new(
+                DeepSeekConfig::new()
                     .unwrap()
                     .with_endpoint(endpoint)
                     .unwrap()

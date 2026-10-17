@@ -21,6 +21,7 @@ mod anysearch;
 mod bocha;
 mod builtin;
 mod credential;
+mod deepseek;
 mod doubao;
 mod engine;
 mod firecrawl;
@@ -39,6 +40,7 @@ pub use anysearch::{AnySearchConfig, AnySearchDomain, AnySearchProvider, AnySear
 pub use bocha::{BochaConfig, BochaProvider};
 pub use builtin::BuiltinProvider;
 pub use credential::{CredentialSource, ProviderAuthentication, ProviderReadiness};
+pub use deepseek::{DeepSeekConfig, DeepSeekProvider};
 pub use doubao::{DoubaoConfig, DoubaoProvider};
 pub use engine::ProviderEngine;
 pub use firecrawl::{FirecrawlCategory, FirecrawlConfig, FirecrawlProvider, FirecrawlSource};
